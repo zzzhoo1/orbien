@@ -84,6 +84,11 @@ pub struct NewProxy {
 
     #[serde(default)]
     pub bandwidth_limit_mode: String,
+
+    /// Maximum simultaneous connections for this proxy.
+    /// 0 means unlimited (default).
+    #[serde(default, rename = "maxConnections")]
+    pub max_connections: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

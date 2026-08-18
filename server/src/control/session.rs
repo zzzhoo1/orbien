@@ -275,6 +275,15 @@ impl Control {
         let remote_port = np.remote_port as u16;
         let name = np.proxy_name.clone();
         let control = Arc::clone(self);
+        let max_connections = np.max_connections;
+
+        if max_connections > 0 {
+            tracing::info!(
+                proxy = %name,
+                max_connections,
+                "connection limit configured"
+            );
+        }
 
         let proxy = TcpProxy::start(
             name.clone(),
@@ -283,6 +292,7 @@ impl Control {
             control,
             limiter,
             Arc::clone(&self.access),
+            max_connections,
         )
         .await?;
         let remote_addr = format!(":{}", remote_port);

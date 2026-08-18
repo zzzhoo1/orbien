@@ -169,6 +169,16 @@ pub struct ProxyConfig {
 
     #[serde(default)]
     pub plugin: Option<PluginConfig>,
+
+    /// Maximum simultaneous connections allowed for this proxy.
+    /// 0 (default) means unlimited.
+    /// Only effective for TCP proxies.
+    #[serde(
+        default,
+        rename = "maxConnections",
+        alias = "max_connections"
+    )]
+    pub max_connections: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
