@@ -12,7 +12,7 @@ use orbien_core::msg::{
 };
 use orbien_core::transport::DynStream;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::io::{ReadHalf, WriteHalf};
@@ -22,6 +22,13 @@ use tokio::time::sleep;
 
 type CtrlRead = ReadHalf<DynStream>;
 type CtrlWrite = WriteHalf<DynStream>;
+
+/// Interval between server-initiated Ping messages on the control channel.
+const CTRL_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// If no control message (Ping, Pong, NewProxy, …) is received within this
+/// window, the connection is considered dead and gets shut down.
+const CTRL_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub struct Control {
     pub run_id: String,
@@ -46,6 +53,9 @@ pub struct Control {
     https_vhost: Option<Arc<HttpsVhost>>,
     access: Arc<AccessPolicy>,
     pub metrics: Arc<MemMetrics>,
+    /// Timestamp of the last received control message. Updated by the reader
+    /// loop; read by the heartbeat background task.
+    last_seen: StdMutex<Instant>,
 }
 
 impl Control {
@@ -90,6 +100,7 @@ impl Control {
             https_vhost,
             access,
             metrics,
+            last_seen: StdMutex::new(Instant::now()),
         }
     }
 
@@ -106,6 +117,52 @@ impl Control {
             self.request_work_conn().await?;
         }
 
+        // ── Heartbeat background task ─────────────────────────────────────────
+        {
+            let ctl = Arc::clone(&self);
+            self.bg_tasks.lock().await.spawn(async move {
+                loop {
+                    sleep(CTRL_HEARTBEAT_INTERVAL).await;
+
+                    if ctl.closed.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    // Check timeout BEFORE sending the next ping.
+                    let since = {
+                        let ls = *ctl.last_seen.lock().unwrap();
+                        Instant::now().saturating_duration_since(ls)
+                    };
+                    if since >= CTRL_HEARTBEAT_TIMEOUT {
+                        tracing::warn!(
+                            run_id = %ctl.run_id,
+                            elapsed_secs = since.as_secs(),
+                            "control heartbeat timeout, closing connection"
+                        );
+                        ctl.shutdown().await;
+                        break;
+                    }
+
+                    // Send Ping.
+                    let mut writer = ctl.writer.lock().await;
+                    if let Err(e) =
+                        msg::write_msg(&mut *writer, &Message::Ping(Ping::default())).await
+                    {
+                        tracing::warn!(
+                            run_id = %ctl.run_id,
+                            error = %e,
+                            "control ping write error, closing connection"
+                        );
+                        drop(writer);
+                        ctl.shutdown().await;
+                        break;
+                    }
+                    tracing::trace!(run_id = %ctl.run_id, "control ping sent");
+                }
+            });
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         loop {
             if self.closed.load(Ordering::SeqCst) {
                 break;
@@ -115,10 +172,17 @@ impl Control {
                 msg::read_msg(&mut *reader).await?
             };
 
+            // Every received message resets the liveness timer.
+            *self.last_seen.lock().unwrap() = Instant::now();
+
             match msg {
                 Message::NewProxy(np) => self.handle_new_proxy(np).await?,
                 Message::CloseProxy(cp) => self.handle_close_proxy(cp).await?,
                 Message::Ping(p) => self.handle_ping(p).await?,
+                Message::Pong(_) => {
+                    // Client replied to our Ping — last_seen already updated above.
+                    tracing::trace!(run_id = %self.run_id, "control pong received");
+                }
                 other => {
                     tracing::warn!(ty = other.type_byte(), "ignored control message");
                 }
