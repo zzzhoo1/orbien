@@ -3,7 +3,7 @@ use crate::metrics::{MemMetrics, ServerMetrics};
 use anyhow::Result;
 use orbien_core::limit::{maybe_limit, BandwidthLimiter};
 use orbien_core::msg::{self, Message, UdpPacket};
-use orbien_core::udp::{forward_user_conn, CHANNEL_CAP, SERVER_WORK_READ_DEADLINE};
+use orbien_core::udp::{forward_user_conn, CHANNEL_CAP};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,7 +19,6 @@ pub struct UdpProxy {
     closed: Arc<AtomicBool>,
     notify: Arc<Notify>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
-
     _udp: Arc<UdpSocket>,
 }
 
@@ -41,6 +40,9 @@ impl UdpProxy {
 
         let (send_tx, send_rx) = mpsc::channel::<UdpPacket>(CHANNEL_CAP);
         let (read_tx, read_rx) = mpsc::channel::<UdpPacket>(CHANNEL_CAP);
+
+        // Read the configurable deadline once; avoid cloning cfg repeatedly.
+        let work_read_deadline = control.cfg().udp_work_read_deadline();
 
         let mut tasks = Vec::new();
 
@@ -70,6 +72,7 @@ impl UdpProxy {
                     read_tx,
                     closed_flag,
                     notify_wait,
+                    work_read_deadline,
                 )
                 .await;
             }));
@@ -112,6 +115,7 @@ async fn abort_wait(h: JoinHandle<()>) {
     let _ = h.await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn work_conn_loop(
     proxy_name: String,
     control: std::sync::Weak<Control>,
@@ -120,6 +124,7 @@ async fn work_conn_loop(
     read_tx: mpsc::Sender<UdpPacket>,
     closed: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    work_read_deadline: Duration,
 ) {
     while !closed.load(Ordering::SeqCst) {
         let Some(control) = control.upgrade() else {
@@ -158,10 +163,7 @@ async fn work_conn_loop(
 
         let work = maybe_limit(work, limiter.clone());
         let (reader, mut writer) = tokio::io::split(work);
-        tracing::info!(
-            proxy = %proxy_name,
-            "udp work conn established"
-        );
+        tracing::info!(proxy = %proxy_name, "udp work conn established");
         let metrics = Arc::clone(&control.metrics);
         let _guard = metrics.track_connection(&proxy_name, "udp");
 
@@ -170,49 +172,35 @@ async fn work_conn_loop(
         let fail_r = fail_tx.clone();
         let name_r = proxy_name.clone();
         let metrics_r = Arc::clone(&metrics);
+        let deadline = work_read_deadline;
         let mut reader_task = Some(tokio::spawn(async move {
-            work_reader(reader, read_tx_r, fail_r, name_r, metrics_r).await;
+            work_reader(reader, read_tx_r, fail_r, name_r, metrics_r, deadline).await;
         }));
 
         let reconnect = loop {
             tokio::select! {
                 _ = notify.notified() => {
-                    if let Some(h) = reader_task.take() {
-                        abort_wait(h).await;
-                    }
+                    if let Some(h) = reader_task.take() { abort_wait(h).await; }
                     return;
                 }
                 _ = fail_rx.recv() => {
-                    if let Some(h) = reader_task.take() {
-                        abort_wait(h).await;
-                    }
+                    if let Some(h) = reader_task.take() { abort_wait(h).await; }
                     break true;
                 }
                 pkt = send_rx.recv() => {
                     match pkt {
                         Some(pkt) => {
                             let nbytes = pkt.content.len() as u64;
-                            tracing::trace!(
-                                proxy = %proxy_name,
-                                len = nbytes,
-                                "udp packet to work"
-                            );
-                            if msg::write_msg(&mut writer, &Message::UdpPacket(pkt))
-                                .await
-                                .is_err()
-                            {
+                            tracing::trace!(proxy = %proxy_name, len = nbytes, "udp packet to work");
+                            if msg::write_msg(&mut writer, &Message::UdpPacket(pkt)).await.is_err() {
                                 tracing::warn!(proxy = %proxy_name, "udp work write error");
-                                if let Some(h) = reader_task.take() {
-                                    abort_wait(h).await;
-                                }
+                                if let Some(h) = reader_task.take() { abort_wait(h).await; }
                                 break true;
                             }
                             metrics.add_traffic_in(&proxy_name, "udp", nbytes);
                         }
                         None => {
-                            if let Some(h) = reader_task.take() {
-                                abort_wait(h).await;
-                            }
+                            if let Some(h) = reader_task.take() { abort_wait(h).await; }
                             return;
                         }
                     }
@@ -232,38 +220,37 @@ async fn work_reader<R: AsyncRead + Unpin + Send + 'static>(
     fail_tx: mpsc::Sender<()>,
     proxy_name: String,
     metrics: Arc<MemMetrics>,
+    deadline: Duration,
 ) {
     loop {
-        match timeout(SERVER_WORK_READ_DEADLINE, msg::read_msg(&mut reader)).await {
+        match timeout(deadline, msg::read_msg(&mut reader)).await {
             Ok(Ok(Message::Ping(_))) => {
                 tracing::trace!(proxy = %proxy_name, "udp work ping");
             }
             Ok(Ok(Message::UdpPacket(pkt))) => {
                 let nbytes = pkt.content.len() as u64;
-                tracing::trace!(
-                    proxy = %proxy_name,
-                    len = nbytes,
-                    "udp packet from work"
-                );
+                tracing::trace!(proxy = %proxy_name, len = nbytes, "udp packet from work");
                 metrics.add_traffic_out(&proxy_name, "udp", nbytes);
-                let _ = read_tx.try_send(pkt);
+                if read_tx.send(pkt).await.is_err() {
+                    break;
+                }
             }
             Ok(Ok(other)) => {
-                tracing::debug!(
-                    proxy = %proxy_name,
-                    ty = other.type_byte(),
-                    "udp work unexpected message"
-                );
+                tracing::warn!(proxy = %proxy_name, ty = other.type_byte(), "udp unexpected msg");
             }
             Ok(Err(e)) => {
                 tracing::warn!(proxy = %proxy_name, error = %e, "udp work read error");
                 let _ = fail_tx.send(()).await;
-                return;
+                break;
             }
             Err(_) => {
-                tracing::warn!(proxy = %proxy_name, "udp work read deadline exceeded");
+                tracing::warn!(
+                    proxy = %proxy_name,
+                    deadline_secs = deadline.as_secs(),
+                    "udp work read deadline exceeded"
+                );
                 let _ = fail_tx.send(()).await;
-                return;
+                break;
             }
         }
     }

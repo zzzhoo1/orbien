@@ -74,6 +74,52 @@ pub struct ServerConfig {
         alias = "proxy_protocol_timeout_secs"
     )]
     pub proxy_protocol_timeout_secs: u64,
+
+    /// Seconds before a UDP work-conn read is considered dead.
+    /// 0 = use default (60 s).
+    #[serde(
+        default,
+        rename = "udpWorkReadSecs",
+        alias = "udp_work_read_secs"
+    )]
+    pub udp_work_read_secs: u64,
+
+    /// Seconds to wait for a work-conn to arrive from the client pool.
+    /// 0 = use default (10 s).
+    #[serde(
+        default,
+        rename = "workConnTimeoutSecs",
+        alias = "work_conn_timeout_secs"
+    )]
+    pub work_conn_timeout_secs: u64,
+
+    /// Allow only one simultaneous control connection per user token.
+    /// When a second login arrives for the same user, the old connection is
+    /// kicked.  Default: false (multiple connections allowed).
+    #[serde(
+        default,
+        rename = "singleClientPerUser",
+        alias = "single_client_per_user"
+    )]
+    pub single_client_per_user: bool,
+
+    /// Interval (seconds) for server-initiated Ping on the control channel.
+    /// 0 = use default (30 s).
+    #[serde(
+        default,
+        rename = "ctrlHeartbeatIntervalSecs",
+        alias = "ctrl_heartbeat_interval_secs"
+    )]
+    pub ctrl_heartbeat_interval_secs: u64,
+
+    /// Seconds of silence on the control channel before the connection is
+    /// considered dead.  0 = use default (90 s).
+    #[serde(
+        default,
+        rename = "ctrlHeartbeatTimeoutSecs",
+        alias = "ctrl_heartbeat_timeout_secs"
+    )]
+    pub ctrl_heartbeat_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,56 +168,21 @@ impl Default for ServerTransportConfig {
 }
 
 /// Dashboard web server configuration.
-///
-/// # WebAuthn fields
-/// `webauthn_rp_id` and `webauthn_origin` enable Passkey / WebAuthn login.
-/// Both must be set together; if either is empty the dashboard falls back to
-/// plain password authentication.
-///
-/// Example (TOML):
-/// ```toml
-/// [webServer]
-/// addr     = "0.0.0.0"
-/// port     = 7500
-/// user     = "admin"
-/// password = "secret"
-/// webauthnRpId     = "example.com"
-/// webauthnOrigin   = "https://example.com"
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebServerConfig {
     #[serde(default)]
     pub addr: String,
-
     #[serde(default)]
     pub port: u16,
-
     #[serde(default)]
     pub user: String,
-
     #[serde(default)]
     pub password: String,
-
     #[serde(default, rename = "assetsDir", alias = "assets_dir")]
     pub assets_dir: String,
-
-    /// WebAuthn Relying Party ID — must match the domain the dashboard is
-    /// served from (e.g. `"example.com"`).  Leave empty to disable WebAuthn.
-    #[serde(
-        default,
-        rename = "webauthnRpId",
-        alias = "webauthn_rp_id"
-    )]
+    #[serde(default, rename = "webauthnRpId", alias = "webauthn_rp_id")]
     pub webauthn_rp_id: String,
-
-    /// WebAuthn origin — the full origin the browser uses to reach the
-    /// dashboard (e.g. `"https://example.com"` or `"http://localhost:7500"`).
-    /// Leave empty to disable WebAuthn.
-    #[serde(
-        default,
-        rename = "webauthnOrigin",
-        alias = "webauthn_origin"
-    )]
+    #[serde(default, rename = "webauthnOrigin", alias = "webauthn_origin")]
     pub webauthn_origin: String,
 }
 
@@ -181,13 +192,9 @@ impl WebServerConfig {
             self.addr = "127.0.0.1".into();
         }
     }
-
     pub fn enabled(&self) -> bool {
         self.port > 0
     }
-
-    /// Returns `true` when both WebAuthn fields are populated, meaning Passkey
-    /// login is available in addition to password-based login.
     pub fn webauthn_enabled(&self) -> bool {
         !self.webauthn_rp_id.trim().is_empty() && !self.webauthn_origin.trim().is_empty()
     }
@@ -208,7 +215,6 @@ pub struct ServerTlsConfig {
 fn default_tcp_mux() -> bool {
     true
 }
-
 fn default_tcp_mux_keepalive() -> i64 {
     30
 }
@@ -249,7 +255,6 @@ impl QuicOptions {
     pub fn keepalive(&self) -> Duration {
         Duration::from_secs(self.keepalive_period.max(1))
     }
-
     pub fn idle_timeout(&self) -> Duration {
         Duration::from_secs(self.max_idle_timeout.max(1))
     }
@@ -258,31 +263,24 @@ impl QuicOptions {
 fn default_bind_addr() -> String {
     "0.0.0.0".into()
 }
-
 fn default_bind_port() -> u16 {
     9527
 }
-
 fn default_auth_method() -> String {
     "token".into()
 }
-
 fn default_quic_keepalive() -> u64 {
     10
 }
-
 fn default_quic_idle() -> u64 {
     30
 }
-
 fn default_quic_streams() -> u32 {
     100_000
 }
-
 fn default_udp_packet_size() -> usize {
     1500
 }
-
 fn default_proxy_protocol_timeout() -> u64 {
     5
 }
@@ -306,6 +304,11 @@ impl Default for ServerConfig {
             proxy_protocol_trusted_cidrs: Vec::new(),
             deny_src_cidrs: Vec::new(),
             proxy_protocol_timeout_secs: default_proxy_protocol_timeout(),
+            udp_work_read_secs: 0,
+            work_conn_timeout_secs: 0,
+            single_client_per_user: false,
+            ctrl_heartbeat_interval_secs: 0,
+            ctrl_heartbeat_timeout_secs: 0,
         }
     }
 }
@@ -355,7 +358,6 @@ impl ServerConfig {
         if self.udp_packet_size == 0 {
             self.udp_packet_size = default_udp_packet_size();
         }
-
         self.web_server.complete();
         if self.transport.max_pool_count == 0 {
             self.transport.max_pool_count = 5;
@@ -365,6 +367,19 @@ impl ServerConfig {
         }
         if !self.transport.tls.trusted_ca_file.trim().is_empty() {
             self.transport.tls.force = true;
+        }
+        // Fill in configurable-timeout defaults
+        if self.udp_work_read_secs == 0 {
+            self.udp_work_read_secs = 60;
+        }
+        if self.work_conn_timeout_secs == 0 {
+            self.work_conn_timeout_secs = 10;
+        }
+        if self.ctrl_heartbeat_interval_secs == 0 {
+            self.ctrl_heartbeat_interval_secs = 30;
+        }
+        if self.ctrl_heartbeat_timeout_secs == 0 {
+            self.ctrl_heartbeat_timeout_secs = 90;
         }
     }
 
@@ -379,5 +394,25 @@ impl ServerConfig {
     }
     pub fn vhost_https_enabled(&self) -> bool {
         self.vhost_https_port != 0
+    }
+
+    /// Effective UDP work-conn read deadline.
+    pub fn udp_work_read_deadline(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.udp_work_read_secs.max(1))
+    }
+
+    /// Effective work-conn wait timeout.
+    pub fn work_conn_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.work_conn_timeout_secs.max(1))
+    }
+
+    /// Effective control-channel heartbeat interval.
+    pub fn ctrl_heartbeat_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.ctrl_heartbeat_interval_secs.max(1))
+    }
+
+    /// Effective control-channel heartbeat timeout.
+    pub fn ctrl_heartbeat_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.ctrl_heartbeat_timeout_secs.max(1))
     }
 }

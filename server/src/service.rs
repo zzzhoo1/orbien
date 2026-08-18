@@ -226,7 +226,6 @@ impl Service {
             .await
             .map_err(|e| {
                 let msg = e.to_string();
-
                 if msg.contains("unknown version: 111") || msg.contains("unknown version: 119") {
                     anyhow!(
                         "yamux session {peer}: {e} — transport.tcpMux mismatch: server expects yamux \
@@ -379,6 +378,27 @@ impl Service {
         {
             let mut offline = self.offline_clients.lock().await;
             offline.remove(&run_id);
+        }
+
+        // #3 — single_client_per_user: kick any existing connection from the
+        // same user (different run_id) before inserting the new one.
+        if self.cfg.single_client_per_user && !login.user.is_empty() {
+            let to_kick: Vec<Arc<Control>> = {
+                let map = self.controls.lock().await;
+                map.values()
+                    .filter(|c| c.user == login.user && c.run_id != run_id)
+                    .cloned()
+                    .collect()
+            };
+            for old in to_kick {
+                tracing::info!(
+                    run_id = %old.run_id,
+                    user = %old.user,
+                    new_run_id = %run_id,
+                    "single_client_per_user: kicking old session"
+                );
+                old.kick("replaced by newer login").await;
+            }
         }
 
         let old = {

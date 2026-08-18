@@ -62,17 +62,12 @@ impl TcpProxy {
                     accepted = listener.accept() => {
                         match accepted {
                             Ok((user_conn, peer)) => {
-                                if closed_flag.load(Ordering::SeqCst) {
-                                    break;
-                                }
-                                let Some(ctl) = control_weak.upgrade() else {
-                                    break;
-                                };
+                                if closed_flag.load(Ordering::SeqCst) { break; }
+                                let Some(ctl) = control_weak.upgrade() else { break; };
 
-                                // ── Connection limit check ──────────────────
+                                // Connection limit check
                                 if max_connections > 0 {
-                                    let current =
-                                        active_conns_spawn.load(Ordering::Relaxed);
+                                    let current = active_conns_spawn.load(Ordering::Relaxed);
                                     if current >= max_connections {
                                         tracing::warn!(
                                             proxy = %proxy_name,
@@ -81,12 +76,10 @@ impl TcpProxy {
                                             peer = %peer,
                                             "connection limit reached, dropping"
                                         );
-                                        // Drop user_conn here → TCP RST sent
                                         drop(user_conn);
                                         continue;
                                     }
                                 }
-                                // ───────────────────────────────────────────
 
                                 let pname = proxy_name.clone();
                                 let lim = limiter_spawn.clone();
@@ -94,22 +87,26 @@ impl TcpProxy {
                                 let active = Arc::clone(&active_conns_spawn);
 
                                 tokio::spawn(async move {
-                                    if let Err(e) = handle_user_conn(
-                                        ctl,
-                                        &pname,
-                                        user_conn,
-                                        peer,
-                                        lim,
-                                        access,
-                                        active,
-                                    )
-                                    .await
-                                    {
-                                        tracing::debug!(
+                                    // #6 — Access log
+                                    tracing::info!(
+                                        proxy = %pname,
+                                        peer = %peer,
+                                        "tcp connection accepted"
+                                    );
+                                    match handle_user_conn(
+                                        ctl, &pname, user_conn, peer, lim, access, active,
+                                    ).await {
+                                        Ok(()) => tracing::info!(
                                             proxy = %pname,
+                                            peer = %peer,
+                                            "tcp connection closed"
+                                        ),
+                                        Err(e) => tracing::info!(
+                                            proxy = %pname,
+                                            peer = %peer,
                                             error = %e,
-                                            "user conn ended"
-                                        );
+                                            "tcp connection closed with error"
+                                        ),
                                     }
                                 });
                             }
@@ -173,7 +170,6 @@ async fn handle_user_conn(
     access: Arc<AccessPolicy>,
     active_conns: Arc<AtomicUsize>,
 ) -> Result<()> {
-    // Increment counter; guard will decrement on any exit path.
     active_conns.fetch_add(1, Ordering::Relaxed);
     let _guard = ConnGuard(Arc::clone(&active_conns));
 
@@ -185,10 +181,7 @@ async fn handle_user_conn(
             proxy_name,
             visitor.visitor.ip().to_string(),
             visitor.visitor.port(),
-            visitor
-                .local
-                .map(|a| a.ip().to_string())
-                .unwrap_or_default(),
+            visitor.local.map(|a| a.ip().to_string()).unwrap_or_default(),
             visitor.local.map(|a| a.port()).unwrap_or(0),
         )
         .await?;
@@ -201,7 +194,8 @@ async fn handle_user_conn(
         visitor = %visitor.visitor,
         "joining visitor <-> work"
     );
-    let _ =
-        metrics::join_and_record(&control.metrics, proxy_name, "tcp", visitor.stream, work).await;
+    let _ = metrics::join_and_record(
+        &control.metrics, proxy_name, "tcp", visitor.stream, work,
+    ).await;
     Ok(())
 }

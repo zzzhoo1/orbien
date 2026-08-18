@@ -23,13 +23,6 @@ use tokio::time::sleep;
 type CtrlRead = ReadHalf<DynStream>;
 type CtrlWrite = WriteHalf<DynStream>;
 
-/// Interval between server-initiated Ping messages on the control channel.
-const CTRL_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-
-/// If no control message (Ping, Pong, NewProxy, …) is received within this
-/// window, the connection is considered dead and gets shut down.
-const CTRL_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
-
 pub struct Control {
     pub run_id: String,
     pub user: String,
@@ -53,8 +46,7 @@ pub struct Control {
     https_vhost: Option<Arc<HttpsVhost>>,
     access: Arc<AccessPolicy>,
     pub metrics: Arc<MemMetrics>,
-    /// Timestamp of the last received control message. Updated by the reader
-    /// loop; read by the heartbeat background task.
+    /// Timestamp of the last received control message.
     last_seen: StdMutex<Instant>,
 }
 
@@ -117,23 +109,24 @@ impl Control {
             self.request_work_conn().await?;
         }
 
-        // ── Heartbeat background task ─────────────────────────────────────────
+        // ── Heartbeat background task (configurable interval / timeout) ─────
         {
             let ctl = Arc::clone(&self);
+            let interval = ctl.cfg.ctrl_heartbeat_interval();
+            let timeout = ctl.cfg.ctrl_heartbeat_timeout();
             self.bg_tasks.lock().await.spawn(async move {
                 loop {
-                    sleep(CTRL_HEARTBEAT_INTERVAL).await;
+                    sleep(interval).await;
 
                     if ctl.closed.load(Ordering::SeqCst) {
                         break;
                     }
 
-                    // Check timeout BEFORE sending the next ping.
                     let since = {
                         let ls = *ctl.last_seen.lock().unwrap();
                         Instant::now().saturating_duration_since(ls)
                     };
-                    if since >= CTRL_HEARTBEAT_TIMEOUT {
+                    if since >= timeout {
                         tracing::warn!(
                             run_id = %ctl.run_id,
                             elapsed_secs = since.as_secs(),
@@ -143,7 +136,6 @@ impl Control {
                         break;
                     }
 
-                    // Send Ping.
                     let mut writer = ctl.writer.lock().await;
                     if let Err(e) =
                         msg::write_msg(&mut *writer, &Message::Ping(Ping::default())).await
@@ -161,7 +153,6 @@ impl Control {
                 }
             });
         }
-        // ─────────────────────────────────────────────────────────────────────
 
         loop {
             if self.closed.load(Ordering::SeqCst) {
@@ -180,7 +171,6 @@ impl Control {
                 Message::CloseProxy(cp) => self.handle_close_proxy(cp).await?,
                 Message::Ping(p) => self.handle_ping(p).await?,
                 Message::Pong(_) => {
-                    // Client replied to our Ping — last_seen already updated above.
                     tracing::trace!(run_id = %self.run_id, "control pong received");
                 }
                 other => {
@@ -258,7 +248,9 @@ impl Control {
 
         self.request_work_conn().await?;
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Use configurable timeout from ServerConfig
+        let timeout = self.cfg.work_conn_timeout();
+        let deadline = Instant::now() + timeout;
         loop {
             if self.closed.load(Ordering::SeqCst) {
                 return Err(anyhow!("control closed while waiting for work conn"));
@@ -269,7 +261,10 @@ impl Control {
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(anyhow!("timeout waiting for work conn"));
+                return Err(anyhow!(
+                    "timeout waiting for work conn ({}s)",
+                    timeout.as_secs()
+                ));
             }
             tokio::select! {
                 _ = self.work_notify.notified() => {}
@@ -342,11 +337,7 @@ impl Control {
         let max_connections = np.max_connections;
 
         if max_connections > 0 {
-            tracing::info!(
-                proxy = %name,
-                max_connections,
-                "connection limit configured"
-            );
+            tracing::info!(proxy = %name, max_connections, "connection limit configured");
         }
 
         let proxy = TcpProxy::start(
