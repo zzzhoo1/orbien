@@ -339,16 +339,7 @@ impl Service {
             login.run_id.clone()
         };
 
-        let mut stream = stream;
-        msg::write_msg(
-            &mut stream,
-            &Message::LoginResp(LoginResp {
-                version: VERSION.into(),
-                run_id: run_id.clone(),
-                error: String::new(),
-            }),
-        )
-        .await?;
+        let stream = stream;
 
         tracing::info!(%run_id, %peer, pool = login.pool_count, "client logged in");
 
@@ -382,7 +373,7 @@ impl Service {
 
         // #3 — single_client_per_user: kick any existing connection from the
         // same user (different run_id) before inserting the new one.
-        if self.cfg.single_client_per_user && !login.user.is_empty() {
+        if self.cfg.single_client_per_user {
             let to_kick: Vec<Arc<Control>> = {
                 let map = self.controls.lock().await;
                 map.values()
@@ -403,12 +394,26 @@ impl Service {
 
         let old = {
             let mut map = self.controls.lock().await;
-            map.insert(run_id.clone(), Arc::clone(&control))
+            map.remove(&run_id)
         };
 
         if let Some(old) = old {
+            tracing::info!(run_id = %run_id, "replacing existing session with same run_id");
             old.shutdown().await;
         }
+
+        {
+            let mut map = self.controls.lock().await;
+            map.insert(run_id.clone(), Arc::clone(&control));
+        }
+
+        control
+            .send_login_resp(LoginResp {
+                version: VERSION.into(),
+                run_id: run_id.clone(),
+                error: String::new(),
+            })
+            .await?;
 
         self.metrics.new_client(&run_id);
 
@@ -452,6 +457,10 @@ impl Service {
     }
 
     async fn register_work_conn(self: Arc<Self>, stream: DynStream, nw: NewWorkConn) -> Result<()> {
+        if !auth::verify_login(&self.cfg.auth.token, &nw.privilege_key, nw.timestamp) {
+            return Err(anyhow!("work conn authorization failed"));
+        }
+
         let control = {
             let map = self.controls.lock().await;
             map.get(&nw.run_id).cloned()

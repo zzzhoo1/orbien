@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, Notify};
 #[derive(Clone)]
 pub struct HttpsRoute {
     pub proxy_name: String,
+    pub run_id: String,
     pub control: Weak<Control>,
     pub limiter: Option<Arc<BandwidthLimiter>>,
 }
@@ -38,14 +39,21 @@ impl HttpsVhost {
             return Err(anyhow!("empty https domain"));
         }
         let mut map = self.routes.lock().await;
+        if let Some(existing) = map.get(&key) {
+            let live = existing.control.upgrade().is_some();
+            if live && (existing.run_id != route.run_id || existing.proxy_name != route.proxy_name)
+            {
+                return Err(anyhow!("https domain already in use: {key}"));
+            }
+        }
         map.insert(key.clone(), route);
         tracing::info!(domain = %key, "https route registered");
         Ok(())
     }
 
-    pub async fn unregister_proxy(&self, proxy_name: &str) {
+    pub async fn unregister_proxy(&self, proxy_name: &str, run_id: &str) {
         let mut map = self.routes.lock().await;
-        map.retain(|_, r| r.proxy_name != proxy_name);
+        map.retain(|_, r| !(r.proxy_name == proxy_name && r.run_id == run_id));
     }
 
     pub async fn lookup(&self, sni: &str) -> Option<HttpsRoute> {
@@ -58,6 +66,7 @@ impl HttpsVhost {
 pub struct HttpsProxy {
     pub name: String,
     pub domains: Vec<String>,
+    run_id: String,
     vhost: Arc<HttpsVhost>,
     closed: AtomicBool,
 }
@@ -79,6 +88,7 @@ impl HttpsProxy {
                     domain,
                     HttpsRoute {
                         proxy_name: name.clone(),
+                        run_id: control.run_id.clone(),
                         control: Arc::downgrade(&control),
                         limiter: limiter.clone(),
                     },
@@ -95,6 +105,7 @@ impl HttpsProxy {
         Ok(Self {
             name,
             domains,
+            run_id: control.run_id.clone(),
             vhost,
             closed: AtomicBool::new(false),
         })
@@ -106,7 +117,7 @@ impl HttpsProxy {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            self.vhost.unregister_proxy(&self.name).await;
+            self.vhost.unregister_proxy(&self.name, &self.run_id).await;
         }
     }
 }

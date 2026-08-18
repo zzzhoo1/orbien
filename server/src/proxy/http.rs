@@ -15,6 +15,7 @@ use tokio::sync::Notify;
 pub struct HttpProxy {
     pub name: String,
     pub domains: Vec<String>,
+    run_id: String,
     vhost: Arc<HttpVhost>,
     closed: AtomicBool,
 }
@@ -38,6 +39,7 @@ impl HttpProxy {
                     domain,
                     HttpRoute {
                         proxy_name: name.clone(),
+                        run_id: control.run_id.clone(),
                         control: Arc::downgrade(&control),
                         locations: locations.clone(),
                         host_header_rewrite: rewrite.clone(),
@@ -56,6 +58,7 @@ impl HttpProxy {
         Ok(Self {
             name,
             domains,
+            run_id: control.run_id.clone(),
             vhost,
             closed: AtomicBool::new(false),
         })
@@ -67,7 +70,7 @@ impl HttpProxy {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            self.vhost.unregister_proxy(&self.name).await;
+            self.vhost.unregister_proxy(&self.name, &self.run_id).await;
         }
     }
 }

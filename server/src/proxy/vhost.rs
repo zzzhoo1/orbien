@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct HttpRoute {
     pub proxy_name: String,
+    pub run_id: String,
     pub control: Weak<Control>,
 
     pub locations: Vec<String>,
@@ -35,16 +36,16 @@ impl HttpVhost {
         let mut map = self.routes.lock().await;
         let list = map.entry(key.clone()).or_default();
 
-        list.retain(|r| r.proxy_name != route.proxy_name);
+        list.retain(|r| !(r.proxy_name == route.proxy_name && r.run_id == route.run_id));
         list.push(route);
         tracing::info!(domain = %key, "http route registered");
         Ok(())
     }
 
-    pub async fn unregister_proxy(&self, proxy_name: &str) {
+    pub async fn unregister_proxy(&self, proxy_name: &str, run_id: &str) {
         let mut map = self.routes.lock().await;
         map.retain(|_, list| {
-            list.retain(|r| r.proxy_name != proxy_name);
+            list.retain(|r| !(r.proxy_name == proxy_name && r.run_id == run_id));
             !list.is_empty()
         });
     }

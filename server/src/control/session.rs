@@ -7,8 +7,8 @@ use crate::proxy::{
 use anyhow::{anyhow, Result};
 use orbien_core::config::ServerConfig;
 use orbien_core::msg::{
-    self, CloseProxy, KickOut, Message, NewProxy, NewProxyResp, Ping, Pong, ReqWorkConn,
-    StartWorkConn,
+    self, CloseProxy, KickOut, LoginResp, Message, NewProxy, NewProxyResp, Ping, Pong,
+    ReqWorkConn, StartWorkConn,
 };
 use orbien_core::transport::DynStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -94,6 +94,11 @@ impl Control {
             metrics,
             last_seen: StdMutex::new(Instant::now()),
         }
+    }
+
+    pub async fn send_login_resp(&self, response: LoginResp) -> Result<()> {
+        let mut writer = self.writer.lock().await;
+        msg::write_msg(&mut *writer, &Message::LoginResp(response)).await
     }
 
     pub async fn proxy_summaries(&self) -> Vec<crate::proxy::ProxySummary> {
@@ -340,6 +345,13 @@ impl Control {
             tracing::info!(proxy = %name, max_connections, "connection limit configured");
         }
 
+        {
+            let mut pm = self.proxies.lock().await;
+            if let Some(old_ty) = pm.remove(&name).await {
+                self.metrics.close_proxy(&name, old_ty);
+            }
+        }
+
         let proxy = TcpProxy::start(
             name.clone(),
             bind_addr,
@@ -354,12 +366,8 @@ impl Control {
 
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
         let mut pm = self.proxies.lock().await;
-        if let Some(old_ty) = pm
-            .insert(name.clone(), RegisteredProxy::Tcp(proxy), local_addr)
-            .await
-        {
-            self.metrics.close_proxy(&name, old_ty);
-        }
+        pm.insert(name.clone(), RegisteredProxy::Tcp(proxy), local_addr)
+            .await;
         self.note_proxy_registered(&name, "tcp");
         tracing::info!(proxy = %np.proxy_name, port = remote_port, "tcp proxy registered");
         Ok(remote_addr)
@@ -385,6 +393,14 @@ impl Control {
             );
         }
 
+        let name = np.proxy_name.clone();
+        {
+            let mut pm = self.proxies.lock().await;
+            if let Some(old_ty) = pm.remove(&name).await {
+                self.metrics.close_proxy(&name, old_ty);
+            }
+        }
+
         let proxy = HttpProxy::register(
             np,
             Arc::clone(self),
@@ -401,15 +417,10 @@ impl Control {
             .collect::<Vec<_>>()
             .join(",");
 
-        let name = np.proxy_name.clone();
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
         let mut pm = self.proxies.lock().await;
-        if let Some(old_ty) = pm
-            .insert(name.clone(), RegisteredProxy::Http(proxy), local_addr)
-            .await
-        {
-            self.metrics.close_proxy(&name, old_ty);
-        }
+        pm.insert(name.clone(), RegisteredProxy::Http(proxy), local_addr)
+            .await;
         self.note_proxy_registered(&name, "http");
         Ok(remote_addr)
     }
@@ -434,6 +445,14 @@ impl Control {
             );
         }
 
+        let name = np.proxy_name.clone();
+        {
+            let mut pm = self.proxies.lock().await;
+            if let Some(old_ty) = pm.remove(&name).await {
+                self.metrics.close_proxy(&name, old_ty);
+            }
+        }
+
         let proxy = HttpsProxy::register(
             np,
             Arc::clone(self),
@@ -450,15 +469,10 @@ impl Control {
             .collect::<Vec<_>>()
             .join(",");
 
-        let name = np.proxy_name.clone();
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
         let mut pm = self.proxies.lock().await;
-        if let Some(old_ty) = pm
-            .insert(name.clone(), RegisteredProxy::Https(proxy), local_addr)
-            .await
-        {
-            self.metrics.close_proxy(&name, old_ty);
-        }
+        pm.insert(name.clone(), RegisteredProxy::Https(proxy), local_addr)
+            .await;
         self.note_proxy_registered(&name, "https");
         Ok(remote_addr)
     }
@@ -488,6 +502,13 @@ impl Control {
         let control = Arc::clone(self);
         let packet_size = self.cfg.udp_packet_size.max(512);
 
+        {
+            let mut pm = self.proxies.lock().await;
+            if let Some(old_ty) = pm.remove(&name).await {
+                self.metrics.close_proxy(&name, old_ty);
+            }
+        }
+
         let proxy = UdpProxy::start(
             name.clone(),
             bind_addr,
@@ -501,12 +522,8 @@ impl Control {
 
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
         let mut pm = self.proxies.lock().await;
-        if let Some(old_ty) = pm
-            .insert(name.clone(), RegisteredProxy::Udp(proxy), local_addr)
-            .await
-        {
-            self.metrics.close_proxy(&name, old_ty);
-        }
+        pm.insert(name.clone(), RegisteredProxy::Udp(proxy), local_addr)
+            .await;
         self.note_proxy_registered(&name, "udp");
         tracing::info!(proxy = %np.proxy_name, port = remote_port, "udp proxy registered");
         Ok(remote_addr)
