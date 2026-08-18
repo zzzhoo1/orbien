@@ -36,6 +36,22 @@ impl HttpVhost {
         let mut map = self.routes.lock().await;
         let list = map.entry(key.clone()).or_default();
 
+        list.retain(|r| {
+            r.control.upgrade().is_some()
+                || (r.proxy_name == route.proxy_name && r.run_id == route.run_id)
+        });
+
+        for existing in list.iter() {
+            if existing.proxy_name == route.proxy_name && existing.run_id == route.run_id {
+                continue;
+            }
+            if existing.control.upgrade().is_some()
+                && locations_overlap(&existing.locations, &route.locations)
+            {
+                return Err(anyhow::anyhow!("http domain already in use: {key}"));
+            }
+        }
+
         list.retain(|r| !(r.proxy_name == route.proxy_name && r.run_id == route.run_id));
         list.push(route);
         tracing::info!(domain = %key, "http route registered");
@@ -56,6 +72,27 @@ impl HttpVhost {
         let list = map.get(&key)?;
         pick_by_location(list, path).cloned()
     }
+}
+
+fn locations_overlap(a: &[String], b: &[String]) -> bool {
+    let a_locs: Vec<&str> = if a.is_empty() {
+        vec![""]
+    } else {
+        a.iter().map(String::as_str).collect()
+    };
+    let b_locs: Vec<&str> = if b.is_empty() {
+        vec![""]
+    } else {
+        b.iter().map(String::as_str).collect()
+    };
+    for x in &a_locs {
+        for y in &b_locs {
+            if x.starts_with(y) || y.starts_with(x) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn pick_by_location<'a>(list: &'a [HttpRoute], path: &str) -> Option<&'a HttpRoute> {

@@ -83,7 +83,7 @@ impl HttpsProxy {
         let name = np.proxy_name.clone();
 
         for domain in &domains {
-            vhost
+            if let Err(e) = vhost
                 .register(
                     domain,
                     HttpsRoute {
@@ -93,7 +93,11 @@ impl HttpsProxy {
                         limiter: limiter.clone(),
                     },
                 )
-                .await?;
+                .await
+            {
+                vhost.unregister_proxy(&name, &control.run_id).await;
+                return Err(e);
+            }
         }
 
         tracing::info!(

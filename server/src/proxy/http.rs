@@ -34,7 +34,7 @@ impl HttpProxy {
         let rewrite = np.host_header_rewrite.clone();
 
         for domain in &domains {
-            vhost
+            if let Err(e) = vhost
                 .register(
                     domain,
                     HttpRoute {
@@ -46,7 +46,11 @@ impl HttpProxy {
                         limiter: limiter.clone(),
                     },
                 )
-                .await?;
+                .await
+            {
+                vhost.unregister_proxy(&name, &control.run_id).await;
+                return Err(e);
+            }
         }
 
         tracing::info!(
