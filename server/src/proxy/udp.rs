@@ -30,10 +30,11 @@ impl UdpProxy {
         control: Arc<Control>,
         limiter: Option<Arc<BandwidthLimiter>>,
         packet_size: usize,
+        max_connections: usize,
     ) -> Result<Self> {
         let addr = format!("{bind_addr}:{remote_port}");
         let udp = Arc::new(UdpSocket::bind(&addr).await?);
-        tracing::info!(%addr, proxy = %name, "udp proxy listening");
+        tracing::info!(%addr, proxy = %name, max_connections, "udp proxy listening");
 
         let closed = Arc::new(AtomicBool::new(false));
         let notify = Arc::new(Notify::new());
@@ -52,7 +53,7 @@ impl UdpProxy {
             tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     _ = notify_f.notified() => {}
-                    _ = forward_user_conn(udp_f, read_rx, send_tx, packet_size) => {}
+                    _ = forward_user_conn(udp_f, read_rx, send_tx, packet_size, max_connections) => {}
                 }
             }));
         }

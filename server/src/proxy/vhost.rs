@@ -1,6 +1,7 @@
 use crate::control::Control;
 use std::collections::HashMap;
-use std::sync::Weak;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -13,6 +14,8 @@ pub struct HttpRoute {
     pub host_header_rewrite: String,
 
     pub limiter: Option<std::sync::Arc<orbien_core::limit::BandwidthLimiter>>,
+    pub active_conns: Arc<AtomicUsize>,
+    pub max_connections: usize,
 }
 
 pub struct HttpVhost {

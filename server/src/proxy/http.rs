@@ -1,4 +1,5 @@
 use super::vhost::{build_domains, normalize_host, HttpRoute, HttpVhost};
+use super::{acquire_conn, ConnGuard};
 use crate::access::{prepare_visitor, AccessPolicy};
 use crate::control::Control;
 use crate::metrics::ServerMetrics;
@@ -6,7 +7,7 @@ use anyhow::{anyhow, bail, Result};
 use httparse::Status;
 use orbien_core::limit::{maybe_limit, BandwidthLimiter};
 use orbien_core::msg::NewProxy;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -32,6 +33,7 @@ impl HttpProxy {
         let name = np.proxy_name.clone();
         let locations = np.locations.clone();
         let rewrite = np.host_header_rewrite.clone();
+        let active_conns = Arc::new(AtomicUsize::new(0));
 
         for domain in &domains {
             if let Err(e) = vhost
@@ -44,6 +46,8 @@ impl HttpProxy {
                         locations: locations.clone(),
                         host_header_rewrite: rewrite.clone(),
                         limiter: limiter.clone(),
+                        active_conns: Arc::clone(&active_conns),
+                        max_connections: np.max_connections,
                     },
                 )
                 .await
@@ -133,6 +137,18 @@ async fn handle_http_visitor(
         write_not_found(&mut visitor.stream).await;
         return Err(anyhow!("http proxy client gone: {}", route.proxy_name));
     };
+
+    if !acquire_conn(&route.active_conns, route.max_connections) {
+        tracing::warn!(
+            proxy = %route.proxy_name,
+            max_connections = route.max_connections,
+            peer = %visitor.peer,
+            "connection limit reached, dropping"
+        );
+        write_service_unavailable(&mut visitor.stream).await;
+        return Ok(());
+    }
+    let _limit_guard = ConnGuard(Arc::clone(&route.active_conns));
 
     if !route.host_header_rewrite.is_empty() {
         rewrite_host_header(&mut head, &route.host_header_rewrite)?;
@@ -256,6 +272,16 @@ pub async fn write_not_found<W: AsyncWrite + Unpin>(stream: &mut W) {
     let body = "Not Found\n";
     let resp = format!(
         "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(resp.as_bytes()).await;
+}
+
+async fn write_service_unavailable<W: AsyncWrite + Unpin>(stream: &mut W) {
+    let body = "Service Unavailable\n";
+    let resp = format!(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
         body
     );

@@ -1,4 +1,5 @@
 use super::vhost::{build_domains, normalize_host};
+use super::{acquire_conn, ConnGuard};
 use crate::access::{prepare_visitor, AccessPolicy};
 use crate::control::Control;
 use crate::metrics;
@@ -7,7 +8,7 @@ use orbien_core::limit::{maybe_limit, BandwidthLimiter};
 use orbien_core::msg::NewProxy;
 use orbien_core::tls::{peek_client_hello_sni, PrefixedStream};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, Notify};
@@ -18,6 +19,8 @@ pub struct HttpsRoute {
     pub run_id: String,
     pub control: Weak<Control>,
     pub limiter: Option<Arc<BandwidthLimiter>>,
+    pub active_conns: Arc<AtomicUsize>,
+    pub max_connections: usize,
 }
 
 pub struct HttpsVhost {
@@ -81,6 +84,7 @@ impl HttpsProxy {
     ) -> Result<Self> {
         let domains = build_domains(&np.custom_domains, &np.subdomain, sub_domain_host)?;
         let name = np.proxy_name.clone();
+        let active_conns = Arc::new(AtomicUsize::new(0));
 
         for domain in &domains {
             if let Err(e) = vhost
@@ -91,6 +95,8 @@ impl HttpsProxy {
                         run_id: control.run_id.clone(),
                         control: Arc::downgrade(&control),
                         limiter: limiter.clone(),
+                        active_conns: Arc::clone(&active_conns),
+                        max_connections: np.max_connections,
                     },
                 )
                 .await
@@ -184,6 +190,17 @@ async fn handle_https_visitor(
     let Some(control) = route.control.upgrade() else {
         return Err(anyhow!("https proxy client gone: {}", route.proxy_name));
     };
+
+    if !acquire_conn(&route.active_conns, route.max_connections) {
+        tracing::warn!(
+            proxy = %route.proxy_name,
+            max_connections = route.max_connections,
+            peer = %visitor.peer,
+            "connection limit reached, dropping"
+        );
+        return Ok(());
+    }
+    let _limit_guard = ConnGuard(Arc::clone(&route.active_conns));
 
     let work = control.get_work_conn().await?;
     let work = control

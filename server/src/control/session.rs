@@ -412,6 +412,9 @@ impl Control {
         }
 
         let name = np.proxy_name.clone();
+        if np.max_connections > 0 {
+            tracing::info!(proxy = %name, max_connections = np.max_connections, "connection limit configured");
+        }
         {
             let mut pm = self.proxies.lock().await;
             if let Some(old_ty) = pm.remove(&name).await {
@@ -464,6 +467,9 @@ impl Control {
         }
 
         let name = np.proxy_name.clone();
+        if np.max_connections > 0 {
+            tracing::info!(proxy = %name, max_connections = np.max_connections, "connection limit configured");
+        }
         {
             let mut pm = self.proxies.lock().await;
             if let Some(old_ty) = pm.remove(&name).await {
@@ -527,6 +533,11 @@ impl Control {
             }
         }
 
+        let max_connections = np.max_connections;
+        if max_connections > 0 {
+            tracing::info!(proxy = %name, max_connections, "udp session limit configured");
+        }
+
         let proxy = UdpProxy::start(
             name.clone(),
             bind_addr,
@@ -534,6 +545,7 @@ impl Control {
             control,
             limiter,
             packet_size,
+            max_connections,
         )
         .await?;
         let remote_addr = format!(":{}", remote_port);

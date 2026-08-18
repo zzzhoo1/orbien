@@ -1,3 +1,4 @@
+use super::{acquire_conn, ConnGuard};
 use crate::access::{prepare_visitor, AccessPolicy};
 use crate::control::Control;
 use crate::metrics;
@@ -8,15 +9,6 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
-
-/// RAII guard: decrements active connection counter on drop.
-struct ConnGuard(Arc<AtomicUsize>);
-
-impl Drop for ConnGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
-    }
-}
 
 pub struct TcpProxy {
     pub name: String,
@@ -65,24 +57,15 @@ impl TcpProxy {
                                 if closed_flag.load(Ordering::SeqCst) { break; }
                                 let Some(ctl) = control_weak.upgrade() else { break; };
 
-                                // Reserve a slot before spawning so concurrent
-                                // accepts cannot all pass a stale load() check.
-                                if max_connections > 0 {
-                                    let current = active_conns_spawn.fetch_add(1, Ordering::SeqCst);
-                                    if current >= max_connections {
-                                        active_conns_spawn.fetch_sub(1, Ordering::SeqCst);
-                                        tracing::warn!(
-                                            proxy = %proxy_name,
-                                            current,
-                                            max_connections,
-                                            peer = %peer,
-                                            "connection limit reached, dropping"
-                                        );
-                                        drop(user_conn);
-                                        continue;
-                                    }
-                                } else {
-                                    active_conns_spawn.fetch_add(1, Ordering::Relaxed);
+                                if !acquire_conn(&active_conns_spawn, max_connections) {
+                                    tracing::warn!(
+                                        proxy = %proxy_name,
+                                        max_connections,
+                                        peer = %peer,
+                                        "connection limit reached, dropping"
+                                    );
+                                    drop(user_conn);
+                                    continue;
                                 }
 
                                 let pname = proxy_name.clone();

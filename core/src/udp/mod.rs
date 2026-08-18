@@ -17,6 +17,7 @@ pub async fn forward_user_conn(
     mut read_rx: mpsc::Receiver<UdpPacket>,
     send_tx: mpsc::Sender<UdpPacket>,
     buf_size: usize,
+    max_sessions: usize,
 ) {
     let udp_w = Arc::clone(&udp);
     let writer = tokio::spawn(async move {
@@ -31,10 +32,24 @@ pub async fn forward_user_conn(
         }
     });
 
+    let seen: Mutex<HashMap<SocketAddr, Instant>> = Mutex::new(HashMap::new());
     let mut buf = vec![0u8; buf_size.max(512)];
     loop {
         match udp.recv_from(&mut buf).await {
             Ok((n, remote)) => {
+                if max_sessions > 0 {
+                    let now = Instant::now();
+                    let mut map = seen.lock().await;
+                    map.retain(|_, last| now.duration_since(*last) < CLIENT_IDLE);
+                    if let Some(last) = map.get_mut(&remote) {
+                        *last = now;
+                    } else if map.len() >= max_sessions {
+                        tracing::trace!(%remote, max_sessions, "udp session limit reached; drop packet");
+                        continue;
+                    } else {
+                        map.insert(remote, now);
+                    }
+                }
                 let pkt = UdpPacket::new(buf[..n].to_vec(), Some(remote));
                 if send_tx.try_send(pkt).is_err() {
                     tracing::trace!("udp sendCh full; drop packet");
