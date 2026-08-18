@@ -59,6 +59,6 @@ denySrcCidrs = ["1.2.3.4/32"]
 | 参数                          | 必填 | 默认值     | 说明                        |
 |-----------------------------|----|---------|---------------------------|
 | `proxyProtocol`             | 否  | `false` | 是否解析上游 PROXY Protocol     |
-| `proxyProtocolTrustedCidrs` | 否  |         | 信任的上游 CIDR；空表示信任所有（有伪造风险） |
+| `proxyProtocolTrustedCidrs` | 否  |         | 信任的上游 CIDR；空则不解析 PP 头 |
 | `proxyProtocolTimeoutSecs`  | 否  | `5`     | 读取 PP 头超时（秒）              |
 | `denySrcCidrs`              | 否  |         | 拒绝的访客源 CIDR               |

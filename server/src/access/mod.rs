@@ -30,7 +30,7 @@ impl AccessPolicy {
         if cfg.proxy_protocol && trusted.is_empty() {
             tracing::warn!(
                 "proxyProtocol=true but proxyProtocolTrustedCidrs empty — \
-                 PP accepted from any peer (spoof risk); set trusted CIDRs in production"
+                 PROXY protocol headers are ignored until trusted CIDRs are set"
             );
         }
         Ok(Self {
@@ -42,10 +42,8 @@ impl AccessPolicy {
     }
 
     pub fn is_trusted_proxy(&self, ip: IpAddr) -> bool {
-        if self.trusted_proxy_cidrs.is_empty() {
-            return true;
-        }
-        self.trusted_proxy_cidrs.iter().any(|c| c.contains(ip))
+        !self.trusted_proxy_cidrs.is_empty()
+            && self.trusted_proxy_cidrs.iter().any(|c| c.contains(ip))
     }
 
     pub fn is_denied(&self, ip: IpAddr) -> bool {
