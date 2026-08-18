@@ -22,6 +22,7 @@ use axum::{
 use dashmap::DashMap;
 use rand::Rng;
 use std::{
+    net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -42,6 +43,8 @@ struct Session {
 
 const SESSION_TTL: Duration = Duration::from_secs(8 * 3600); // 8 h
 const COOKIE_NAME: &str = "orbien_session";
+const LOGIN_WINDOW: Duration = Duration::from_secs(60);
+const LOGIN_MAX_ATTEMPTS: u32 = 8;
 
 use webauthn_rs::prelude::Passkey;
 
@@ -56,6 +59,8 @@ pub struct AuthState {
     reg_states: DashMap<String, PasskeyRegistration>,
     /// pending authentication states keyed by a per-request token
     auth_states: DashMap<String, PasskeyAuthentication>,
+    /// failed login attempts keyed by client identity
+    login_attempts: DashMap<String, (u32, Instant)>,
     pub webauthn: Webauthn,
 }
 
@@ -69,6 +74,7 @@ impl AuthState {
             passkeys: DashMap::new(),
             reg_states: DashMap::new(),
             auth_states: DashMap::new(),
+            login_attempts: DashMap::new(),
             webauthn,
         })
     }
@@ -175,6 +181,36 @@ impl AuthState {
     pub fn take_auth_state(&self, key: &str) -> Option<PasskeyAuthentication> {
         self.auth_states.remove(key).map(|(_, v)| v)
     }
+
+    pub fn login_allowed(&self, key: &str) -> bool {
+        match self.login_attempts.get(key) {
+            Some(entry) => {
+                let (count, started) = *entry;
+                started.elapsed() > LOGIN_WINDOW || count < LOGIN_MAX_ATTEMPTS
+            }
+            None => true,
+        }
+    }
+
+    pub fn record_login_failure(&self, key: &str) {
+        self.login_attempts
+            .entry(key.to_string())
+            .and_modify(|(count, started)| {
+                if started.elapsed() > LOGIN_WINDOW {
+                    *count = 1;
+                    *started = Instant::now();
+                } else {
+                    *count = count.saturating_add(1);
+                }
+            })
+            .or_insert((1, Instant::now()));
+        self.login_attempts
+            .retain(|_, (_, started)| started.elapsed() <= LOGIN_WINDOW * 2);
+    }
+
+    pub fn clear_login_failures(&self, key: &str) {
+        self.login_attempts.remove(key);
+    }
 }
 
 fn random_token() -> String {
@@ -252,7 +288,7 @@ pub fn session_cookie(token: &str, clear: bool) -> HeaderValue {
         .unwrap()
     } else {
         HeaderValue::from_str(&format!(
-            "{COOKIE_NAME}={token}; HttpOnly; Path=/; SameSite=Strict; Max-Age={}",
+            "{COOKIE_NAME}={token}; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age={}",
             SESSION_TTL.as_secs()
         ))
         .unwrap()
@@ -263,6 +299,22 @@ pub fn session_cookie(token: &str, clear: bool) -> HeaderValue {
 
 fn needs_basic_auth(state: &DashState) -> bool {
     !state.cfg.user.is_empty() || !state.cfg.password.is_empty()
+}
+
+pub fn credentials_match(expected_user: &str, expected_pass: &str, user: &str, pass: &str) -> bool {
+    constant_time_eq(user.as_bytes(), expected_user.as_bytes())
+        && constant_time_eq(pass.as_bytes(), expected_pass.as_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let max = a.len().max(b.len());
+    let mut diff = a.len() ^ b.len();
+    for i in 0..max {
+        let x = *a.get(i).unwrap_or(&0);
+        let y = *b.get(i).unwrap_or(&0);
+        diff |= (x ^ y) as usize;
+    }
+    diff == 0
 }
 
 fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
@@ -285,5 +337,16 @@ fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
     let Some((u, p)) = s.split_once(':') else {
         return false;
     };
-    u == state.cfg.user && p == state.cfg.password
+    credentials_match(&state.cfg.user, &state.cfg.password, u, p)
+}
+
+pub fn client_key(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| v.parse::<IpAddr>().is_ok())
+        .unwrap_or("direct")
+        .to_string()
 }

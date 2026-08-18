@@ -1,7 +1,7 @@
 //! `/api/v1/auth/*` route handlers.
 
 use super::{
-    auth::{session_cookie, AuthState},
+    auth::{client_key, credentials_match, session_cookie, AuthState},
     DashState,
 };
 use axum::{
@@ -70,11 +70,25 @@ pub struct LoginReq {
 
 pub async fn login(
     State(state): State<Arc<DashState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<LoginReq>,
 ) -> Response {
-    let ok_creds = body.username == state.cfg.user && body.password == state.cfg.password;
+    let key = client_key(&headers);
+    if let Some(auth) = &state.auth {
+        if !auth.login_allowed(&key) {
+            return err(StatusCode::TOO_MANY_REQUESTS, "too many login attempts");
+        }
+    }
+
+    let ok_creds = credentials_match(&state.cfg.user, &state.cfg.password, &body.username, &body.password);
     if !ok_creds {
+        if let Some(auth) = &state.auth {
+            auth.record_login_failure(&key);
+        }
         return err(StatusCode::UNAUTHORIZED, "invalid credentials");
+    }
+    if let Some(auth) = &state.auth {
+        auth.clear_login_failures(&key);
     }
 
     let mut res = ok(serde_json::json!({ "username": body.username })).into_response();
@@ -117,8 +131,12 @@ pub struct RegBeginReq {
 
 pub async fn webauthn_register_begin(
     State(state): State<Arc<DashState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<RegBeginReq>,
 ) -> Response {
+    if !registration_authorized(&state, &headers) {
+        return err(StatusCode::UNAUTHORIZED, "login required to register a passkey");
+    }
     let auth = match get_auth(&state) {
         Ok(a) => a,
         Err(e) => return e,
@@ -158,8 +176,12 @@ pub struct RegFinishReq {
 
 pub async fn webauthn_register_finish(
     State(state): State<Arc<DashState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<RegFinishReq>,
 ) -> Response {
+    if !registration_authorized(&state, &headers) {
+        return err(StatusCode::UNAUTHORIZED, "login required to register a passkey");
+    }
     let auth = match get_auth(&state) {
         Ok(a) => a,
         Err(e) => return e,
@@ -215,7 +237,7 @@ pub async fn webauthn_login_begin(
     res.headers_mut().insert(
         header::SET_COOKIE,
         axum::http::HeaderValue::from_str(&format!(
-            "orbien_wa_state={state_key}; HttpOnly; Path=/api/v1/auth; SameSite=Strict; Max-Age=120"
+            "orbien_wa_state={state_key}; HttpOnly; Secure; Path=/api/v1/auth; SameSite=Strict; Max-Age=120"
         ))
         .unwrap(),
     );
@@ -253,7 +275,7 @@ pub async fn webauthn_login_finish(
             let token = auth.create_session(&username);
             let cookie = session_cookie(&token, false);
             let clear_wa = axum::http::HeaderValue::from_static(
-                "orbien_wa_state=; HttpOnly; Path=/api/v1/auth; Max-Age=0",
+                "orbien_wa_state=; HttpOnly; Secure; Path=/api/v1/auth; Max-Age=0",
             );
 
             let mut res = ok(serde_json::json!({ "username": username })).into_response();
@@ -272,4 +294,39 @@ pub async fn webauthn_login_finish(
 
 fn uuid_for_name(name: &str) -> uuid::Uuid {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes())
+}
+
+fn registration_authorized(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
+    if let Some(auth) = &state.auth {
+        if let Some(token) = super::auth::extract_cookie(headers, "orbien_session") {
+            if auth.validate_session(&token).is_some() {
+                return true;
+            }
+        }
+    }
+    // Keep Basic Auth as a bootstrap path for the first passkey.
+    basic_headers_ok(state, headers)
+}
+
+fn basic_headers_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
+    use base64::Engine;
+    let Some(h) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(b64) = h.strip_prefix("Basic ").or_else(|| h.strip_prefix("basic ")) else {
+        return false;
+    };
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) else {
+        return false;
+    };
+    let Ok(s) = String::from_utf8(raw) else {
+        return false;
+    };
+    let Some((u, p)) = s.split_once(':') else {
+        return false;
+    };
+    credentials_match(&state.cfg.user, &state.cfg.password, u, p)
 }
