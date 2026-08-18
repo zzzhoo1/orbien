@@ -18,7 +18,7 @@ pub async fn run(svc: Arc<Service>, cfg: WebServerConfig) -> Result<()> {
     // Build AuthState when both WebAuthn fields are populated.
     // `cfg.webauthn_enabled()` returns true only when rp_id AND origin are
     // non-empty, so a partial config is treated as "disabled".
-    let auth_state: Option<Arc<auth::AuthState>> = if cfg.webauthn_enabled() {
+    let auth_state: Option<Arc<auth::AuthState>> = Some(Arc::new(if cfg.webauthn_enabled() {
         match auth::AuthState::new(&cfg.webauthn_rp_id, &cfg.webauthn_origin) {
             Ok(a) => {
                 tracing::info!(
@@ -26,17 +26,17 @@ pub async fn run(svc: Arc<Service>, cfg: WebServerConfig) -> Result<()> {
                     origin = %cfg.webauthn_origin,
                     "WebAuthn enabled"
                 );
-                Some(Arc::new(a))
+                a
             }
             Err(e) => {
-                tracing::warn!("WebAuthn init failed, falling back to Basic Auth: {e}");
-                None
+                tracing::warn!("WebAuthn init failed, using password sessions only: {e}");
+                auth::AuthState::session_only()
             }
         }
     } else {
-        tracing::info!("WebAuthn not configured, using Basic Auth only");
-        None
-    };
+        tracing::info!("WebAuthn not configured, using password sessions + Basic Auth");
+        auth::AuthState::session_only()
+    }));
 
     let state = Arc::new(DashState {
         svc,

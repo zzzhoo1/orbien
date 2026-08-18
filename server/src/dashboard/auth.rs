@@ -61,22 +61,32 @@ pub struct AuthState {
     auth_states: DashMap<String, PasskeyAuthentication>,
     /// failed login attempts keyed by client identity
     login_attempts: DashMap<String, (u32, Instant)>,
-    pub webauthn: Webauthn,
+    pub webauthn: Option<Webauthn>,
 }
 
 impl AuthState {
-    pub fn new(rp_id: &str, rp_origin: &str) -> anyhow::Result<Self> {
-        let origin = url::Url::parse(rp_origin)
-            .map_err(|e| anyhow::anyhow!("invalid rp_origin {rp_origin}: {e}"))?;
-        let webauthn = WebauthnBuilder::new(rp_id, &origin)?.build()?;
-        Ok(Self {
+    pub fn session_only() -> Self {
+        Self {
             sessions: DashMap::new(),
             passkeys: DashMap::new(),
             reg_states: DashMap::new(),
             auth_states: DashMap::new(),
             login_attempts: DashMap::new(),
-            webauthn,
-        })
+            webauthn: None,
+        }
+    }
+
+    pub fn new(rp_id: &str, rp_origin: &str) -> anyhow::Result<Self> {
+        let origin = url::Url::parse(rp_origin)
+            .map_err(|e| anyhow::anyhow!("invalid rp_origin {rp_origin}: {e}"))?;
+        let webauthn = WebauthnBuilder::new(rp_id, &origin)?.build()?;
+        let mut this = Self::session_only();
+        this.webauthn = Some(webauthn);
+        Ok(this)
+    }
+
+    pub fn webauthn_enabled(&self) -> bool {
+        self.webauthn.is_some()
     }
 
     // ── session helpers ───────────────────────────────────────────────────────
@@ -280,19 +290,51 @@ pub fn extract_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
     None
 }
 
-pub fn session_cookie(token: &str, clear: bool) -> HeaderValue {
+pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
+    if let Some(proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+    {
+        return proto
+            .split(',')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("https");
+    }
+    origin.trim().to_ascii_lowercase().starts_with("https://")
+}
+
+pub fn session_cookie(token: &str, clear: bool, secure: bool) -> HeaderValue {
+    let secure_flag = if secure { "; Secure" } else { "" };
     if clear {
         HeaderValue::from_str(&format!(
-            "{COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0"
+            "{COOKIE_NAME}=; HttpOnly{secure_flag}; Path=/; SameSite=Strict; Max-Age=0"
         ))
         .unwrap()
     } else {
         HeaderValue::from_str(&format!(
-            "{COOKIE_NAME}={token}; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age={}",
+            "{COOKIE_NAME}={token}; HttpOnly{secure_flag}; Path=/; SameSite=Strict; Max-Age={}",
             SESSION_TTL.as_secs()
         ))
         .unwrap()
     }
+}
+
+pub fn wa_state_cookie(state_key: &str, secure: bool) -> HeaderValue {
+    let secure_flag = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "orbien_wa_state={state_key}; HttpOnly{secure_flag}; Path=/api/v1/auth; SameSite=Strict; Max-Age=120"
+    ))
+    .unwrap()
+}
+
+pub fn clear_wa_state_cookie(secure: bool) -> HeaderValue {
+    let secure_flag = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "orbien_wa_state=; HttpOnly{secure_flag}; Path=/api/v1/auth; Max-Age=0"
+    ))
+    .unwrap()
 }
 
 // ── basic-auth helpers (kept for backward compat) ─────────────────────────────

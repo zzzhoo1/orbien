@@ -1,7 +1,10 @@
 //! `/api/v1/auth/*` route handlers.
 
 use super::{
-    auth::{client_key, credentials_match, session_cookie, AuthState},
+    auth::{
+        clear_wa_state_cookie, client_key, cookie_secure, credentials_match, session_cookie,
+        wa_state_cookie, AuthState,
+    },
     DashState,
 };
 use axum::{
@@ -35,10 +38,25 @@ fn err(status: StatusCode, msg: &str) -> Response {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn get_auth(state: &DashState) -> Result<&AuthState, Response> {
+    let auth = state
+        .auth
+        .as_deref()
+        .ok_or_else(|| err(StatusCode::NOT_IMPLEMENTED, "auth not configured"))?;
+    if auth.webauthn.is_none() {
+        return Err(err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"));
+    }
+    Ok(auth)
+}
+
+fn get_sessions(state: &DashState) -> Result<&AuthState, Response> {
     state
         .auth
         .as_deref()
-        .ok_or_else(|| err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"))
+        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "auth not configured"))
+}
+
+fn cookie_is_secure(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
+    cookie_secure(headers, &state.cfg.webauthn_origin)
 }
 
 // ── auth status (public) ───────────────────────────────────────────────────
@@ -51,7 +69,11 @@ fn get_auth(state: &DashState) -> Result<&AuthState, Response> {
 /// { "code": 200, "msg": "", "data": { "webauthn": true, "password": true } }
 /// ```
 pub async fn auth_status(State(state): State<Arc<DashState>>) -> Response {
-    let webauthn_available = state.auth.is_some();
+    let webauthn_available = state
+        .auth
+        .as_ref()
+        .map(|a| a.webauthn_enabled())
+        .unwrap_or(false);
     let password_available = !state.cfg.user.is_empty();
     ok(serde_json::json!({
         "webauthn": webauthn_available,
@@ -92,16 +114,13 @@ pub async fn login(
     }
 
     let mut res = ok(serde_json::json!({ "username": body.username })).into_response();
-
-    // Always issue a session cookie when AuthState is present; when running in
-    // Basic-Auth-only mode we still return 200 so the SPA works, but there is
-    // no stateful session to set a cookie for.
-    if let Some(auth) = &state.auth {
-        let token = auth.create_session(&body.username);
-        let cookie = session_cookie(&token, false);
-        res.headers_mut().insert(header::SET_COOKIE, cookie);
-    }
-
+    let auth = match get_sessions(&state) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let token = auth.create_session(&body.username);
+    let cookie = session_cookie(&token, false, cookie_is_secure(&state, &headers));
+    res.headers_mut().insert(header::SET_COOKIE, cookie);
     res
 }
 
@@ -116,7 +135,7 @@ pub async fn logout(
             auth.remove_session(&token);
         }
     }
-    let clear = session_cookie("", true);
+    let clear = session_cookie("", true, cookie_is_secure(&state, &headers));
     let mut res = ok(()).into_response();
     res.headers_mut().insert(header::SET_COOKIE, clear);
     res
@@ -148,8 +167,19 @@ pub async fn webauthn_register_begin(
         .map(|pk| pk.cred_id().clone())
         .collect();
 
+    let session_user = current_username(&state, &headers);
+    if let Some(user) = &session_user {
+        if user != &body.username {
+            return err(StatusCode::FORBIDDEN, "cannot register a passkey for another user");
+        }
+    }
+
     let user_id = uuid_for_name(&body.username);
-    let (challenge, reg_state) = match auth.webauthn.start_passkey_registration(
+    let webauthn = match auth.webauthn.as_ref() {
+        Some(w) => w,
+        None => return err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"),
+    };
+    let (challenge, reg_state) = match webauthn.start_passkey_registration(
         user_id,
         &body.username,
         &body.username,
@@ -192,9 +222,17 @@ pub async fn webauthn_register_finish(
         None => return err(StatusCode::BAD_REQUEST, "no pending registration"),
     };
 
-    match auth
-        .webauthn
-        .finish_passkey_registration(&body.credential, &reg_state)
+    if let Some(user) = current_username(&state, &headers) {
+        if user != body.username {
+            return err(StatusCode::FORBIDDEN, "cannot register a passkey for another user");
+        }
+    }
+
+    let webauthn = match auth.webauthn.as_ref() {
+        Some(w) => w,
+        None => return err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"),
+    };
+    match webauthn.finish_passkey_registration(&body.credential, &reg_state)
     {
         Ok(passkey) => {
             auth.store_passkey(&body.username, passkey);
@@ -222,7 +260,11 @@ pub async fn webauthn_login_begin(
         return err(StatusCode::BAD_REQUEST, "no registered passkeys");
     }
 
-    let (challenge, auth_state) = match auth.webauthn.start_passkey_authentication(&all_keys) {
+    let webauthn = match auth.webauthn.as_ref() {
+        Some(w) => w,
+        None => return err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"),
+    };
+    let (challenge, auth_state) = match webauthn.start_passkey_authentication(&all_keys) {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("webauthn login begin error: {e}");
@@ -234,13 +276,9 @@ pub async fn webauthn_login_begin(
     auth.save_auth_state(&state_key, auth_state);
 
     let mut res = ok(challenge).into_response();
-    res.headers_mut().insert(
-        header::SET_COOKIE,
-        axum::http::HeaderValue::from_str(&format!(
-            "orbien_wa_state={state_key}; HttpOnly; Secure; Path=/api/v1/auth; SameSite=Strict; Max-Age=120"
-        ))
-        .unwrap(),
-    );
+    // begin has no incoming headers besides State; treat configured origin as source of truth
+    let secure = state.cfg.webauthn_origin.trim().to_ascii_lowercase().starts_with("https://");
+    res.headers_mut().insert(header::SET_COOKIE, wa_state_cookie(&state_key, secure));
     res
 }
 
@@ -266,17 +304,20 @@ pub async fn webauthn_login_finish(
         None => return err(StatusCode::BAD_REQUEST, "expired or unknown auth state"),
     };
 
-    match auth.webauthn.finish_passkey_authentication(&credential, &auth_state) {
+    let webauthn = match auth.webauthn.as_ref() {
+        Some(w) => w,
+        None => return err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"),
+    };
+    match webauthn.finish_passkey_authentication(&credential, &auth_state) {
         Ok(auth_result) => {
             let username = auth
                 .apply_auth_result(&auth_result)
                 .unwrap_or_else(|| "admin".to_string());
 
             let token = auth.create_session(&username);
-            let cookie = session_cookie(&token, false);
-            let clear_wa = axum::http::HeaderValue::from_static(
-                "orbien_wa_state=; HttpOnly; Secure; Path=/api/v1/auth; Max-Age=0",
-            );
+            let secure = cookie_is_secure(&state, &req_headers);
+            let cookie = session_cookie(&token, false, secure);
+            let clear_wa = clear_wa_state_cookie(secure);
 
             let mut res = ok(serde_json::json!({ "username": username })).into_response();
             res.headers_mut().insert(header::SET_COOKIE, cookie);
@@ -294,6 +335,12 @@ pub async fn webauthn_login_finish(
 
 fn uuid_for_name(name: &str) -> uuid::Uuid {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes())
+}
+
+fn current_username(state: &DashState, headers: &axum::http::HeaderMap) -> Option<String> {
+    let auth = state.auth.as_ref()?;
+    let token = super::auth::extract_cookie(headers, "orbien_session")?;
+    auth.validate_session(&token)
 }
 
 fn registration_authorized(state: &DashState, headers: &axum::http::HeaderMap) -> bool {

@@ -22,7 +22,7 @@ pub enum MessageWriteError {
     Json(#[from] serde_json::Error),
 }
 
-const MAX_MSG_SIZE: u32 = 4 * 1024 * 1024;
+const MAX_MSG_SIZE: u32 = 256 * 1024;
 
 pub async fn write_msg<W: AsyncWrite + Unpin>(
     writer: &mut W,

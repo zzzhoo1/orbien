@@ -333,10 +333,24 @@ impl Service {
             return Err(anyhow!("authorization failed"));
         }
 
-        let run_id = if login.run_id.is_empty() {
+        if let Err(reason) = validate_login_fields(&login) {
+            let mut stream = stream;
+            let _ = msg::write_msg(
+                &mut stream,
+                &Message::LoginResp(LoginResp {
+                    version: VERSION.into(),
+                    run_id: String::new(),
+                    error: reason.clone(),
+                }),
+            )
+            .await;
+            return Err(anyhow!(reason));
+        }
+
+        let run_id = if login.run_id.trim().is_empty() {
             short_run_id()
         } else {
-            login.run_id.clone()
+            login.run_id.trim().to_string()
         };
 
         let stream = stream;
@@ -373,11 +387,11 @@ impl Service {
 
         // #3 — single_client_per_user: kick any existing connection from the
         // same user (different run_id) before inserting the new one.
-        if self.cfg.single_client_per_user {
+        if self.cfg.single_client_per_user && !login.user.trim().is_empty() {
             let to_kick: Vec<Arc<Control>> = {
                 let map = self.controls.lock().await;
                 map.values()
-                    .filter(|c| c.user == login.user && c.run_id != run_id)
+                    .filter(|c| !c.user.is_empty() && c.user == login.user && c.run_id != run_id)
                     .cloned()
                     .collect()
             };
@@ -602,6 +616,31 @@ pub struct DashboardSnapshot {
 fn short_run_id() -> String {
     let hex = Uuid::new_v4().simple().to_string();
     hex[..16].to_owned()
+}
+
+fn valid_ident(value: &str, max_len: usize) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= max_len
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn validate_login_fields(login: &Login) -> Result<(), String> {
+    if !login.run_id.trim().is_empty() && !valid_ident(&login.run_id, 64) {
+        return Err("invalid run_id".into());
+    }
+    if login.user.len() > 64 {
+        return Err("user too long".into());
+    }
+    if login.hostname.len() > 128 || login.os.len() > 64 || login.arch.len() > 64 {
+        return Err("login metadata too long".into());
+    }
+    if login.version.len() > 64 {
+        return Err("version too long".into());
+    }
+    Ok(())
 }
 
 fn format_proxy_time(unix: Option<i64>) -> Option<String> {
