@@ -3,15 +3,28 @@ use crate::control::Control;
 use crate::metrics;
 use anyhow::Result;
 use orbien_core::limit::{maybe_limit, BandwidthLimiter};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 
+/// RAII guard: decrements active connection counter on drop.
+struct ConnGuard(Arc<AtomicUsize>);
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub struct TcpProxy {
     pub name: String,
     pub remote_port: u16,
+    /// Current number of active (in-flight) connections.
+    pub active_conns: Arc<AtomicUsize>,
+    /// Optional upper bound on simultaneous connections (0 = unlimited).
+    pub max_connections: usize,
     closed: Arc<AtomicBool>,
     notify: Arc<Notify>,
     accept_task: Mutex<Option<JoinHandle<()>>>,
@@ -25,18 +38,21 @@ impl TcpProxy {
         control: Arc<Control>,
         limiter: Option<Arc<BandwidthLimiter>>,
         access: Arc<AccessPolicy>,
+        max_connections: usize,
     ) -> Result<Self> {
         let addr = format!("{bind_addr}:{remote_port}");
         let listener = TcpListener::bind(&addr).await?;
-        tracing::info!(%addr, proxy = %name, "tcp proxy listening");
+        tracing::info!(%addr, proxy = %name, max_connections, "tcp proxy listening");
 
         let closed = Arc::new(AtomicBool::new(false));
         let notify = Arc::new(Notify::new());
+        let active_conns = Arc::new(AtomicUsize::new(0));
+
         let closed_flag = Arc::clone(&closed);
         let notify_wait = Arc::clone(&notify);
+        let active_conns_spawn = Arc::clone(&active_conns);
         let proxy_name = name.clone();
         let limiter_spawn = limiter.clone();
-
         let control_weak = Arc::downgrade(&control);
 
         let accept_task = tokio::spawn(async move {
@@ -52,9 +68,31 @@ impl TcpProxy {
                                 let Some(ctl) = control_weak.upgrade() else {
                                     break;
                                 };
+
+                                // ── Connection limit check ──────────────────
+                                if max_connections > 0 {
+                                    let current =
+                                        active_conns_spawn.load(Ordering::Relaxed);
+                                    if current >= max_connections {
+                                        tracing::warn!(
+                                            proxy = %proxy_name,
+                                            current,
+                                            max_connections,
+                                            peer = %peer,
+                                            "connection limit reached, dropping"
+                                        );
+                                        // Drop user_conn here → TCP RST sent
+                                        drop(user_conn);
+                                        continue;
+                                    }
+                                }
+                                // ───────────────────────────────────────────
+
                                 let pname = proxy_name.clone();
                                 let lim = limiter_spawn.clone();
                                 let access = Arc::clone(&access);
+                                let active = Arc::clone(&active_conns_spawn);
+
                                 tokio::spawn(async move {
                                     if let Err(e) = handle_user_conn(
                                         ctl,
@@ -63,10 +101,15 @@ impl TcpProxy {
                                         peer,
                                         lim,
                                         access,
+                                        active,
                                     )
                                     .await
                                     {
-                                        tracing::debug!(proxy = %pname, error = %e, "user conn ended");
+                                        tracing::debug!(
+                                            proxy = %pname,
+                                            error = %e,
+                                            "user conn ended"
+                                        );
                                     }
                                 });
                             }
@@ -83,14 +126,25 @@ impl TcpProxy {
         Ok(Self {
             name,
             remote_port,
+            active_conns,
+            max_connections,
             closed,
             notify,
             accept_task: Mutex::new(Some(accept_task)),
         })
     }
 
+    /// Returns the current number of active connections.
+    pub fn active_connections(&self) -> usize {
+        self.active_conns.load(Ordering::Relaxed)
+    }
+
     pub async fn close(&self) {
-        tracing::info!(proxy = %self.name, remote_port = self.remote_port, "tcp proxy closing");
+        tracing::info!(
+            proxy = %self.name,
+            remote_port = self.remote_port,
+            "tcp proxy closing"
+        );
         self.closed.store(true, Ordering::SeqCst);
         self.notify.notify_waiters();
         if let Some(h) = self.accept_task.lock().await.take() {
@@ -117,7 +171,12 @@ async fn handle_user_conn(
     peer: std::net::SocketAddr,
     limiter: Option<Arc<BandwidthLimiter>>,
     access: Arc<AccessPolicy>,
+    active_conns: Arc<AtomicUsize>,
 ) -> Result<()> {
+    // Increment counter; guard will decrement on any exit path.
+    active_conns.fetch_add(1, Ordering::Relaxed);
+    let _guard = ConnGuard(Arc::clone(&active_conns));
+
     let visitor = prepare_visitor(user_conn, peer, &access).await?;
     let work = control.get_work_conn().await?;
     let work = control
