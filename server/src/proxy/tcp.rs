@@ -65,10 +65,12 @@ impl TcpProxy {
                                 if closed_flag.load(Ordering::SeqCst) { break; }
                                 let Some(ctl) = control_weak.upgrade() else { break; };
 
-                                // Connection limit check
+                                // Reserve a slot before spawning so concurrent
+                                // accepts cannot all pass a stale load() check.
                                 if max_connections > 0 {
-                                    let current = active_conns_spawn.load(Ordering::Relaxed);
+                                    let current = active_conns_spawn.fetch_add(1, Ordering::SeqCst);
                                     if current >= max_connections {
+                                        active_conns_spawn.fetch_sub(1, Ordering::SeqCst);
                                         tracing::warn!(
                                             proxy = %proxy_name,
                                             current,
@@ -79,6 +81,8 @@ impl TcpProxy {
                                         drop(user_conn);
                                         continue;
                                     }
+                                } else {
+                                    active_conns_spawn.fetch_add(1, Ordering::Relaxed);
                                 }
 
                                 let pname = proxy_name.clone();
@@ -170,7 +174,6 @@ async fn handle_user_conn(
     access: Arc<AccessPolicy>,
     active_conns: Arc<AtomicUsize>,
 ) -> Result<()> {
-    active_conns.fetch_add(1, Ordering::Relaxed);
     let _guard = ConnGuard(Arc::clone(&active_conns));
 
     let visitor = prepare_visitor(user_conn, peer, &access).await?;
