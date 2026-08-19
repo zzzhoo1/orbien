@@ -1,0 +1,144 @@
+name: Docker
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  docker-build-smoke:
+    name: Docker – build & smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build server image ─────────────────────────────────────────────────
+      - name: Build orbien-server image
+        run: |
+          docker build \
+            -f docker/Dockerfile.server \
+            -t orbien-server:ci \
+            .
+
+      # ── Build client image ─────────────────────────────────────────────────
+      - name: Build orbien-client image
+        run: |
+          docker build \
+            -f docker/Dockerfile.client \
+            -t orbien-client:ci \
+            .
+
+      # ── Verify binaries exist inside images ────────────────────────────────
+      - name: Verify server binary
+        run: docker run --rm orbien-server:ci orbien-server --help
+
+      - name: Verify client binary
+        run: docker run --rm orbien-client:ci orbien --help
+
+      # ── Smoke test: TCP tunnel through Docker ──────────────────────────────
+      - name: TCP tunnel smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Server config (written to host, mounted into container)
+          mkdir -p /tmp/orbien-ci
+          cat > /tmp/orbien-ci/srv.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 9527
+          EOF
+
+          # Client config
+          cat > /tmp/orbien-ci/cli.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 9527
+
+          [[proxies]]
+          name       = "echo"
+          type       = "tcp"
+          localIP    = "127.0.0.1"
+          localPort  = 18000
+          remotePort = 18001
+          EOF
+
+          cleanup() {
+            set +e
+            docker rm -f orbien-server-ci orbien-client-ci 2>/dev/null || true
+            kill "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Echo server on host (localPort 18000)
+          python3 -u - <<'PY' > /tmp/orbien-ci/echo.log 2>&1 &
+          import socketserver
+          class H(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      d = self.request.recv(65536)
+                      if not d: break
+                      self.request.sendall(d)
+          class S(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with S(("127.0.0.1", 18000), H) as s:
+              s.serve_forever()
+          PY
+          ECHO_PID=$!
+
+          # Start server container (host network so client on host can reach it)
+          docker run -d \
+            --name orbien-server-ci \
+            --network host \
+            -v /tmp/orbien-ci/srv.toml:/etc/orbien/orbien-server.toml:ro \
+            orbien-server:ci
+
+          # Wait for server bind port
+          for i in $(seq 1 40); do nc -z 127.0.0.1 9527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 9527 || {
+            echo "FAIL: server container not listening on 9527"
+            docker logs orbien-server-ci
+            exit 1
+          }
+          echo "Server container ready"
+
+          # Start client container (host network so it reaches server + echo)
+          docker run -d \
+            --name orbien-client-ci \
+            --network host \
+            -v /tmp/orbien-ci/cli.toml:/etc/orbien/orbien.toml:ro \
+            orbien-client:ci
+
+          # Wait for tunnel remote port
+          for i in $(seq 1 80); do nc -z 127.0.0.1 18001 && break; sleep 0.25; done
+          nc -z 127.0.0.1 18001 || {
+            echo "FAIL: tunnel port 18001 not open"
+            echo "=== server ==="; docker logs orbien-server-ci
+            echo "=== client ==="; docker logs orbien-client-ci
+            echo "=== echo ===";   cat /tmp/orbien-ci/echo.log
+            exit 1
+          }
+          echo "Tunnel ready"
+
+          # Echo round-trip
+          PAYLOAD="docker-smoke-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 18001)
+          echo "Sent:     $PAYLOAD"
+          echo "Received: $RESPONSE"
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: echo mismatch"
+            docker logs orbien-server-ci
+            docker logs orbien-client-ci
+            exit 1
+          fi
+          echo "PASS: Docker TCP tunnel smoke test"
+
+      - name: Dump Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== orbien-server-ci ==="
+          docker logs orbien-server-ci 2>/dev/null || true
+          echo "=== orbien-client-ci ==="
+          docker logs orbien-client-ci 2>/dev/null || true
+          echo "=== echo ==="
+          cat /tmp/orbien-ci/echo.log 2>/dev/null || true
