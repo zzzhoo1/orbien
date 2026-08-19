@@ -8,13 +8,20 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+#[derive(Debug, Clone, Default)]
+pub struct TokenAccessPolicy {
+    pub allowed_tunnels: HashSet<String>,
+    pub allowed_protocols: HashSet<String>,
+    pub allowed_remote_ports: HashSet<u16>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AccessPolicy {
     pub proxy_protocol: bool,
     pub trusted_proxy_cidrs: Vec<Cidr>,
     pub deny_src_cidrs: Vec<Cidr>,
     pub pp_header_timeout: Duration,
-    pub token_policies: HashMap<String, HashSet<String>>,
+    pub token_policies: HashMap<String, TokenAccessPolicy>,
 }
 
 impl AccessPolicy {
@@ -47,7 +54,26 @@ impl AccessPolicy {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect::<HashSet<_>>();
-            token_policies.insert(token.to_string(), tunnels);
+            let protocols = policy
+                .allowed_protocols
+                .iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect::<HashSet<_>>();
+            let ports = policy
+                .allowed_remote_ports
+                .iter()
+                .copied()
+                .filter(|p| *p > 0)
+                .collect::<HashSet<_>>();
+            token_policies.insert(
+                token.to_string(),
+                TokenAccessPolicy {
+                    allowed_tunnels: tunnels,
+                    allowed_protocols: protocols,
+                    allowed_remote_ports: ports,
+                },
+            );
         }
 
         Ok(Self {
@@ -68,12 +94,36 @@ impl AccessPolicy {
         !self.deny_src_cidrs.is_empty() && self.deny_src_cidrs.iter().any(|c| c.contains(ip))
     }
 
-    pub fn authorize_tunnel(&self, token: &str, tunnel: &str) -> Result<()> {
-        match self.token_policies.get(token) {
-            Some(allowed) if allowed.contains(tunnel) => Ok(()),
-            Some(_) => bail!("token is not allowed to register tunnel: {tunnel}"),
-            None => Ok(()),
+    pub fn authorize_proxy(
+        &self,
+        token: &str,
+        tunnel: &str,
+        proxy_type: &str,
+        remote_port: Option<u16>,
+    ) -> Result<()> {
+        let Some(policy) = self.token_policies.get(token) else {
+            return Ok(());
+        };
+
+        if !policy.allowed_tunnels.is_empty() && !policy.allowed_tunnels.contains(tunnel) {
+            bail!("token is not allowed to register tunnel: {tunnel}");
         }
+
+        let proxy_type = proxy_type.trim().to_ascii_lowercase();
+        if !policy.allowed_protocols.is_empty() && !policy.allowed_protocols.contains(&proxy_type) {
+            bail!("token is not allowed to register proxy type: {proxy_type}");
+        }
+
+        if !policy.allowed_remote_ports.is_empty() {
+            let Some(port) = remote_port else {
+                bail!("token is not allowed to register proxy without remote port restriction match");
+            };
+            if !policy.allowed_remote_ports.contains(&port) {
+                bail!("token is not allowed to use remote port: {port}");
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -220,4 +270,78 @@ fn ipv6_in_cidr(net: Ipv6Addr, prefix: u8, ip: Ipv6Addr) -> bool {
     }
     let mask = 0xffu8 << (8 - rem);
     (net_o[full] & mask) == (ip_o[full] & mask)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{AccessPolicy, TokenAccessPolicy};
+    use std::collections::{HashMap, HashSet};
+    use std::time::Duration;
+
+    fn hs_str(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn hs_u16(items: &[u16]) -> HashSet<u16> {
+        items.iter().copied().collect()
+    }
+
+    fn policy(token_policy: TokenAccessPolicy) -> AccessPolicy {
+        let mut token_policies = HashMap::new();
+        token_policies.insert("tok-a".to_string(), token_policy);
+        AccessPolicy {
+            proxy_protocol: false,
+            trusted_proxy_cidrs: vec![],
+            deny_src_cidrs: vec![],
+            pp_header_timeout: Duration::from_secs(1),
+            token_policies,
+        }
+    }
+
+    #[test]
+    fn authorize_proxy_allows_matching_rules() {
+        let p = policy(TokenAccessPolicy {
+            allowed_tunnels: hs_str(&["db"]),
+            allowed_protocols: hs_str(&["tcp"]),
+            allowed_remote_ports: hs_u16(&[3306]),
+        });
+        assert!(p.authorize_proxy("tok-a", "db", "tcp", Some(3306)).is_ok());
+    }
+
+    #[test]
+    fn authorize_proxy_rejects_tunnel() {
+        let p = policy(TokenAccessPolicy {
+            allowed_tunnels: hs_str(&["db"]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "web", "tcp", Some(3306)).is_err());
+    }
+
+    #[test]
+    fn authorize_proxy_rejects_protocol() {
+        let p = policy(TokenAccessPolicy {
+            allowed_protocols: hs_str(&["tcp", "udp"]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "db", "http", None).is_err());
+    }
+
+    #[test]
+    fn authorize_proxy_rejects_remote_port() {
+        let p = policy(TokenAccessPolicy {
+            allowed_remote_ports: hs_u16(&[3306]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "db", "tcp", Some(5432)).is_err());
+    }
+
+    #[test]
+    fn authorize_proxy_ignores_unconfigured_dimensions() {
+        let p = policy(TokenAccessPolicy {
+            allowed_protocols: hs_str(&["http"]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "any", "http", None).is_ok());
+    }
 }

@@ -127,6 +127,10 @@ pub struct TokenPolicy {
     pub token: String,
     #[serde(default)]
     pub allowed_tunnels: Vec<String>,
+    #[serde(default)]
+    pub allowed_protocols: Vec<String>,
+    #[serde(default)]
+    pub allowed_remote_ports: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

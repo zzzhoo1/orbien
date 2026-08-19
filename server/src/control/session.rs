@@ -342,7 +342,13 @@ impl Control {
 
     async fn register_proxy(self: &Arc<Self>, np: &NewProxy) -> Result<String> {
         Self::validate_proxy_name(&np.proxy_name)?;
-        self.access.authorize_tunnel(&self.user, &np.proxy_name)?;
+        let remote_port = if np.remote_port > 0 && np.remote_port <= 65535 {
+            Some(np.remote_port as u16)
+        } else {
+            None
+        };
+        self.access
+            .authorize_proxy(&self.user, &np.proxy_name, &np.proxy_type, remote_port)?;
         match np.proxy_type.as_str() {
             "tcp" => self.register_tcp_proxy(np).await,
             "http" => self.register_http_proxy(np).await,
