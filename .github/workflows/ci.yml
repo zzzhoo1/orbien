@@ -188,7 +188,8 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bins/orbien-server bins/orbien
 
-      - name: Run E2E HTTP tunnel
+      # ── Case 1: basic forward + Host header ────────────────────────────────
+      - name: "HTTP E2E – 1: basic forward + Host header"
         shell: bash
         run: |
           set -euo pipefail
@@ -214,12 +215,8 @@ jobs:
 
           cleanup() {
             set +e
-            if [ -n "${CLIENT_PID:-}" ]; then kill "$CLIENT_PID" 2>/dev/null || true; fi
-            if [ -n "${SERVER_PID:-}" ]; then kill "$SERVER_PID" 2>/dev/null || true; fi
-            if [ -n "${HTTP_PID:-}" ]; then kill "$HTTP_PID" 2>/dev/null || true; fi
-            wait "${CLIENT_PID:-}" 2>/dev/null || true
-            wait "${SERVER_PID:-}" 2>/dev/null || true
-            wait "${HTTP_PID:-}" 2>/dev/null || true
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
           }
           trap cleanup EXIT
 
@@ -233,53 +230,299 @@ jobs:
                   self.send_header('Content-Length', str(len(body)))
                   self.end_headers()
                   self.wfile.write(body)
-              def log_message(self, fmt, *args):
-                  pass
+              def log_message(self, fmt, *args): pass
           ThreadingHTTPServer(("127.0.0.1", 17070), Handler).serve_forever()
           PY
           HTTP_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
           SERVER_PID=$!
-
-          for i in $(seq 1 40); do
-            if nc -z 127.0.0.1 9527 && nc -z 127.0.0.1 18080; then
-              echo "server ready"
-              break
-            fi
-            sleep 0.25
-          done
-          nc -z 127.0.0.1 9527 || { echo "orbien-server control failed to start"; cat /tmp/server.log; exit 1; }
-          nc -z 127.0.0.1 18080 || { echo "orbien-server http vhost failed to start"; cat /tmp/server.log; exit 1; }
-
           stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client.log 2>&1 &
           CLIENT_PID=$!
 
-          for i in $(seq 1 80); do
-            if curl -fsS -H 'Host: demo.test.local' http://127.0.0.1:18080/healthz >/tmp/http-response.txt 2>/dev/null; then
-              echo "http tunnel ready"
-              break
-            fi
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: demo.test.local' http://127.0.0.1:18080/healthz >/tmp/http-response.txt 2>/dev/null && break
             sleep 0.25
           done
 
-          if ! curl -fsS -H 'Host: demo.test.local' http://127.0.0.1:18080/healthz >/tmp/http-response.txt; then
-            echo "http tunnel failed"
-            echo "=== server ===" && cat /tmp/server.log
-            echo "=== client ===" && cat /tmp/client.log
-            echo "=== upstream ===" && cat /tmp/http-upstream.log
-            exit 1
-          fi
-
-          RESPONSE=$(cat /tmp/http-response.txt)
-          echo "Response: $RESPONSE"
-          printf '%s' "$RESPONSE" | grep -F 'orbien-http-ok path=/healthz host=demo.test.local' >/dev/null || {
-            echo "unexpected http response"
-            echo "=== server ===" && cat /tmp/server.log
-            echo "=== client ===" && cat /tmp/client.log
-            echo "=== upstream ===" && cat /tmp/http-upstream.log
+          curl -fsSo /tmp/http-response.txt -H 'Host: demo.test.local' http://127.0.0.1:18080/healthz || {
+            echo "FAIL: basic tunnel not up"
+            cat /tmp/server.log; cat /tmp/client.log; exit 1
+          }
+          grep -F 'orbien-http-ok path=/healthz host=demo.test.local' /tmp/http-response.txt || {
+            echo "FAIL: unexpected body: $(cat /tmp/http-response.txt)"
             exit 1
           }
+          echo "PASS: basic forward + Host header"
+
+      # ── Case 2: unknown domain → 4xx / connection refused ──────────────────
+      - name: "HTTP E2E – 2: unknown domain returns 4xx"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 9528
+          vhostHTTPPort = 18081
+          subDomainHost = "test.local"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server2.log 2>&1 &
+          SERVER_PID=$!
+
+          for i in $(seq 1 40); do nc -z 127.0.0.1 18081 && break; sleep 0.25; done
+          nc -z 127.0.0.1 18081 || { echo "server not up"; cat /tmp/server2.log; exit 1; }
+
+          HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' -H 'Host: notregistered.test.local' http://127.0.0.1:18081/ || true)
+          echo "HTTP status for unknown domain: $HTTP_CODE"
+          case "$HTTP_CODE" in
+            4*|000) echo "PASS: unknown domain rejected (status=$HTTP_CODE)" ;;
+            *) echo "FAIL: expected 4xx or connection refused, got $HTTP_CODE"; exit 1 ;;
+          esac
+
+      # ── Case 3: same-name tunnel re-registration ───────────────────────────
+      - name: "HTTP E2E – 3: re-register same tunnel, route survives"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 9529
+          vhostHTTPPort = 18082
+          subDomainHost = "test.local"
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 9529
+
+          [[proxies]]
+          name      = "web"
+          type      = "http"
+          localIP   = "127.0.0.1"
+          localPort = 17071
+          subdomain = "demo2"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 -u - <<'PY' > /tmp/http2-upstream.log 2>&1 &
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = b"alive"
+                  self.send_response(200)
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17071), Handler).serve_forever()
+          PY
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server3.log 2>&1 &
+          SERVER_PID=$!
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client3a.log 2>&1 &
+          CLIENT1_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null || {
+            echo "FAIL: first registration not up"
+            cat /tmp/server3.log; cat /tmp/client3a.log; exit 1
+          }
+          echo "First client up"
+
+          # Kill first client and reconnect with second
+          kill "$CLIENT1_PID" 2>/dev/null || true
+          wait "$CLIENT1_PID" 2>/dev/null || true
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client3b.log 2>&1 &
+          CLIENT2_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null || {
+            echo "FAIL: route gone after re-registration"
+            cat /tmp/server3.log; cat /tmp/client3b.log; exit 1
+          }
+          echo "PASS: re-registration route survives"
+
+      # ── Case 4: concurrent requests ────────────────────────────────────────
+      - name: "HTTP E2E – 4: concurrent requests"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 9530
+          vhostHTTPPort = 18083
+          subDomainHost = "test.local"
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 9530
+
+          [[proxies]]
+          name      = "web"
+          type      = "http"
+          localIP   = "127.0.0.1"
+          localPort = 17072
+          subdomain = "conc"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 -u - <<'PY' > /tmp/http3-upstream.log 2>&1 &
+          import time
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(0.05)
+                  body = b"concurrent-ok"
+                  self.send_response(200)
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17072), Handler).serve_forever()
+          PY
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server4.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client4.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: conc.test.local' http://127.0.0.1:18083/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS -H 'Host: conc.test.local' http://127.0.0.1:18083/ >/dev/null || {
+            echo "FAIL: concurrent test tunnel not up"
+            cat /tmp/server4.log; cat /tmp/client4.log; exit 1
+          }
+
+          # Fire 20 concurrent requests
+          FAIL=0
+          PIDS=()
+          for idx in $(seq 1 20); do
+            curl -fsS -H 'Host: conc.test.local' http://127.0.0.1:18083/ -o /tmp/conc-$idx.txt &
+            PIDS+=($!)
+          done
+          for pid in "${PIDS[@]}"; do
+            wait "$pid" || FAIL=$((FAIL+1))
+          done
+          if [ "$FAIL" -gt 0 ]; then
+            echo "FAIL: $FAIL / 20 concurrent requests failed"
+            cat /tmp/server4.log; cat /tmp/client4.log; exit 1
+          fi
+          echo "PASS: 20/20 concurrent requests succeeded"
+
+      # ── Case 5: maxConnections → 503 ──────────────────────────────────────
+      - name: "HTTP E2E – 5: maxConnections limit returns 503"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 9531
+          vhostHTTPPort = 18084
+          subDomainHost = "test.local"
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 9531
+
+          [[proxies]]
+          name           = "web"
+          type           = "http"
+          localIP        = "127.0.0.1"
+          localPort      = 17073
+          subdomain      = "limited"
+          maxConnections = 1
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Slow upstream: keeps the first connection busy for 3 s
+          python3 -u - <<'PY' > /tmp/http4-upstream.log 2>&1 &
+          import time
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(3)
+                  body = b"slow-ok"
+                  self.send_response(200)
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17073), Handler).serve_forever()
+          PY
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server5.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client5.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: limited.test.local' http://127.0.0.1:18084/ >/dev/null 2>/dev/null && break
+            # 503 also means vhost is up
+            CODE=$(curl -so /dev/null -w '%{http_code}' -H 'Host: limited.test.local' http://127.0.0.1:18084/ 2>/dev/null || true)
+            [ "$CODE" = "503" ] && break
+            sleep 0.25
+          done
+
+          # Send first request in background (will hold the single slot for 3 s)
+          curl -s -H 'Host: limited.test.local' http://127.0.0.1:18084/ -o /tmp/slow-resp.txt &
+          SLOW_PID=$!
+          sleep 0.3  # give it time to acquire the slot
+
+          # Second request must get 503
+          CODE2=$(curl -so /dev/null -w '%{http_code}' -H 'Host: limited.test.local' http://127.0.0.1:18084/ 2>/dev/null || true)
+          echo "Second request status: $CODE2"
+          if [ "$CODE2" != "503" ]; then
+            echo "FAIL: expected 503 when maxConnections=1 is saturated, got $CODE2"
+            wait "$SLOW_PID" 2>/dev/null || true
+            cat /tmp/server5.log; cat /tmp/client5.log; exit 1
+          fi
+          echo "PASS: maxConnections=1 saturated → 503"
+          wait "$SLOW_PID" 2>/dev/null || true
 
       - name: Upload HTTP logs on failure
         if: failure()
@@ -288,6 +531,17 @@ jobs:
           name: e2e-http-logs
           path: |
             /tmp/server.log
+            /tmp/server2.log
+            /tmp/server3.log
+            /tmp/server4.log
+            /tmp/server5.log
             /tmp/client.log
+            /tmp/client3a.log
+            /tmp/client3b.log
+            /tmp/client4.log
+            /tmp/client5.log
             /tmp/http-upstream.log
+            /tmp/http2-upstream.log
+            /tmp/http3-upstream.log
+            /tmp/http4-upstream.log
             /tmp/http-response.txt
