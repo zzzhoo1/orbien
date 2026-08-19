@@ -923,7 +923,9 @@ jobs:
           cat > cli1.toml <<EOF
           serverAddr = "127.0.0.1"
           serverPort = 29527
-          token      = "${SECRET}"
+
+          [auth]
+          token = "${SECRET}"
 
           [[proxies]]
           name       = "echo1"
@@ -1033,7 +1035,9 @@ jobs:
           cat > cli3.toml <<'EOF'
           serverAddr = "127.0.0.1"
           serverPort = 29529
-          token      = "totally-wrong-token"
+
+          [auth]
+          token = "totally-wrong-token"
 
           [[proxies]]
           name       = "echo3"
@@ -1080,7 +1084,9 @@ jobs:
           cat > cli4.toml <<'EOF'
           serverAddr = "127.0.0.1"
           serverPort = 29530
-          token      = "any-token-ignored"
+
+          [auth]
+          token = "any-token-ignored"
 
           [[proxies]]
           name       = "echo4"
