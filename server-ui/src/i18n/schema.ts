@@ -112,6 +112,10 @@ export interface MessageSchema {
         tokenConnsDesc: string
         token: string
         activeConns: string
+        allowedTunnels: string
+        allowedProtocols: string
+        allowedRemotePorts: string
+        noRestriction: string
         emptyTokens: string
     }
     clients: {

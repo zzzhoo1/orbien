@@ -152,6 +152,12 @@ struct TokenMetricsItem {
     token: String,
     #[serde(rename = "activeConns")]
     active_conns: usize,
+    #[serde(rename = "allowedTunnels")]
+    allowed_tunnels: Vec<String>,
+    #[serde(rename = "allowedProtocols")]
+    allowed_protocols: Vec<String>,
+    #[serde(rename = "allowedRemotePorts")]
+    allowed_remote_ports: Vec<u16>,
 }
 
 #[derive(serde::Serialize)]
@@ -220,16 +226,59 @@ async fn system_traffic(
 async fn system_token_metrics(
     State(state): State<Arc<DashState>>,
 ) -> Json<ApiResponse<TokenMetricsResp>> {
-    let tokens = state
+    let policy_map = state
+        .svc
+        .cfg()
+        .auth
+        .token_policies
+        .iter()
+        .filter(|p| !p.token.trim().is_empty())
+        .map(|p| {
+            (
+                p.token.trim().to_string(),
+                (
+                    p.allowed_tunnels.clone(),
+                    p.allowed_protocols.clone(),
+                    p.allowed_remote_ports.clone(),
+                ),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut tokens = state
         .svc
         .metrics()
         .token_conn_snapshot()
         .into_iter()
-        .map(|item| TokenMetricsItem {
-            token: item.token,
-            active_conns: item.active_conns,
+        .map(|item| {
+            let (allowed_tunnels, allowed_protocols, allowed_remote_ports) = policy_map
+                .get(&item.token)
+                .cloned()
+                .unwrap_or_else(|| (Vec::new(), Vec::new(), Vec::new()));
+            TokenMetricsItem {
+                token: item.token,
+                active_conns: item.active_conns,
+                allowed_tunnels,
+                allowed_protocols,
+                allowed_remote_ports,
+            }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    for (token, (allowed_tunnels, allowed_protocols, allowed_remote_ports)) in policy_map {
+        if tokens.iter().any(|item| item.token == token) {
+            continue;
+        }
+        tokens.push(TokenMetricsItem {
+            token,
+            active_conns: 0,
+            allowed_tunnels,
+            allowed_protocols,
+            allowed_remote_ports,
+        });
+    }
+
+    tokens.sort_by(|a, b| a.token.cmp(&b.token));
 
     Json(ApiResponse::ok(TokenMetricsResp { tokens }))
 }

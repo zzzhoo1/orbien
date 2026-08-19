@@ -114,7 +114,11 @@ const zhCN: MessageSchema = {
         tokenConnsDesc: '按 token 分组的当前活跃控制连接',
         token: 'Token',
         activeConns: '活跃连接数',
-        emptyTokens: '暂无活跃 token 连接',
+        allowedTunnels: 'Tunnels',
+        allowedProtocols: '协议',
+        allowedRemotePorts: '远程端口',
+        noRestriction: '不限制',
+        emptyTokens: '暂无 token 策略或活跃连接',
     },
     clients: {
         runId: '运行 ID',

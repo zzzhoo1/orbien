@@ -114,7 +114,11 @@ const enUS: MessageSchema = {
         tokenConnsDesc: 'Active control connections grouped by token',
         token: 'Token',
         activeConns: 'Active connections',
-        emptyTokens: 'No active token connections',
+        allowedTunnels: 'Tunnels',
+        allowedProtocols: 'Protocols',
+        allowedRemotePorts: 'Remote ports',
+        noRestriction: 'No restriction',
+        emptyTokens: 'No token policies or active connections',
     },
     clients: {
         runId: 'Run ID',

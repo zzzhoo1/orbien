@@ -86,6 +86,9 @@ export interface ProxyTrafficResp {
 export interface TokenMetricItem {
     token: string
     activeConns: number
+    allowedTunnels: string[]
+    allowedProtocols: string[]
+    allowedRemotePorts: number[]
 }
 
 export interface TokenMetricsResp {

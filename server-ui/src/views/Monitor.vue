@@ -63,6 +63,11 @@ function formatHeartbeat(secs: number | undefined | null): string {
   return `${secs}s`
 }
 
+function formatRuleList(values: Array<string | number> | undefined | null): string {
+  if (!values || values.length === 0) return t('monitor.noRestriction')
+  return values.join(', ')
+}
+
 type ConfigValueType = 'text' | 'port' | 'bool' | 'raw'
 
 interface ConfigField {
@@ -160,14 +165,20 @@ const configFields = computed<ConfigField[]>(() => {
           <span class="badge">{{ tokenMetrics.length }}</span>
         </template>
         <div v-if="tokenMetrics.length" class="token-table-wrap">
-          <div class="token-table-head">
+          <div class="token-table-head token-grid">
             <span>{{ t('monitor.token') }}</span>
             <span>{{ t('monitor.activeConns') }}</span>
+            <span>{{ t('monitor.allowedTunnels') }}</span>
+            <span>{{ t('monitor.allowedProtocols') }}</span>
+            <span>{{ t('monitor.allowedRemotePorts') }}</span>
           </div>
           <div class="token-table-body">
-            <div v-for="item in tokenMetrics" :key="item.token" class="token-row">
+            <div v-for="item in tokenMetrics" :key="item.token" class="token-row token-grid">
               <span class="token-name" :title="item.token">{{ item.token }}</span>
               <span class="token-count">{{ item.activeConns }}</span>
+              <span class="token-rules" :title="formatRuleList(item.allowedTunnels)">{{ formatRuleList(item.allowedTunnels) }}</span>
+              <span class="token-rules" :title="formatRuleList(item.allowedProtocols)">{{ formatRuleList(item.allowedProtocols) }}</span>
+              <span class="token-rules" :title="formatRuleList(item.allowedRemotePorts)">{{ formatRuleList(item.allowedRemotePorts) }}</span>
             </div>
           </div>
         </div>
@@ -330,6 +341,10 @@ const configFields = computed<ConfigField[]>(() => {
 @media (max-width: 1000px) {
   .middle-row { grid-template-columns: 1fr; }
   .bottom-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .token-grid { grid-template-columns: minmax(120px, 1fr) auto; }
+  .token-grid > :nth-child(n+3) { grid-column: 1 / -1; }
 }
 @media (max-width: 640px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }
