@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use orbien_core::net::{try_consume_proxy_protocol, PpConsume, PROXY_PROTOCOL_MAX_HEADER};
 use orbien_core::tls::PrefixedStream;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -13,6 +14,7 @@ pub struct AccessPolicy {
     pub trusted_proxy_cidrs: Vec<Cidr>,
     pub deny_src_cidrs: Vec<Cidr>,
     pub pp_header_timeout: Duration,
+    pub token_policies: HashMap<String, HashSet<String>>,
 }
 
 impl AccessPolicy {
@@ -33,11 +35,27 @@ impl AccessPolicy {
                  PROXY protocol headers are ignored until trusted CIDRs are set"
             );
         }
+        let mut token_policies = HashMap::new();
+        for policy in &cfg.auth.token_policies {
+            let token = policy.token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            let tunnels = policy
+                .allowed_tunnels
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<HashSet<_>>();
+            token_policies.insert(token.to_string(), tunnels);
+        }
+
         Ok(Self {
             proxy_protocol: cfg.proxy_protocol,
             trusted_proxy_cidrs: trusted,
             deny_src_cidrs: deny,
             pp_header_timeout: Duration::from_secs(cfg.proxy_protocol_timeout_secs.max(1)),
+            token_policies,
         })
     }
 
@@ -48,6 +66,14 @@ impl AccessPolicy {
 
     pub fn is_denied(&self, ip: IpAddr) -> bool {
         !self.deny_src_cidrs.is_empty() && self.deny_src_cidrs.iter().any(|c| c.contains(ip))
+    }
+
+    pub fn authorize_tunnel(&self, token: &str, tunnel: &str) -> Result<()> {
+        match self.token_policies.get(token) {
+            Some(allowed) if allowed.contains(tunnel) => Ok(()),
+            Some(_) => bail!("token is not allowed to register tunnel: {tunnel}"),
+            None => Ok(()),
+        }
     }
 }
 

@@ -123,11 +123,20 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenPolicy {
+    pub token: String,
+    #[serde(default)]
+    pub allowed_tunnels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
     #[serde(default = "default_auth_method")]
     pub method: String,
     #[serde(default)]
     pub token: String,
+    #[serde(default)]
+    pub token_policies: Vec<TokenPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

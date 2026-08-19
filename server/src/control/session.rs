@@ -325,6 +325,7 @@ impl Control {
 
     async fn register_proxy(self: &Arc<Self>, np: &NewProxy) -> Result<String> {
         Self::validate_proxy_name(&np.proxy_name)?;
+        self.access.authorize_tunnel(&self.user, &np.proxy_name)?;
         match np.proxy_type.as_str() {
             "tcp" => self.register_tcp_proxy(np).await,
             "http" => self.register_http_proxy(np).await,
