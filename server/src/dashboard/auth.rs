@@ -27,7 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 use webauthn_rs::{
-    prelude::{PasskeyAuthentication, PasskeyRegistration},
+    prelude::{PasskeyAuthentication, PasskeyRegistration, Url},
     Webauthn, WebauthnBuilder,
 };
 
@@ -75,7 +75,7 @@ impl AuthState {
     }
 
     pub fn new(rp_id: &str, rp_origin: &str) -> anyhow::Result<Self> {
-        let origin = url::Url::parse(rp_origin)
+        let origin = Url::parse(rp_origin)
             .map_err(|e| anyhow::anyhow!("invalid rp_origin {rp_origin}: {e}"))?;
         let webauthn = WebauthnBuilder::new(rp_id, &origin)?.build()?;
         let mut this = Self::session_only();
@@ -223,7 +223,13 @@ impl AuthState {
 
 fn random_token() -> String {
     let bytes: [u8; 32] = rand::thread_rng().gen();
-    hex::encode(bytes)
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 // ── Axum middleware ───────────────────────────────────────────────────────────

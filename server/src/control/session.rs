@@ -109,7 +109,12 @@ impl Control {
 
     pub async fn send_login_resp(&self, response: LoginResp) -> Result<()> {
         let mut writer = self.writer.lock().await;
-        msg::write_msg(&mut *writer, &Message::LoginResp(response)).await
+        msg::write_msg(&mut *writer, &Message::LoginResp(response)).await?;
+        Ok(())
+    }
+
+    pub fn cfg(&self) -> &ServerConfig {
+        &self.cfg
     }
 
     pub async fn proxy_summaries(&self) -> Vec<crate::proxy::ProxySummary> {

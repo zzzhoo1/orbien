@@ -362,7 +362,16 @@ pub async fn webauthn_login_finish(
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn uuid_for_name(name: &str) -> uuid::Uuid {
-    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes())
+    // Stable 128-bit FNV-1a so the same username always maps to the same WebAuthn user id
+    // without requiring the uuid crate `v5` feature.
+    const OFFSET: u128 = 0x6c62272e07bb014262b821756295c58d;
+    const PRIME: u128 = 0x0000000001000000000000000000013B;
+    let mut hash = OFFSET;
+    for &b in name.as_bytes() {
+        hash ^= u128::from(b);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    uuid::Uuid::from_u128(hash)
 }
 
 fn current_username(state: &DashState, headers: &axum::http::HeaderMap) -> Option<String> {
