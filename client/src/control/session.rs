@@ -128,6 +128,7 @@ impl Control {
                     &p.local_ip,
                     p.local_port,
                     &p.transport,
+                    p.max_connections,
                     |np| {
                         np.custom_domains = Vec::new();
                     },
@@ -139,6 +140,7 @@ impl Control {
                     &p.local_ip,
                     p.local_port,
                     &p.transport,
+                    p.max_connections,
                     |_| {},
                 )),
                 "http" => Message::NewProxy(new_proxy_base(
@@ -148,6 +150,7 @@ impl Control {
                     &p.local_ip,
                     p.local_port,
                     &p.transport,
+                    p.max_connections,
                     |np| {
                         np.custom_domains = p.custom_domains.clone();
                         np.subdomain = p.subdomain.clone();
@@ -165,6 +168,7 @@ impl Control {
                     &p.local_ip,
                     p.local_port,
                     &p.transport,
+                    p.max_connections,
                     |np| {
                         np.custom_domains = p.custom_domains.clone();
                         np.subdomain = p.subdomain.clone();
@@ -353,6 +357,7 @@ fn new_proxy_base(
     local_ip: &str,
     local_port: u16,
     transport: &orbien_core::config::ProxyTransportConfig,
+    max_connections: usize,
     extra: impl FnOnce(&mut NewProxy),
 ) -> NewProxy {
     let mut np = NewProxy {
@@ -372,6 +377,7 @@ fn new_proxy_base(
         route_by_http_user: String::new(),
         bandwidth_limit: transport.bandwidth_limit.clone(),
         bandwidth_limit_mode: omit_client_mode(&transport.bandwidth_limit_mode),
+        max_connections,
     };
     extra(&mut np);
     np
