@@ -350,7 +350,6 @@ jobs:
           }
           echo "First client up"
 
-          # Kill first client and reconnect with second
           kill "$CLIENT1_PID" 2>/dev/null || true
           wait "$CLIENT1_PID" 2>/dev/null || true
 
@@ -429,7 +428,6 @@ jobs:
             cat /tmp/server4.log; cat /tmp/client4.log; exit 1
           }
 
-          # Fire 20 concurrent requests
           FAIL=0
           PIDS=()
           for idx in $(seq 1 20); do
@@ -478,7 +476,6 @@ jobs:
           }
           trap cleanup EXIT
 
-          # Slow upstream: keeps the first connection busy for 3 s
           python3 -u - <<'PY' > /tmp/http4-upstream.log 2>&1 &
           import time
           from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -502,18 +499,15 @@ jobs:
 
           for i in $(seq 1 120); do
             curl -fsS -H 'Host: limited.test.local' http://127.0.0.1:18084/ >/dev/null 2>/dev/null && break
-            # 503 also means vhost is up
             CODE=$(curl -so /dev/null -w '%{http_code}' -H 'Host: limited.test.local' http://127.0.0.1:18084/ 2>/dev/null || true)
             [ "$CODE" = "503" ] && break
             sleep 0.25
           done
 
-          # Send first request in background (will hold the single slot for 3 s)
           curl -s -H 'Host: limited.test.local' http://127.0.0.1:18084/ -o /tmp/slow-resp.txt &
           SLOW_PID=$!
-          sleep 0.3  # give it time to acquire the slot
+          sleep 0.3
 
-          # Second request must get 503
           CODE2=$(curl -so /dev/null -w '%{http_code}' -H 'Host: limited.test.local' http://127.0.0.1:18084/ 2>/dev/null || true)
           echo "Second request status: $CODE2"
           if [ "$CODE2" != "503" ]; then
@@ -545,3 +539,336 @@ jobs:
             /tmp/http3-upstream.log
             /tmp/http4-upstream.log
             /tmp/http-response.txt
+
+  e2e-https:
+    name: E2E – HTTPS tunnel (SNI passthrough)
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Generate self-signed cert for local HTTPS upstream ─────────────────
+      - name: Generate self-signed TLS certificate
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /tmp/tls.key -out /tmp/tls.crt \
+            -days 1 -subj '/CN=demo-tls.test.local' \
+            -addext 'subjectAltName=DNS:demo-tls.test.local'
+
+      # ── Case 1: basic SNI passthrough ──────────────────────────────────────
+      - name: "HTTPS E2E – 1: basic SNI passthrough"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 19527
+          vhostHTTPSPort = 19443
+          subDomainHost = "test.local"
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 19527
+
+          [[proxies]]
+          name       = "web-tls"
+          type       = "https"
+          localIP    = "127.0.0.1"
+          localPort  = 17443
+          subdomain  = "demo-tls"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Local HTTPS upstream (terminates TLS itself)
+          python3 -u - <<'PY' > /tmp/https-upstream.log 2>&1 &
+          import ssl, http.server
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = f"orbien-https-ok path={self.path}".encode()
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17443), Handler)
+          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          PY
+          HTTPS_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          # Wait for tunnel: SNI passthrough means the vhost port accepts raw TLS.
+          # We probe with nc -z; once the port is open the TLS ClientHello decides routing.
+          for i in $(seq 1 120); do
+            nc -z 127.0.0.1 19443 && break
+            sleep 0.25
+          done
+          nc -z 127.0.0.1 19443 || {
+            echo "FAIL: https vhost port not open"
+            cat /tmp/https-server.log; cat /tmp/https-client.log; exit 1
+          }
+
+          # Give the client tunnel a moment to register the SNI route
+          sleep 1
+
+          BODY=$(curl -fsSk \
+            --resolve "demo-tls.test.local:19443:127.0.0.1" \
+            https://demo-tls.test.local:19443/ping 2>/tmp/https-curl.log) || {
+            echo "FAIL: curl failed"
+            cat /tmp/https-curl.log
+            cat /tmp/https-server.log; cat /tmp/https-client.log
+            exit 1
+          }
+          echo "Response: $BODY"
+          echo "$BODY" | grep -F 'orbien-https-ok path=/ping' || {
+            echo "FAIL: unexpected response body"
+            cat /tmp/https-server.log; cat /tmp/https-client.log; exit 1
+          }
+          echo "PASS: basic SNI passthrough"
+
+      # ── Case 2: unknown SNI → connection silently closed ───────────────────
+      - name: "HTTPS E2E – 2: unknown SNI connection is silently dropped"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 19528
+          vhostHTTPSPort = 19444
+          subDomainHost = "test.local"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server2.log 2>&1 &
+          SERVER_PID=$!
+
+          for i in $(seq 1 40); do nc -z 127.0.0.1 19444 && break; sleep 0.25; done
+          nc -z 127.0.0.1 19444 || { echo "server not up"; cat /tmp/https-server2.log; exit 1; }
+
+          # curl to an unregistered SNI must fail (connection reset / TLS error)
+          HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' -k \
+            --resolve "ghost.test.local:19444:127.0.0.1" \
+            https://ghost.test.local:19444/ 2>/dev/null || true)
+          echo "HTTP code for unknown SNI: $HTTP_CODE"
+          # 000 = connection-level failure (reset/EOF), which is correct for SNI passthrough drop
+          case "$HTTP_CODE" in
+            000|5*) echo "PASS: unknown SNI rejected (code=$HTTP_CODE)" ;;
+            *) echo "FAIL: expected connection failure, got $HTTP_CODE"; exit 1 ;;
+          esac
+
+      # ── Case 3: re-register same SNI route, tunnel survives ────────────────
+      - name: "HTTPS E2E – 3: re-register same SNI route, tunnel survives"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 19529
+          vhostHTTPSPort = 19445
+          subDomainHost = "test.local"
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 19529
+
+          [[proxies]]
+          name       = "web-tls2"
+          type       = "https"
+          localIP    = "127.0.0.1"
+          localPort  = 17444
+          subdomain  = "retls"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+            wait "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 -u - <<'PY' > /tmp/https2-upstream.log 2>&1 &
+          import ssl, http.server
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = b"re-registered-ok"
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17444), Handler)
+          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          PY
+          HTTPS_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server3.log 2>&1 &
+          SERVER_PID=$!
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client3a.log 2>&1 &
+          CLIENT1_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+              https://retls.test.local:19445/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+            https://retls.test.local:19445/ >/dev/null || {
+            echo "FAIL: first registration not up"
+            cat /tmp/https-server3.log; cat /tmp/https-client3a.log; exit 1
+          }
+          echo "First client up"
+
+          kill "$CLIENT1_PID" 2>/dev/null || true
+          wait "$CLIENT1_PID" 2>/dev/null || true
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client3b.log 2>&1 &
+          CLIENT2_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+              https://retls.test.local:19445/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+            https://retls.test.local:19445/ >/dev/null || {
+            echo "FAIL: route gone after SNI re-registration"
+            cat /tmp/https-server3.log; cat /tmp/https-client3b.log; exit 1
+          }
+          echo "PASS: SNI re-registration route survives"
+
+      # ── Case 4: concurrent HTTPS requests ──────────────────────────────────
+      - name: "HTTPS E2E – 4: concurrent HTTPS requests"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 19530
+          vhostHTTPSPort = 19446
+          subDomainHost = "test.local"
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 19530
+
+          [[proxies]]
+          name       = "web-tls-conc"
+          type       = "https"
+          localIP    = "127.0.0.1"
+          localPort  = 17445
+          subdomain  = "conc-tls"
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 -u - <<'PY' > /tmp/https3-upstream.log 2>&1 &
+          import ssl, time, http.server
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(0.05)
+                  body = b"conc-tls-ok"
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17445), Handler)
+          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          PY
+          HTTPS_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server4.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client4.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk --resolve "conc-tls.test.local:19446:127.0.0.1" \
+              https://conc-tls.test.local:19446/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsSk --resolve "conc-tls.test.local:19446:127.0.0.1" \
+            https://conc-tls.test.local:19446/ >/dev/null || {
+            echo "FAIL: concurrent tls test tunnel not up"
+            cat /tmp/https-server4.log; cat /tmp/https-client4.log; exit 1
+          }
+
+          FAIL=0
+          PIDS=()
+          for idx in $(seq 1 10); do
+            curl -fsSk --resolve "conc-tls.test.local:19446:127.0.0.1" \
+              https://conc-tls.test.local:19446/ -o /tmp/conc-tls-$idx.txt &
+            PIDS+=($!)
+          done
+          for pid in "${PIDS[@]}"; do
+            wait "$pid" || FAIL=$((FAIL+1))
+          done
+          if [ "$FAIL" -gt 0 ]; then
+            echo "FAIL: $FAIL / 10 concurrent HTTPS requests failed"
+            cat /tmp/https-server4.log; cat /tmp/https-client4.log; exit 1
+          fi
+          echo "PASS: 10/10 concurrent HTTPS requests succeeded"
+
+      - name: Upload HTTPS logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-https-logs
+          path: |
+            /tmp/https-server.log
+            /tmp/https-server2.log
+            /tmp/https-server3.log
+            /tmp/https-server4.log
+            /tmp/https-client.log
+            /tmp/https-client3a.log
+            /tmp/https-client3b.log
+            /tmp/https-client4.log
+            /tmp/https-upstream.log
+            /tmp/https2-upstream.log
+            /tmp/https3-upstream.log
+            /tmp/https-curl.log
