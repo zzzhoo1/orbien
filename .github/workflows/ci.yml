@@ -555,7 +555,6 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bins/orbien-server bins/orbien
 
-      # ── Generate self-signed cert for local HTTPS upstream ─────────────────
       - name: Generate self-signed TLS certificate
         run: |
           openssl req -x509 -newkey rsa:2048 -nodes \
@@ -563,7 +562,6 @@ jobs:
             -days 1 -subj '/CN=demo-tls.test.local' \
             -addext 'subjectAltName=DNS:demo-tls.test.local,DNS:retls.test.local,DNS:conc-tls.test.local'
 
-      # ── Case 1: basic SNI passthrough ──────────────────────────────────────
       - name: "HTTPS E2E – 1: basic SNI passthrough"
         shell: bash
         run: |
@@ -595,7 +593,6 @@ jobs:
           }
           trap cleanup EXIT
 
-          # Local HTTPS upstream (terminates TLS itself)
           python3 -u - <<'PY' > /tmp/https-upstream.log 2>&1 &
           import ssl, http.server
           class Handler(http.server.BaseHTTPRequestHandler):
@@ -619,8 +616,6 @@ jobs:
           stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client.log 2>&1 &
           CLIENT_PID=$!
 
-          # Poll with curl --resolve directly: this proves both that the vhost port
-          # is open AND that the SNI route is registered. No nc+sleep race.
           for i in $(seq 1 120); do
             curl -fsSk \
               --resolve "demo-tls.test.local:19443:127.0.0.1" \
@@ -644,7 +639,6 @@ jobs:
           }
           echo "PASS: basic SNI passthrough"
 
-      # ── Case 2: unknown SNI → connection silently closed ───────────────────
       - name: "HTTPS E2E – 2: unknown SNI connection is silently dropped"
         shell: bash
         run: |
@@ -670,18 +664,15 @@ jobs:
           for i in $(seq 1 40); do nc -z 127.0.0.1 19444 && break; sleep 0.25; done
           nc -z 127.0.0.1 19444 || { echo "server not up"; cat /tmp/https-server2.log; exit 1; }
 
-          # curl to an unregistered SNI must fail (connection reset / TLS error)
           HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' -k \
             --resolve "ghost.test.local:19444:127.0.0.1" \
             https://ghost.test.local:19444/ 2>/dev/null || true)
           echo "HTTP code for unknown SNI: $HTTP_CODE"
-          # 000 = connection-level failure (reset/EOF), which is correct for SNI passthrough drop
           case "$HTTP_CODE" in
             000|5*) echo "PASS: unknown SNI rejected (code=$HTTP_CODE)" ;;
             *) echo "FAIL: expected connection failure, got $HTTP_CODE"; exit 1 ;;
           esac
 
-      # ── Case 3: re-register same SNI route, tunnel survives ────────────────
       - name: "HTTPS E2E – 3: re-register same SNI route, tunnel survives"
         shell: bash
         run: |
@@ -767,7 +758,6 @@ jobs:
           }
           echo "PASS: SNI re-registration route survives"
 
-      # ── Case 4: concurrent HTTPS requests ──────────────────────────────────
       - name: "HTTPS E2E – 4: concurrent HTTPS requests"
         shell: bash
         run: |
@@ -884,7 +874,6 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bins/orbien-server bins/orbien
 
-      # ── Shared echo backend ────────────────────────────────────────────────
       - name: Start echo backend
         shell: bash
         run: |
@@ -904,7 +893,6 @@ jobs:
           PY
           echo "ECHO_PID=$!" >> "$GITHUB_ENV"
 
-      # ── Case 1: correct token → tunnel works ──────────────────────────────
       - name: "Token auth – 1: correct token → tunnel established"
         shell: bash
         run: |
@@ -964,7 +952,6 @@ jobs:
           fi
           echo "PASS: correct token → tunnel works (echo=$RESPONSE)"
 
-      # ── Case 2: no token → client rejected ────────────────────────────────
       - name: "Token auth – 2: no token → client rejected"
         shell: bash
         run: |
@@ -980,7 +967,6 @@ jobs:
           token  = "${SECRET}"
           EOF
 
-          # Client sends NO token
           cat > cli2.toml <<'EOF'
           serverAddr = "127.0.0.1"
           serverPort = 29528
@@ -1008,7 +994,6 @@ jobs:
           stdbuf -oL -eL bins/orbien -c cli2.toml > /tmp/tok2-client.log 2>&1 &
           CLIENT_PID=$!
 
-          # Give client up to 5 s to attempt auth; the remote port must NOT open
           sleep 5
           if nc -z 127.0.0.1 26001 2>/dev/null; then
             echo "FAIL: remotePort 26001 opened despite missing token"
@@ -1016,7 +1001,6 @@ jobs:
           fi
           echo "PASS: no token → remotePort not opened"
 
-      # ── Case 3: wrong token → client rejected ─────────────────────────────
       - name: "Token auth – 3: wrong token → client rejected"
         shell: bash
         run: |
@@ -1069,7 +1053,6 @@ jobs:
           fi
           echo "PASS: wrong token → remotePort not opened"
 
-      # ── Case 4: no server token → any client connects ─────────────────────
       - name: "Token auth – 4: no server token → unauthenticated client connects"
         shell: bash
         run: |
@@ -1080,7 +1063,6 @@ jobs:
           bindPort = 29530
           EOF
 
-          # Client sends a token but server doesn't require one – should still work
           cat > cli4.toml <<'EOF'
           serverAddr = "127.0.0.1"
           serverPort = 29530
@@ -1140,3 +1122,296 @@ jobs:
             /tmp/tok4-server.log
             /tmp/tok4-client.log
             /tmp/token-echo.log
+
+  e2e-udp:
+    name: E2E – UDP tunnel
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Case 1: basic UDP echo ────────────────────────────────────────────────
+      - name: "UDP E2E – 1: basic echo"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 39527
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 39527
+
+          [[proxies]]
+          name       = "udp-echo"
+          type       = "udp"
+          localIP    = "127.0.0.1"
+          localPort  = 37000
+          remotePort = 37001
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # UDP echo server (localPort 37000)
+          python3 -u - <<'PY' > /tmp/udp1-echo.log 2>&1 &
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(("127.0.0.1", 37000))
+          while True:
+              data, addr = s.recvfrom(65535)
+              s.sendto(data, addr)
+          PY
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp1-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 39527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 39527 || { echo "server not up"; cat /tmp/udp1-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/udp1-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          # UDP tunnel readiness: probe remotePort until we get a reply
+          # (the proxy binds the UDP port after the work-conn handshake ~500 ms)
+          PAYLOAD="udp-basic-$(date +%s)"
+          RESPONSE=""
+          for i in $(seq 1 80); do
+            RESPONSE=$(echo "$PAYLOAD" | python3 -c "
+import sys, socket, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(0.4)
+try:
+    s.sendto(sys.stdin.readline().rstrip(chr(10)).encode(), ('127.0.0.1', 37001))
+    print(s.recv(65535).decode())
+except Exception:
+    pass
+" 2>/dev/null) && [ -n "$RESPONSE" ] && break
+            sleep 0.25
+          done
+
+          echo "Sent:     $PAYLOAD"
+          echo "Received: $RESPONSE"
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: UDP echo mismatch"
+            cat /tmp/udp1-server.log; cat /tmp/udp1-client.log; cat /tmp/udp1-echo.log
+            exit 1
+          fi
+          echo "PASS: basic UDP echo"
+
+      # ── Case 2: burst – 50 packets in quick succession ────────────────────────
+      - name: "UDP E2E – 2: burst 50 packets"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 39528
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 39528
+
+          [[proxies]]
+          name       = "udp-burst"
+          type       = "udp"
+          localIP    = "127.0.0.1"
+          localPort  = 37010
+          remotePort = 37011
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 -u - <<'PY' > /tmp/udp2-echo.log 2>&1 &
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(("127.0.0.1", 37010))
+          while True:
+              data, addr = s.recvfrom(65535)
+              s.sendto(data, addr)
+          PY
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp2-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 39528 && break; sleep 0.25; done
+          nc -z 127.0.0.1 39528 || { echo "server not up"; cat /tmp/udp2-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/udp2-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          # Warmup: wait for tunnel to be ready
+          for i in $(seq 1 80); do
+            python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(0.4)
+try:
+    s.sendto(b'ping', ('127.0.0.1', 37011))
+    s.recv(65535)
+    exit(0)
+except Exception:
+    exit(1)
+" 2>/dev/null && break
+            sleep 0.25
+          done
+
+          # Burst test via Python
+          python3 - <<'PY'
+          import socket, sys
+          REMOTE = ("127.0.0.1", 37011)
+          N = 50
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(2.0)
+          ok = 0
+          for i in range(N):
+              payload = f"burst-{i:04d}".encode()
+              s.sendto(payload, REMOTE)
+              try:
+                  data, _ = s.recvfrom(65535)
+                  if data == payload:
+                      ok += 1
+                  else:
+                      print(f"mismatch #{i}: sent={payload} got={data}", file=sys.stderr)
+              except socket.timeout:
+                  print(f"timeout on packet #{i}", file=sys.stderr)
+          print(f"{ok}/{N} packets echoed correctly")
+          if ok < N:
+              sys.exit(1)
+          PY
+          BURST_RC=$?
+
+          if [ "$BURST_RC" -ne 0 ]; then
+            echo "FAIL: burst test"
+            cat /tmp/udp2-server.log; cat /tmp/udp2-client.log; cat /tmp/udp2-echo.log
+            exit 1
+          fi
+          echo "PASS: burst 50 packets"
+
+      # ── Case 3: large packet (4 KB) ───────────────────────────────────────────
+      - name: "UDP E2E – 3: large packet (4 KB)"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > orbien-server.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 39529
+          EOF
+
+          cat > orbien.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 39529
+          udpPacketSize = 8192
+
+          [[proxies]]
+          name       = "udp-large"
+          type       = "udp"
+          localIP    = "127.0.0.1"
+          localPort  = 37020
+          remotePort = 37021
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 -u - <<'PY' > /tmp/udp3-echo.log 2>&1 &
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+          s.bind(("127.0.0.1", 37020))
+          while True:
+              data, addr = s.recvfrom(65535)
+              s.sendto(data, addr)
+          PY
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp3-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 39529 && break; sleep 0.25; done
+          nc -z 127.0.0.1 39529 || { echo "server not up"; cat /tmp/udp3-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/udp3-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          # Warmup
+          for i in $(seq 1 80); do
+            python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(0.4)
+try:
+    s.sendto(b'ping', ('127.0.0.1', 37021))
+    s.recv(65535)
+    exit(0)
+except Exception:
+    exit(1)
+" 2>/dev/null && break
+            sleep 0.25
+          done
+
+          # 4 KB payload test
+          python3 - <<'PY'
+          import socket, sys, os
+          REMOTE = ("127.0.0.1", 37021)
+          payload = os.urandom(4096)
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+          s.settimeout(5.0)
+          s.sendto(payload, REMOTE)
+          try:
+              data, _ = s.recvfrom(65535)
+              if data == payload:
+                  print(f"PASS: 4096-byte packet echoed correctly")
+              else:
+                  print(f"FAIL: payload mismatch (sent={len(payload)}B got={len(data)}B)", file=sys.stderr)
+                  sys.exit(1)
+          except socket.timeout:
+              print("FAIL: timeout waiting for large packet echo", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Upload UDP logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-udp-logs
+          path: |
+            /tmp/udp1-server.log
+            /tmp/udp1-client.log
+            /tmp/udp1-echo.log
+            /tmp/udp2-server.log
+            /tmp/udp2-client.log
+            /tmp/udp2-echo.log
+            /tmp/udp3-server.log
+            /tmp/udp3-client.log
+            /tmp/udp3-echo.log
