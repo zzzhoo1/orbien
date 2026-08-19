@@ -51,3 +51,8 @@ assetsDir = "/path/to/dist"
 | `--dashboard_port` | `0`       | 监听端口；`0` 关闭 |
 | `--dashboard_user` | `admin`   | 用户名         |
 | `--dashboard_pwd`  | `admin`   | 密码          |
+
+## Token 策略
+
+Monitor 页会展示每个 token 的活跃控制连接数，以及 `allowed_tunnels`、`allowed_protocols`、`allowed_remote_ports`。配置了策略但当前没有连接的 token 也会列出。
+
