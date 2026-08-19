@@ -70,16 +70,16 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bins/orbien-server bins/orbien
 
-      # ── 1. Write configs ──────────────────────────────────────────────
-      - name: Write server config
+      - name: Run E2E TCP tunnel
+        shell: bash
         run: |
+          set -euo pipefail
+
           cat > orbien-server.toml <<'EOF'
           bindAddr = "0.0.0.0"
           bindPort = 9527
           EOF
 
-      - name: Write client config
-        run: |
           cat > orbien.toml <<'EOF'
           serverAddr = "127.0.0.1"
           serverPort = 9527
@@ -92,58 +92,75 @@ jobs:
           remotePort = 16000
           EOF
 
-      # ── 2. Start echo service (simulates an internal service) ─────────
-      - name: Start echo server on port 7000
-        run: ncat -lk 7000 -e /bin/cat &
+          cleanup() {
+            set +e
+            if [ -n "${CLIENT_PID:-}" ]; then kill "$CLIENT_PID" 2>/dev/null || true; fi
+            if [ -n "${SERVER_PID:-}" ]; then kill "$SERVER_PID" 2>/dev/null || true; fi
+            if [ -n "${ECHO_PID:-}" ]; then kill "$ECHO_PID" 2>/dev/null || true; fi
+            wait "${CLIENT_PID:-}" 2>/dev/null || true
+            wait "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
-      # ── 3. Start orbien-server ────────────────────────────────────────
-      - name: Start orbien-server
-        run: |
-          bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
-          echo "SERVER_PID=$!" >> $GITHUB_ENV
+          python3 -u - <<'PY' > /tmp/echo.log 2>&1 &
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class ThreadedTCPServer(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with ThreadedTCPServer(("127.0.0.1", 7000), EchoHandler) as server:
+              server.serve_forever()
+          PY
+          ECHO_PID=$!
 
-      - name: Wait for orbien-server to be ready
-        run: |
-          for i in $(seq 1 20); do
-            nc -z 127.0.0.1 9527 && echo "server ready" && exit 0
-            sleep 0.5
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+
+          for i in $(seq 1 40); do
+            if nc -z 127.0.0.1 9527; then
+              echo "server ready"
+              break
+            fi
+            sleep 0.25
           done
-          echo "orbien-server failed to start" && cat /tmp/server.log && exit 1
+          nc -z 127.0.0.1 9527 || { echo "orbien-server failed to start"; cat /tmp/server.log; exit 1; }
 
-      # ── 4. Start orbien-client ────────────────────────────────────────
-      - name: Start orbien-client
-        run: |
-          bins/orbien -c orbien.toml > /tmp/client.log 2>&1 &
-          echo "CLIENT_PID=$!" >> $GITHUB_ENV
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client.log 2>&1 &
+          CLIENT_PID=$!
 
-      - name: Wait for tunnel to be ready (port 16000)
-        run: |
-          for i in $(seq 1 30); do
-            nc -z 127.0.0.1 16000 && echo "tunnel ready" && exit 0
-            sleep 0.5
+          for i in $(seq 1 80); do
+            if nc -z 127.0.0.1 16000; then
+              echo "tunnel ready"
+              break
+            fi
+            sleep 0.25
           done
-          echo "tunnel failed to establish" \
-            && echo "=== server ===" && cat /tmp/server.log \
-            && echo "=== client ===" && cat /tmp/client.log \
-            && exit 1
-
-      # ── 5. Verify TCP tunnel ──────────────────────────────────────────
-      - name: Verify TCP data through tunnel
-        run: |
-          PAYLOAD="orbien-e2e-$(date +%s)"
-          RESPONSE=$(echo "$PAYLOAD" | nc -w 3 127.0.0.1 16000)
-          echo "Sent:     $PAYLOAD"
-          echo "Received: $RESPONSE"
-          if [ "$RESPONSE" = "$PAYLOAD" ]; then
-            echo "✅ TCP tunnel verified"
-          else
-            echo "❌ Response mismatch"
+          nc -z 127.0.0.1 16000 || {
+            echo "tunnel failed to establish"
             echo "=== server ===" && cat /tmp/server.log
             echo "=== client ===" && cat /tmp/client.log
+            echo "=== echo ===" && cat /tmp/echo.log
+            exit 1
+          }
+
+          PAYLOAD="orbien-e2e-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 16000)
+          echo "Sent:     $PAYLOAD"
+          echo "Received: $RESPONSE"
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "response mismatch"
+            echo "=== server ===" && cat /tmp/server.log
+            echo "=== client ===" && cat /tmp/client.log
+            echo "=== echo ===" && cat /tmp/echo.log
             exit 1
           fi
 
-      # ── 6. Cleanup & upload logs on failure ───────────────────────────
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -152,3 +169,4 @@ jobs:
           path: |
             /tmp/server.log
             /tmp/client.log
+            /tmp/echo.log
