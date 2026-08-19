@@ -5,14 +5,10 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 
-const MAX_NUM_STREAMS: usize = 4096;
-
-// Max per-connection receive window capped at 64 MiB.
-// yamux 0.14 uses dynamic window scaling internally; an excessively large
-// static ceiling (the previous 1 GiB = 256 KiB × 4096) interfered with that
-// mechanism and wasted virtual memory. 64 MiB is ample for any realistic
-// single-connection workload while leaving room for the dynamic tuner.
-const MAX_CONNECTION_RECV_WINDOW: usize = 64 * 1024 * 1024;
+// yamux 0.14 panics unless max_connection_receive_window >= 256 KiB * max_num_streams.
+const YAMUX_STREAM_WINDOW: usize = 256 * 1024;
+const MAX_NUM_STREAMS: usize = 256;
+const MAX_CONNECTION_RECV_WINDOW: usize = YAMUX_STREAM_WINDOW * MAX_NUM_STREAMS;
 
 fn yamux_config() -> yamux::Config {
     let mut cfg = yamux::Config::default();
