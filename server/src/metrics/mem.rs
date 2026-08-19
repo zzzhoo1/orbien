@@ -62,6 +62,12 @@ pub struct ProxyTrafficHistory {
     pub history: Vec<TrafficPoint>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TokenConnSnapshot {
+    pub token: String,
+    pub active_conns: usize,
+}
+
 struct ProxyStats {
     proxy_type: String,
     user: String,
@@ -99,6 +105,7 @@ struct State {
     total_traffic_out_hourly: HourCounter,
     cur_conns: Counter,
     client_counts: Counter,
+    token_conns: HashMap<String, Counter>,
     seen_clients: HashSet<String>,
     proxy_type_counts: HashMap<String, Counter>,
     proxies: HashMap<String, ProxyStats>,
@@ -118,6 +125,7 @@ impl MemMetrics {
                 total_traffic_out_hourly: HourCounter::new(RESERVE_HOURS),
                 cur_conns: Counter::new(),
                 client_counts: Counter::new(),
+                token_conns: HashMap::new(),
                 seen_clients: HashSet::new(),
                 proxy_type_counts: HashMap::new(),
                 proxies: HashMap::new(),
@@ -180,6 +188,54 @@ impl MemMetrics {
                 build_hourly_history("server", &inbound, &outbound)
             }
         }
+    }
+
+
+    pub fn inc_token_conn(&self, token: &str) {
+        let token = token.trim();
+        if token.is_empty() {
+            return;
+        }
+        let mut g = self.state.lock().expect("metrics lock");
+        g.token_conns
+            .entry(token.to_string())
+            .or_insert_with(Counter::new)
+            .inc(1);
+    }
+
+    pub fn dec_token_conn(&self, token: &str) {
+        let token = token.trim();
+        if token.is_empty() {
+            return;
+        }
+        let mut g = self.state.lock().expect("metrics lock");
+        if let Some(counter) = g.token_conns.get(token) {
+            counter.dec(1);
+            if counter.count() <= 0 {
+                g.token_conns.remove(token);
+            }
+        }
+    }
+
+    pub fn token_conn_snapshot(&self) -> Vec<TokenConnSnapshot> {
+        let g = self.state.lock().expect("metrics lock");
+        let mut items: Vec<TokenConnSnapshot> = g
+            .token_conns
+            .iter()
+            .filter_map(|(token, counter)| {
+                let n = counter.count().max(0) as usize;
+                (n > 0).then(|| TokenConnSnapshot {
+                    token: token.clone(),
+                    active_conns: n,
+                })
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            b.active_conns
+                .cmp(&a.active_conns)
+                .then_with(|| a.token.cmp(&b.token))
+        });
+        items
     }
 
     pub fn track_connection(

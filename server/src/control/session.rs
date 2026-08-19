@@ -50,6 +50,17 @@ pub struct Control {
     last_seen: StdMutex<Instant>,
 }
 
+struct TokenConnGuard {
+    metrics: Arc<MemMetrics>,
+    token: String,
+}
+
+impl Drop for TokenConnGuard {
+    fn drop(&mut self) {
+        self.metrics.dec_token_conn(&self.token);
+    }
+}
+
 impl Control {
     pub fn new(
         run_id: String,
@@ -110,6 +121,12 @@ impl Control {
     }
 
     pub async fn run(self: Arc<Self>) -> Result<()> {
+        self.metrics.inc_token_conn(&self.user);
+        let _token_guard = TokenConnGuard {
+            metrics: Arc::clone(&self.metrics),
+            token: self.user.clone(),
+        };
+
         for _ in 0..self.pool_count {
             self.request_work_conn().await?;
         }

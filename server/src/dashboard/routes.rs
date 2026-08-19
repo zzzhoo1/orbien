@@ -55,6 +55,7 @@ pub fn router(state: Arc<DashState>) -> Router {
         // ── dashboard API ─────────────────────────────────────────────────────────
         .route("/api/v1/system/info", get(system_info))
         .route("/api/v1/system/traffic", get(system_traffic))
+        .route("/api/v1/system/tokens", get(system_token_metrics))
         .route("/api/v1/clients", get(list_clients))
         .route("/api/v1/clients/{run_id}", get(get_client))
         .route("/api/v1/clients/{run_id}/kick", post(kick_client))
@@ -146,6 +147,17 @@ struct TrafficQuery {
     range: String,
 }
 
+#[derive(serde::Serialize)]
+struct TokenMetricsItem {
+    token: String,
+    active_conns: usize,
+}
+
+#[derive(serde::Serialize)]
+struct TokenMetricsResp {
+    tokens: Vec<TokenMetricsItem>,
+}
+
 fn traffic_window(q: &TrafficQuery) -> TrafficWindow {
     TrafficWindow::parse(&q.range)
 }
@@ -201,6 +213,24 @@ async fn system_traffic(
 ) -> Json<ApiResponse<ProxyTrafficResp>> {
     let hist = state.svc.metrics().server_traffic(traffic_window(&q));
     Json(ApiResponse::ok(traffic_resp(hist)))
+}
+
+
+async fn system_token_metrics(
+    State(state): State<Arc<DashState>>,
+) -> Json<ApiResponse<TokenMetricsResp>> {
+    let tokens = state
+        .svc
+        .metrics()
+        .token_conn_snapshot()
+        .into_iter()
+        .map(|item| TokenMetricsItem {
+            token: item.token,
+            active_conns: item.active_conns,
+        })
+        .collect();
+
+    Json(ApiResponse::ok(TokenMetricsResp { tokens }))
 }
 
 async fn list_clients(
