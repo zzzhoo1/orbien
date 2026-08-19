@@ -868,3 +868,269 @@ jobs:
             /tmp/https2-upstream.log
             /tmp/https3-upstream.log
             /tmp/https-curl.log
+
+  e2e-token-auth:
+    name: E2E – Token authentication
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Shared echo backend ────────────────────────────────────────────────
+      - name: Start echo backend
+        shell: bash
+        run: |
+          python3 -u - <<'PY' > /tmp/token-echo.log 2>&1 &
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class Server(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with Server(("127.0.0.1", 27000), EchoHandler) as s:
+              s.serve_forever()
+          PY
+          echo "ECHO_PID=$!" >> "$GITHUB_ENV"
+
+      # ── Case 1: correct token → tunnel works ──────────────────────────────
+      - name: "Token auth – 1: correct token → tunnel established"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="super-secret-token-abc123"
+
+          cat > srv1.toml <<EOF
+          bindAddr = "0.0.0.0"
+          bindPort = 29527
+
+          [auth]
+          method = "token"
+          token  = "${SECRET}"
+          EOF
+
+          cat > cli1.toml <<EOF
+          serverAddr = "127.0.0.1"
+          serverPort = 29527
+          token      = "${SECRET}"
+
+          [[proxies]]
+          name       = "echo1"
+          type       = "tcp"
+          localIP    = "127.0.0.1"
+          localPort  = 27000
+          remotePort = 26000
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv1.toml > /tmp/tok1-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29527 || { echo "server not up"; cat /tmp/tok1-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli1.toml > /tmp/tok1-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 26000 && break; sleep 0.25; done
+          nc -z 127.0.0.1 26000 || {
+            echo "FAIL: tunnel not up with correct token"
+            cat /tmp/tok1-server.log; cat /tmp/tok1-client.log; exit 1
+          }
+
+          PAYLOAD="token-auth-ok-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 26000)
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: echo mismatch (sent=$PAYLOAD received=$RESPONSE)"
+            cat /tmp/tok1-server.log; cat /tmp/tok1-client.log; exit 1
+          fi
+          echo "PASS: correct token → tunnel works (echo=$RESPONSE)"
+
+      # ── Case 2: no token → client rejected ────────────────────────────────
+      - name: "Token auth – 2: no token → client rejected"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="super-secret-token-abc123"
+
+          cat > srv2.toml <<EOF
+          bindAddr = "0.0.0.0"
+          bindPort = 29528
+
+          [auth]
+          method = "token"
+          token  = "${SECRET}"
+          EOF
+
+          # Client sends NO token
+          cat > cli2.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 29528
+
+          [[proxies]]
+          name       = "echo2"
+          type       = "tcp"
+          localIP    = "127.0.0.1"
+          localPort  = 27000
+          remotePort = 26001
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv2.toml > /tmp/tok2-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29528 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29528 || { echo "server not up"; cat /tmp/tok2-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli2.toml > /tmp/tok2-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          # Give client up to 5 s to attempt auth; the remote port must NOT open
+          sleep 5
+          if nc -z 127.0.0.1 26001 2>/dev/null; then
+            echo "FAIL: remotePort 26001 opened despite missing token"
+            cat /tmp/tok2-server.log; cat /tmp/tok2-client.log; exit 1
+          fi
+          echo "PASS: no token → remotePort not opened"
+
+      # ── Case 3: wrong token → client rejected ─────────────────────────────
+      - name: "Token auth – 3: wrong token → client rejected"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="super-secret-token-abc123"
+
+          cat > srv3.toml <<EOF
+          bindAddr = "0.0.0.0"
+          bindPort = 29529
+
+          [auth]
+          method = "token"
+          token  = "${SECRET}"
+          EOF
+
+          cat > cli3.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 29529
+          token      = "totally-wrong-token"
+
+          [[proxies]]
+          name       = "echo3"
+          type       = "tcp"
+          localIP    = "127.0.0.1"
+          localPort  = 27000
+          remotePort = 26002
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv3.toml > /tmp/tok3-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29529 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29529 || { echo "server not up"; cat /tmp/tok3-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli3.toml > /tmp/tok3-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          sleep 5
+          if nc -z 127.0.0.1 26002 2>/dev/null; then
+            echo "FAIL: remotePort 26002 opened despite wrong token"
+            cat /tmp/tok3-server.log; cat /tmp/tok3-client.log; exit 1
+          fi
+          echo "PASS: wrong token → remotePort not opened"
+
+      # ── Case 4: no server token → any client connects ─────────────────────
+      - name: "Token auth – 4: no server token → unauthenticated client connects"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > srv4.toml <<'EOF'
+          bindAddr = "0.0.0.0"
+          bindPort = 29530
+          EOF
+
+          # Client sends a token but server doesn't require one – should still work
+          cat > cli4.toml <<'EOF'
+          serverAddr = "127.0.0.1"
+          serverPort = 29530
+          token      = "any-token-ignored"
+
+          [[proxies]]
+          name       = "echo4"
+          type       = "tcp"
+          localIP    = "127.0.0.1"
+          localPort  = 27000
+          remotePort = 26003
+          EOF
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv4.toml > /tmp/tok4-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29530 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29530 || { echo "server not up"; cat /tmp/tok4-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli4.toml > /tmp/tok4-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 26003 && break; sleep 0.25; done
+          nc -z 127.0.0.1 26003 || {
+            echo "FAIL: tunnel not up when server has no token requirement"
+            cat /tmp/tok4-server.log; cat /tmp/tok4-client.log; exit 1
+          }
+
+          PAYLOAD="no-auth-required-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 26003)
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: echo mismatch"
+            cat /tmp/tok4-server.log; cat /tmp/tok4-client.log; exit 1
+          fi
+          echo "PASS: no server token → client connects freely"
+
+      - name: Upload token-auth logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-token-auth-logs
+          path: |
+            /tmp/tok1-server.log
+            /tmp/tok1-client.log
+            /tmp/tok2-server.log
+            /tmp/tok2-client.log
+            /tmp/tok3-server.log
+            /tmp/tok3-client.log
+            /tmp/tok4-server.log
+            /tmp/tok4-client.log
+            /tmp/token-echo.log
