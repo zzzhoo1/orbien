@@ -287,16 +287,28 @@ mod tests {
         items.iter().copied().collect()
     }
 
-    fn policy(token_policy: TokenAccessPolicy) -> AccessPolicy {
-        let mut token_policies = HashMap::new();
-        token_policies.insert("tok-a".to_string(), token_policy);
+    fn base_policy() -> AccessPolicy {
         AccessPolicy {
             proxy_protocol: false,
             trusted_proxy_cidrs: vec![],
             deny_src_cidrs: vec![],
             pp_header_timeout: Duration::from_secs(1),
-            token_policies,
+            token_policies: HashMap::new(),
         }
+    }
+
+    fn policy(token_policy: TokenAccessPolicy) -> AccessPolicy {
+        let mut policy = base_policy();
+        policy
+            .token_policies
+            .insert("tok-a".to_string(), token_policy);
+        policy
+    }
+
+    #[test]
+    fn authorize_proxy_allows_unknown_token_without_extra_restrictions() {
+        let p = base_policy();
+        assert!(p.authorize_proxy("tok-x", "db", "tcp", Some(3306)).is_ok());
     }
 
     #[test]
@@ -328,12 +340,41 @@ mod tests {
     }
 
     #[test]
+    fn authorize_proxy_matches_protocol_case_insensitively() {
+        let p = policy(TokenAccessPolicy {
+            allowed_protocols: hs_str(&["tcp", "https"]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "db", "TCP", Some(3306)).is_ok());
+        assert!(p.authorize_proxy("tok-a", "site", "HTTPS", None).is_ok());
+    }
+
+    #[test]
     fn authorize_proxy_rejects_remote_port() {
         let p = policy(TokenAccessPolicy {
             allowed_remote_ports: hs_u16(&[3306]),
             ..Default::default()
         });
         assert!(p.authorize_proxy("tok-a", "db", "tcp", Some(5432)).is_err());
+    }
+
+    #[test]
+    fn authorize_proxy_rejects_missing_remote_port_when_policy_requires_it() {
+        let p = policy(TokenAccessPolicy {
+            allowed_remote_ports: hs_u16(&[443]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "site", "https", None).is_err());
+    }
+
+    #[test]
+    fn authorize_proxy_allows_http_without_remote_port_when_no_port_policy() {
+        let p = policy(TokenAccessPolicy {
+            allowed_protocols: hs_str(&["http", "https"]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-a", "site", "http", None).is_ok());
+        assert!(p.authorize_proxy("tok-a", "site-secure", "https", None).is_ok());
     }
 
     #[test]
