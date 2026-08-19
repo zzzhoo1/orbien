@@ -110,6 +110,11 @@ const enUS: MessageSchema = {
         hintBind: 'Primary control / work port',
         hintMuxOn: 'yamux on',
         hintMuxOff: 'yamux off',
+        tokenConns: 'Token connections',
+        tokenConnsDesc: 'Active control connections grouped by token',
+        token: 'Token',
+        activeConns: 'Active connections',
+        emptyTokens: 'No active token connections',
     },
     clients: {
         runId: 'Run ID',

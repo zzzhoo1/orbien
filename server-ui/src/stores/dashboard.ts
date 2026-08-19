@@ -1,6 +1,6 @@
 import {reactive} from 'vue'
-import {fetchClients, fetchProxies, fetchSystemInfo, isApiError, type ApiError} from '@/api'
-import type {ClientInfo, ProxyInfo, SystemInfo} from '@/types/api'
+import {fetchClients, fetchProxies, fetchSystemInfo, fetchSystemTokens, isApiError, type ApiError} from '@/api'
+import type {ClientInfo, ProxyInfo, SystemInfo, TokenMetricItem} from '@/types/api'
 
 export type DashboardError =
     | { code: ApiError['code']; params?: Record<string, unknown> }
@@ -10,6 +10,7 @@ const state = reactive({
     info: null as SystemInfo | null,
     clients: [] as ClientInfo[],
     proxies: [] as ProxyInfo[],
+    tokens: [] as TokenMetricItem[],
     loading: false,
     error: null as DashboardError,
 })
@@ -19,14 +20,16 @@ export function useDashboardStore() {
         state.loading = true
         state.error = null
         try {
-            const [sys, cli, prox] = await Promise.all([
+            const [sys, cli, prox, tokenMetrics] = await Promise.all([
                 fetchSystemInfo(),
                 fetchClients(),
                 fetchProxies(),
+                fetchSystemTokens(),
             ])
             state.info = sys
             state.clients = cli.items ?? []
             state.proxies = prox.items ?? []
+            state.tokens = tokenMetrics.tokens ?? []
         } catch (e) {
             if (isApiError(e)) {
                 state.error = {code: e.code, params: e.params}
@@ -47,6 +50,9 @@ export function useDashboardStore() {
         },
         get proxies() {
             return state.proxies
+        },
+        get tokens() {
+            return state.tokens
         },
         get loading() {
             return state.loading

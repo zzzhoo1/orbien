@@ -108,6 +108,11 @@ export interface MessageSchema {
         hintBind: string
         hintMuxOn: string
         hintMuxOff: string
+        tokenConns: string
+        tokenConnsDesc: string
+        token: string
+        activeConns: string
+        emptyTokens: string
     }
     clients: {
         runId: string

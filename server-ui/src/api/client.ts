@@ -5,6 +5,7 @@ import type {
     ProxyInfo,
     ProxyTrafficResp,
     ApiResponse,
+    TokenMetricsResp,
 } from '@/types/api'
 import { ApiError } from './errors'
 
@@ -88,4 +89,8 @@ export function fetchProxyTraffic(name: string, range: TrafficRange = '7d') {
 
 export function fetchSystemTraffic(range: TrafficRange = '7d') {
     return api<ProxyTrafficResp>(`/api/v1/system/traffic${trafficQuery(range)}`)
+}
+
+export function fetchSystemTokens() {
+    return api<TokenMetricsResp>('/api/v1/system/tokens')
 }

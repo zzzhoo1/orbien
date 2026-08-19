@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {computed, ref} from 'vue'
 import ConfigValue from '@/components/ConfigValue.vue'
-import DescList, {type DescItem} from '@/components/DescList.vue'
 import DonutChart, {type ChartSlice} from '@/components/DonutChart.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -32,6 +31,7 @@ const FALLBACK_COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#818cf8', 
 
 const cfg = computed(() => store.info?.config)
 const status = computed(() => store.info?.status)
+const tokenMetrics = computed(() => store.tokens ?? [])
 
 const trafficIn = computed(() => status.value?.totalTrafficIn ?? 0)
 const trafficOut = computed(() => status.value?.totalTrafficOut ?? 0)
@@ -92,9 +92,6 @@ const configFields = computed<ConfigField[]>(() => {
   return fields
 })
 
-const descItems = computed<DescItem[]>(() =>
-    configFields.value.map(({key, label}) => ({key, label})),
-)
 </script>
 
 <template>
@@ -146,16 +143,37 @@ const descItems = computed<DescItem[]>(() =>
       <TrafficChart :variant="chartVariant" :range="trafficRange" :refresh-ms="5000"/>
     </SectionCard>
 
-    <!-- ── Server config ── -->
-    <SectionCard class="config-panel" :title="t('monitor.serverConfig')">
-      <div v-if="configFields.length" class="config-grid">
-        <div v-for="field in configFields" :key="field.key" class="config-row">
-          <span class="config-label">{{ field.label }}</span>
-          <span class="config-val"><ConfigValue :type="field.type" :value="field.value"/></span>
+    <!-- ── Server config + token metrics ── -->
+    <div class="bottom-row">
+      <SectionCard class="config-panel" :title="t('monitor.serverConfig')">
+        <div v-if="configFields.length" class="config-grid">
+          <div v-for="field in configFields" :key="field.key" class="config-row">
+            <span class="config-label">{{ field.label }}</span>
+            <span class="config-val"><ConfigValue :type="field.type" :value="field.value"/></span>
+          </div>
         </div>
-      </div>
-      <p v-else class="empty-hint">{{ t('overview.emptyConfig') }}</p>
-    </SectionCard>
+        <p v-else class="empty-hint">{{ t('overview.emptyConfig') }}</p>
+      </SectionCard>
+
+      <SectionCard class="token-panel" :title="t('monitor.tokenConns')">
+        <template #extra>
+          <span class="badge">{{ tokenMetrics.length }}</span>
+        </template>
+        <div v-if="tokenMetrics.length" class="token-table-wrap">
+          <div class="token-table-head">
+            <span>{{ t('monitor.token') }}</span>
+            <span>{{ t('monitor.activeConns') }}</span>
+          </div>
+          <div class="token-table-body">
+            <div v-for="item in tokenMetrics" :key="item.token" class="token-row">
+              <span class="token-name" :title="item.token">{{ item.token }}</span>
+              <span class="token-count">{{ item.activeConns }}</span>
+            </div>
+          </div>
+        </div>
+        <p v-else class="empty-hint">{{ t('monitor.emptyTokens') }}</p>
+      </SectionCard>
+    </div>
   </div>
 </template>
 
@@ -189,6 +207,13 @@ const descItems = computed<DescItem[]>(() =>
 }
 
 .panel { height: 100%; }
+
+.bottom-row {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.25fr) minmax(260px, 0.75fr);
+  gap: 1rem;
+  align-items: stretch;
+}
 
 /* Badge */
 .badge {
@@ -289,12 +314,22 @@ const descItems = computed<DescItem[]>(() =>
   padding: 1.5rem 0;
 }
 
+.token-table-wrap { display: flex; flex-direction: column; }
+.token-table-head, .token-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.75rem; align-items: center; }
+.token-table-head { padding: 0.2rem 0.2rem 0.55rem; color: var(--muted); font-size: 0.76rem; font-weight: 600; }
+.token-table-body { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.token-row { padding: 0.7rem 0.2rem; border-bottom: 1px solid var(--line); }
+.token-row:last-child { border-bottom: none; }
+.token-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 600; color: var(--text); }
+.token-count { display: inline-flex; align-items: center; justify-content: center; min-width: 2rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
 /* Responsive */
 @media (max-width: 1200px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 1000px) {
   .middle-row { grid-template-columns: 1fr; }
+  .bottom-row { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }

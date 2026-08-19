@@ -52,6 +52,8 @@ export interface ClientInfo {
     curConns: number
     connectedSecs: number
     status: string
+    totalTrafficIn?: number
+    totalTrafficOut?: number
 }
 
 export interface ProxyInfo {
@@ -65,6 +67,7 @@ export interface ProxyInfo {
     todayTrafficOut: number
     curConns: number
     lastStartTime?: string
+    historyConns?: number
 }
 
 export interface ProxyTrafficPoint {
@@ -78,4 +81,13 @@ export interface ProxyTrafficResp {
     unit: 'bytes' | string
     granularity: 'day' | string
     history: ProxyTrafficPoint[]
+}
+
+export interface TokenMetricItem {
+    token: string
+    activeConns: number
+}
+
+export interface TokenMetricsResp {
+    tokens: TokenMetricItem[]
 }

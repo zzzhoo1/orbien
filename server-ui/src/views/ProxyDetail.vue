@@ -32,11 +32,10 @@ const fields = computed<FieldRow[]>(() => {
     {label: t('proxies.name'), value: p.name, mono: true},
     {label: t('proxies.type'), value: (p.type||'tcp').toUpperCase(), highlight: typeColor(p.type)},
     {label: t('proxies.localAddr'), value: p.localAddr || '—', mono: true},
-    {label: t('proxies.remoteAddr'), value: p.remoteAddr || '—', mono: true},
+    {label: t('proxies.port'), value: p.remoteAddr || '—', mono: true},
     {label: t('proxies.connections'), value: p.curConns ?? 0},
     {label: t('proxies.trafficIn'), value: p.todayTrafficIn ?? '—', mono: true},
     {label: t('proxies.trafficOut'), value: p.todayTrafficOut ?? '—', mono: true},
-    {label: t('proxies.historyConns'), value: p.historyConns ?? 0},
   ]
 })
 </script>
@@ -49,7 +48,7 @@ const fields = computed<FieldRow[]>(() => {
         <path d="M22 20V14M42 20V14M12 32h40"/>
         <path d="M26 42h12" opacity="0.4"/>
       </svg>
-      <p>{{ t('proxies.notFound') }}</p>
+      <p>{{ t('clients.notFound') }}</p>
       <button class="back-btn" @click="router.push({name:'proxies'})">← {{ t('common.back') }}</button>
     </div>
   </div>

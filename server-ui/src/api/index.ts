@@ -8,5 +8,7 @@ export {
     fetchProxies,
     fetchProxyTraffic,
     fetchSystemTraffic,
+    fetchSystemTokens,
 } from './client'
 export type {AuthStatus, ProxyListParams, TrafficRange} from './client'
+export type {TokenMetricItem, TokenMetricsResp} from '@/types/api'

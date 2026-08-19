@@ -90,7 +90,7 @@ export function useWebAuthn() {
       decodeOptions(options)
 
       const credential = await navigator.credentials.create(
-        { publicKey: options as PublicKeyCredentialCreationOptions },
+        { publicKey: options as unknown as PublicKeyCredentialCreationOptions },
       ) as PublicKeyCredential
       const response = credential.response as AuthenticatorAttestationResponse
 
@@ -133,7 +133,7 @@ export function useWebAuthn() {
       decodeOptions(options)
 
       const credential = await navigator.credentials.get(
-        { publicKey: options as PublicKeyCredentialRequestOptions },
+        { publicKey: options as unknown as PublicKeyCredentialRequestOptions },
       ) as PublicKeyCredential
       const response = credential.response as AuthenticatorAssertionResponse
 

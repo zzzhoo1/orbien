@@ -22,8 +22,11 @@ const client = computed(() => store.clients.find(c => c.runId === runId.value))
 const isOnline = computed(() => !client.value?.status || client.value.status === 'online')
 
 const proxies = computed(() =>
-  store.proxies.filter(p => p.runId === runId.value)
+  store.proxies.filter(p => p.clientId === runId.value)
 )
+
+const proxyTrafficIn = computed(() => proxies.value.reduce((sum, p) => sum + (p.todayTrafficIn ?? 0), 0))
+const proxyTrafficOut = computed(() => proxies.value.reduce((sum, p) => sum + (p.todayTrafficOut ?? 0), 0))
 
 const TYPE_COLORS: Record<string, string> = {
   http:'#3b82f6', https:'#93c5fd', tcp:'#94a3b8',
@@ -128,8 +131,8 @@ async function onKick() {
     <div class="stat-row">
       <SectionCard :title="t('traffic.network')">
         <TrafficSummary
-          :traffic-in="client.totalTrafficIn ?? 0"
-          :traffic-out="client.totalTrafficOut ?? 0"
+          :traffic-in="proxyTrafficIn"
+          :traffic-out="proxyTrafficOut"
         />
       </SectionCard>
 
@@ -153,7 +156,7 @@ async function onKick() {
         <div
           v-for="p in proxies" :key="p.name"
           class="proxy-card"
-          @click="$router.push({name:'proxy-detail', params:{name:p.name}})"
+          @click="router.push({name:'proxy-detail', params:{name:p.name}})"
         >
           <div class="proxy-card-top">
             <span class="type-badge" :style="{color:typeColor(p.type), background:typeColor(p.type)+'1a', borderColor:typeColor(p.type)+'44'}">

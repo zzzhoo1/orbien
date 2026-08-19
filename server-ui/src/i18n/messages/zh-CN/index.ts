@@ -110,6 +110,11 @@ const zhCN: MessageSchema = {
         hintBind: '主控制 / 工作连接端口',
         hintMuxOn: 'yamux 已开启',
         hintMuxOff: 'yamux 已关闭',
+        tokenConns: 'Token 连接',
+        tokenConnsDesc: '按 token 分组的当前活跃控制连接',
+        token: 'Token',
+        activeConns: '活跃连接数',
+        emptyTokens: '暂无活跃 token 连接',
     },
     clients: {
         runId: '运行 ID',

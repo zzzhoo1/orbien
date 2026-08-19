@@ -19,6 +19,18 @@ export const useAuthStore = defineStore('auth', () => {
     capabilitiesLoaded.value = true
   }
 
+
+  async function fetchStatus(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/v1/system/info', { credentials: 'include' })
+      authenticated.value = res.ok
+      return res.ok
+    } catch {
+      authenticated.value = false
+      return false
+    }
+  }
+
   function setAuthenticated(val: boolean, user = '') {
     authenticated.value = val
     username.value = user
@@ -51,6 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
     capabilities,
     capabilitiesLoaded,
     loadCapabilities,
+    fetchStatus,
     setAuthenticated,
     loginWithPassword,
     logout,

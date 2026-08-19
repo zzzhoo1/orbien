@@ -150,6 +150,7 @@ struct TrafficQuery {
 #[derive(serde::Serialize)]
 struct TokenMetricsItem {
     token: String,
+    #[serde(rename = "activeConns")]
     active_conns: usize,
 }
 
