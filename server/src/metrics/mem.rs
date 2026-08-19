@@ -190,7 +190,6 @@ impl MemMetrics {
         }
     }
 
-
     pub fn inc_token_conn(&self, token: &str) {
         let token = token.trim();
         if token.is_empty() {

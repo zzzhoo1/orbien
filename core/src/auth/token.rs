@@ -18,7 +18,13 @@ pub fn unix_now() -> i64 {
 }
 
 pub fn verify_login(token: &str, privilege_key: &str, timestamp: i64) -> bool {
-    verify_login_at(token, privilege_key, timestamp, unix_now(), DEFAULT_MAX_SKEW_SECS)
+    verify_login_at(
+        token,
+        privilege_key,
+        timestamp,
+        unix_now(),
+        DEFAULT_MAX_SKEW_SECS,
+    )
 }
 
 pub fn verify_login_at(

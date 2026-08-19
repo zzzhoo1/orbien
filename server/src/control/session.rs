@@ -7,8 +7,8 @@ use crate::proxy::{
 use anyhow::{anyhow, Result};
 use orbien_core::config::ServerConfig;
 use orbien_core::msg::{
-    self, CloseProxy, KickOut, LoginResp, Message, NewProxy, NewProxyResp, Ping, Pong,
-    ReqWorkConn, StartWorkConn,
+    self, CloseProxy, KickOut, LoginResp, Message, NewProxy, NewProxyResp, Ping, Pong, ReqWorkConn,
+    StartWorkConn,
 };
 use orbien_core::transport::DynStream;
 use std::sync::atomic::{AtomicBool, Ordering};

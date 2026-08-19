@@ -167,7 +167,10 @@ async fn handle_user_conn(
             proxy_name,
             visitor.visitor.ip().to_string(),
             visitor.visitor.port(),
-            visitor.local.map(|a| a.ip().to_string()).unwrap_or_default(),
+            visitor
+                .local
+                .map(|a| a.ip().to_string())
+                .unwrap_or_default(),
             visitor.local.map(|a| a.port()).unwrap_or(0),
         )
         .await?;
@@ -180,8 +183,7 @@ async fn handle_user_conn(
         visitor = %visitor.visitor,
         "joining visitor <-> work"
     );
-    let _ = metrics::join_and_record(
-        &control.metrics, proxy_name, "tcp", visitor.stream, work,
-    ).await;
+    let _ =
+        metrics::join_and_record(&control.metrics, proxy_name, "tcp", visitor.stream, work).await;
     Ok(())
 }

@@ -138,8 +138,12 @@ struct PageQuery {
     page_size: usize,
 }
 
-fn default_page() -> usize { 1 }
-fn default_page_size() -> usize { 50 }
+fn default_page() -> usize {
+    1
+}
+fn default_page_size() -> usize {
+    50
+}
 
 #[derive(Deserialize)]
 struct TrafficQuery {
@@ -177,7 +181,11 @@ fn traffic_resp(hist: ProxyTrafficHistory) -> ProxyTrafficResp {
         history: hist
             .history
             .into_iter()
-            .map(|p| ProxyTrafficPoint { date: p.date, traffic_in: p.traffic_in, traffic_out: p.traffic_out })
+            .map(|p| ProxyTrafficPoint {
+                date: p.date,
+                traffic_in: p.traffic_in,
+                traffic_out: p.traffic_out,
+            })
             .collect(),
     }
 }
@@ -221,7 +229,6 @@ async fn system_traffic(
     let hist = state.svc.metrics().server_traffic(traffic_window(&q));
     Json(ApiResponse::ok(traffic_resp(hist)))
 }
-
 
 async fn system_token_metrics(
     State(state): State<Arc<DashState>>,
@@ -293,8 +300,15 @@ async fn list_clients(
     let total = snap.clients.len();
     let start = (page - 1).saturating_mul(page_size);
     Json(ApiResponse::ok(Page {
-        total, page, page_size,
-        items: snap.clients.into_iter().skip(start).take(page_size).collect(),
+        total,
+        page,
+        page_size,
+        items: snap
+            .clients
+            .into_iter()
+            .skip(start)
+            .take(page_size)
+            .collect(),
     }))
 }
 
@@ -317,7 +331,11 @@ async fn kick_client(
     let run_id = urlencoding_decode(&run_id);
     match state.svc.kick_client(&run_id).await {
         Ok(()) => Json(ApiResponse::ok(())),
-        Err(e) => Json(ApiResponse { code: 404, msg: e.to_string(), data: () }),
+        Err(e) => Json(ApiResponse {
+            code: 404,
+            msg: e.to_string(),
+            data: (),
+        }),
     }
 }
 
@@ -351,7 +369,9 @@ async fn list_proxies(
     let total = filtered.len();
     let start = (page - 1).saturating_mul(page_size);
     Json(ApiResponse::ok(Page {
-        total, page, page_size,
+        total,
+        page,
+        page_size,
         items: filtered.into_iter().skip(start).take(page_size).collect(),
     }))
 }
@@ -384,8 +404,14 @@ fn percent_decode(input: &str) -> Option<String> {
                 out.push((h << 4) | l);
                 i += 3;
             }
-            b'+' => { out.push(b' '); i += 1; }
-            c => { out.push(c); i += 1; }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
         }
     }
     String::from_utf8(out).ok()
@@ -401,7 +427,9 @@ fn from_hex(b: u8) -> Option<u8> {
 }
 
 fn load_override(assets_dir: &str, rel: &str) -> Option<Vec<u8>> {
-    if assets_dir.trim().is_empty() { return None; }
+    if assets_dir.trim().is_empty() {
+        return None;
+    }
     let path = safe_join(FsPath::new(assets_dir), rel)?;
     std::fs::read(path).ok()
 }
@@ -419,15 +447,25 @@ fn safe_join(base: &FsPath, rel: &str) -> Option<PathBuf> {
 }
 
 fn content_type(path: &str) -> &'static str {
-    if path.ends_with(".js") || path.ends_with(".mjs") { "application/javascript; charset=utf-8" }
-    else if path.ends_with(".css")   { "text/css; charset=utf-8" }
-    else if path.ends_with(".html")  { "text/html; charset=utf-8" }
-    else if path.ends_with(".svg")   { "image/svg+xml" }
-    else if path.ends_with(".png")   { "image/png" }
-    else if path.ends_with(".ico")   { "image/x-icon" }
-    else if path.ends_with(".woff2") { "font/woff2" }
-    else if path.ends_with(".map")   { "application/json" }
-    else { "application/octet-stream" }
+    if path.ends_with(".js") || path.ends_with(".mjs") {
+        "application/javascript; charset=utf-8"
+    } else if path.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else if path.ends_with(".html") {
+        "text/html; charset=utf-8"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".ico") {
+        "image/x-icon"
+    } else if path.ends_with(".woff2") {
+        "font/woff2"
+    } else if path.ends_with(".map") {
+        "application/json"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 fn bytes_response(content_type: &'static str, body: Vec<u8>) -> Response {

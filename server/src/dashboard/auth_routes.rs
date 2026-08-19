@@ -14,9 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use webauthn_rs::prelude::{
-    PublicKeyCredential, RegisterPublicKeyCredential,
-};
+use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 
 // ── shared response wrapper ───────────────────────────────────────────────────
 
@@ -28,7 +26,11 @@ struct Resp<T: Serialize> {
 }
 
 fn ok<T: Serialize>(data: T) -> Json<Resp<T>> {
-    Json(Resp { code: 200, msg: String::new(), data })
+    Json(Resp {
+        code: 200,
+        msg: String::new(),
+        data,
+    })
 }
 
 fn err(status: StatusCode, msg: &str) -> Response {
@@ -102,7 +104,12 @@ pub async fn login(
         }
     }
 
-    let ok_creds = credentials_match(&state.cfg.user, &state.cfg.password, &body.username, &body.password);
+    let ok_creds = credentials_match(
+        &state.cfg.user,
+        &state.cfg.password,
+        &body.username,
+        &body.password,
+    );
     if !ok_creds {
         if let Some(auth) = &state.auth {
             auth.record_login_failure(&key);
@@ -154,7 +161,10 @@ pub async fn webauthn_register_begin(
     Json(body): Json<RegBeginReq>,
 ) -> Response {
     if !registration_authorized(&state, &headers) {
-        return err(StatusCode::UNAUTHORIZED, "login required to register a passkey");
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "login required to register a passkey",
+        );
     }
     let auth = match get_auth(&state) {
         Ok(a) => a,
@@ -170,7 +180,10 @@ pub async fn webauthn_register_begin(
     let session_user = current_username(&state, &headers);
     if let Some(user) = &session_user {
         if user != &body.username {
-            return err(StatusCode::FORBIDDEN, "cannot register a passkey for another user");
+            return err(
+                StatusCode::FORBIDDEN,
+                "cannot register a passkey for another user",
+            );
         }
     }
 
@@ -188,7 +201,10 @@ pub async fn webauthn_register_begin(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("webauthn reg begin error: {e}");
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "registration init failed");
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "registration init failed",
+            );
         }
     };
 
@@ -210,7 +226,10 @@ pub async fn webauthn_register_finish(
     Json(body): Json<RegFinishReq>,
 ) -> Response {
     if !registration_authorized(&state, &headers) {
-        return err(StatusCode::UNAUTHORIZED, "login required to register a passkey");
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "login required to register a passkey",
+        );
     }
     let auth = match get_auth(&state) {
         Ok(a) => a,
@@ -224,7 +243,10 @@ pub async fn webauthn_register_finish(
 
     if let Some(user) = current_username(&state, &headers) {
         if user != body.username {
-            return err(StatusCode::FORBIDDEN, "cannot register a passkey for another user");
+            return err(
+                StatusCode::FORBIDDEN,
+                "cannot register a passkey for another user",
+            );
         }
     }
 
@@ -232,8 +254,7 @@ pub async fn webauthn_register_finish(
         Some(w) => w,
         None => return err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"),
     };
-    match webauthn.finish_passkey_registration(&body.credential, &reg_state)
-    {
+    match webauthn.finish_passkey_registration(&body.credential, &reg_state) {
         Ok(passkey) => {
             auth.store_passkey(&body.username, passkey);
             ok(()).into_response()
@@ -247,9 +268,7 @@ pub async fn webauthn_register_finish(
 
 // ── WebAuthn login begin ────────────────────────────────────────────────────────
 
-pub async fn webauthn_login_begin(
-    State(state): State<Arc<DashState>>,
-) -> Response {
+pub async fn webauthn_login_begin(State(state): State<Arc<DashState>>) -> Response {
     let auth = match get_auth(&state) {
         Ok(a) => a,
         Err(e) => return e,
@@ -268,7 +287,10 @@ pub async fn webauthn_login_begin(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("webauthn login begin error: {e}");
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "authentication init failed");
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "authentication init failed",
+            );
         }
     };
 
@@ -277,8 +299,14 @@ pub async fn webauthn_login_begin(
 
     let mut res = ok(challenge).into_response();
     // begin has no incoming headers besides State; treat configured origin as source of truth
-    let secure = state.cfg.webauthn_origin.trim().to_ascii_lowercase().starts_with("https://");
-    res.headers_mut().insert(header::SET_COOKIE, wa_state_cookie(&state_key, secure));
+    let secure = state
+        .cfg
+        .webauthn_origin
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("https://");
+    res.headers_mut()
+        .insert(header::SET_COOKIE, wa_state_cookie(&state_key, secure));
     res
 }
 
@@ -363,7 +391,10 @@ fn basic_headers_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool 
     else {
         return false;
     };
-    let Some(b64) = h.strip_prefix("Basic ").or_else(|| h.strip_prefix("basic ")) else {
+    let Some(b64) = h
+        .strip_prefix("Basic ")
+        .or_else(|| h.strip_prefix("basic "))
+    else {
         return false;
     };
     let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) else {

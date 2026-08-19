@@ -27,9 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 use webauthn_rs::{
-    prelude::{
-        PasskeyAuthentication, PasskeyRegistration,
-    },
+    prelude::{PasskeyAuthentication, PasskeyRegistration},
     Webauthn, WebauthnBuilder,
 };
 
@@ -278,9 +276,7 @@ pub async fn auth_middleware(
 // ── cookie helpers ────────────────────────────────────────────────────────────
 
 pub fn extract_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
-    let cookie_str = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())?;
+    let cookie_str = headers.get(header::COOKIE).and_then(|v| v.to_str().ok())?;
     for pair in cookie_str.split(';') {
         let pair = pair.trim();
         if let Some(val) = pair.strip_prefix(&format!("{name}=")) {
@@ -367,7 +363,10 @@ fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
     else {
         return false;
     };
-    let Some(b64) = h.strip_prefix("Basic ").or_else(|| h.strip_prefix("basic ")) else {
+    let Some(b64) = h
+        .strip_prefix("Basic ")
+        .or_else(|| h.strip_prefix("basic "))
+    else {
         return false;
     };
     let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) else {

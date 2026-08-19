@@ -173,11 +173,7 @@ pub struct ProxyConfig {
     /// Maximum simultaneous connections allowed for this proxy.
     /// 0 (default) means unlimited.
     /// TCP/HTTP/HTTPS count live streams; UDP counts recent visitor sessions.
-    #[serde(
-        default,
-        rename = "maxConnections",
-        alias = "max_connections"
-    )]
+    #[serde(default, rename = "maxConnections", alias = "max_connections")]
     pub max_connections: usize,
 }
 

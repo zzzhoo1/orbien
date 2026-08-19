@@ -77,11 +77,7 @@ pub struct ServerConfig {
 
     /// Seconds before a UDP work-conn read is considered dead.
     /// 0 = use default (60 s).
-    #[serde(
-        default,
-        rename = "udpWorkReadSecs",
-        alias = "udp_work_read_secs"
-    )]
+    #[serde(default, rename = "udpWorkReadSecs", alias = "udp_work_read_secs")]
     pub udp_work_read_secs: u64,
 
     /// Seconds to wait for a work-conn to arrive from the client pool.

@@ -116,7 +116,9 @@ impl AccessPolicy {
 
         if !policy.allowed_remote_ports.is_empty() {
             let Some(port) = remote_port else {
-                bail!("token is not allowed to register proxy without remote port restriction match");
+                bail!(
+                    "token is not allowed to register proxy without remote port restriction match"
+                );
             };
             if !policy.allowed_remote_ports.contains(&port) {
                 bail!("token is not allowed to use remote port: {port}");
@@ -272,7 +274,6 @@ fn ipv6_in_cidr(net: Ipv6Addr, prefix: u8, ip: Ipv6Addr) -> bool {
     (net_o[full] & mask) == (ip_o[full] & mask)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{AccessPolicy, TokenAccessPolicy};
@@ -327,7 +328,9 @@ mod tests {
             allowed_tunnels: hs_str(&["db"]),
             ..Default::default()
         });
-        assert!(p.authorize_proxy("tok-a", "web", "tcp", Some(3306)).is_err());
+        assert!(p
+            .authorize_proxy("tok-a", "web", "tcp", Some(3306))
+            .is_err());
     }
 
     #[test]
@@ -374,7 +377,9 @@ mod tests {
             ..Default::default()
         });
         assert!(p.authorize_proxy("tok-a", "site", "http", None).is_ok());
-        assert!(p.authorize_proxy("tok-a", "site-secure", "https", None).is_ok());
+        assert!(p
+            .authorize_proxy("tok-a", "site-secure", "https", None)
+            .is_ok());
     }
 
     #[test]
