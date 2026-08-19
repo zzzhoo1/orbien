@@ -561,7 +561,7 @@ jobs:
           openssl req -x509 -newkey rsa:2048 -nodes \
             -keyout /tmp/tls.key -out /tmp/tls.crt \
             -days 1 -subj '/CN=demo-tls.test.local' \
-            -addext 'subjectAltName=DNS:demo-tls.test.local'
+            -addext 'subjectAltName=DNS:demo-tls.test.local,DNS:retls.test.local,DNS:conc-tls.test.local'
 
       # ── Case 1: basic SNI passthrough ──────────────────────────────────────
       - name: "HTTPS E2E – 1: basic SNI passthrough"
@@ -619,19 +619,15 @@ jobs:
           stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client.log 2>&1 &
           CLIENT_PID=$!
 
-          # Wait for tunnel: SNI passthrough means the vhost port accepts raw TLS.
-          # We probe with nc -z; once the port is open the TLS ClientHello decides routing.
+          # Poll with curl --resolve directly: this proves both that the vhost port
+          # is open AND that the SNI route is registered. No nc+sleep race.
           for i in $(seq 1 120); do
-            nc -z 127.0.0.1 19443 && break
+            curl -fsSk \
+              --resolve "demo-tls.test.local:19443:127.0.0.1" \
+              https://demo-tls.test.local:19443/ping \
+              -o /tmp/https-poll.txt 2>/tmp/https-curl.log && break
             sleep 0.25
           done
-          nc -z 127.0.0.1 19443 || {
-            echo "FAIL: https vhost port not open"
-            cat /tmp/https-server.log; cat /tmp/https-client.log; exit 1
-          }
-
-          # Give the client tunnel a moment to register the SNI route
-          sleep 1
 
           BODY=$(curl -fsSk \
             --resolve "demo-tls.test.local:19443:127.0.0.1" \
