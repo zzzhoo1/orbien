@@ -33,6 +33,8 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: portable-cpu-v1
 
       - name: fmt
         run: cargo fmt --all -- --check
