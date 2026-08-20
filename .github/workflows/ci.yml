@@ -1184,16 +1184,18 @@ jobs:
           PAYLOAD="udp-basic-$(date +%s)"
           RESPONSE=""
           for i in $(seq 1 80); do
-            RESPONSE=$(echo "$PAYLOAD" | python3 -c "
-import sys, socket, time
+            echo "$PAYLOAD" | python3 - <<'PY' > /tmp/udp1-probe.txt 2>/dev/null
+import sys, socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.settimeout(0.4)
 try:
-    s.sendto(sys.stdin.readline().rstrip(chr(10)).encode(), ('127.0.0.1', 37001))
-    print(s.recv(65535).decode())
+    s.sendto(sys.stdin.readline().rstrip("\n").encode(), ('127.0.0.1', 37001))
+    print(s.recv(65535).decode(), end="")
 except Exception:
     pass
-" 2>/dev/null) && [ -n "$RESPONSE" ] && break
+PY
+            RESPONSE=$(cat /tmp/udp1-probe.txt 2>/dev/null || true)
+            [ -n "$RESPONSE" ] && break
             sleep 0.25
           done
 
@@ -1257,7 +1259,7 @@ except Exception:
 
           # Warmup: wait for tunnel to be ready
           for i in $(seq 1 80); do
-            python3 -c "
+            python3 - <<'PY' 2>/dev/null && break
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.settimeout(0.4)
@@ -1267,7 +1269,7 @@ try:
     exit(0)
 except Exception:
     exit(1)
-" 2>/dev/null && break
+PY
             sleep 0.25
           done
 
@@ -1356,7 +1358,7 @@ except Exception:
 
           # Warmup
           for i in $(seq 1 80); do
-            python3 -c "
+            python3 - <<'PY' 2>/dev/null && break
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.settimeout(0.4)
@@ -1366,7 +1368,7 @@ try:
     exit(0)
 except Exception:
     exit(1)
-" 2>/dev/null && break
+PY
             sleep 0.25
           done
 
