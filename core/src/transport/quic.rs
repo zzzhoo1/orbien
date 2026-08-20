@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::watch;
 
 const STREAM_RECV_WINDOW: u32 = 32 * 1024 * 1024;
 const CONN_RECV_WINDOW: u32 = 64 * 1024 * 1024;
@@ -82,9 +83,15 @@ impl AsyncWrite for QuicBiStream {
     }
 }
 
+/// A long-lived QUIC client session.
+///
+/// A background task monitors `conn.closed()` so that `open_stream` fails
+/// fast instead of blocking indefinitely after the underlying connection drops.
 pub struct QuicSession {
     conn: Connection,
-
+    /// Sender is dropped when the background monitor task detects closure.
+    _closed_tx: watch::Sender<bool>,
+    closed_rx: watch::Receiver<bool>,
     _endpoint: Endpoint,
 }
 
@@ -105,15 +112,39 @@ impl QuicSession {
             .await
             .context("quic handshake")?;
         tracing::info!(%server_addr, "quic session established");
+
+        let (closed_tx, closed_rx) = watch::channel(false);
+        // Background monitor: signals closed_tx when the connection ends.
+        let monitor_conn = conn.clone();
+        let monitor_tx = closed_tx.clone();
+        tokio::spawn(async move {
+            let reason = monitor_conn.closed().await;
+            tracing::warn!(%server_addr, error = %reason, "quic connection closed");
+            let _ = monitor_tx.send(true);
+        });
+
         Ok(Self {
             conn,
+            _closed_tx: closed_tx,
+            closed_rx,
             _endpoint: endpoint,
         })
     }
 
+    /// Open a new bidirectional stream, failing immediately if the connection
+    /// has already been detected as closed by the monitor task.
     pub async fn open_stream(&self) -> Result<DynStream> {
+        if *self.closed_rx.borrow() {
+            return Err(anyhow::anyhow!("quic connection already closed"));
+        }
         let (send, recv) = self.conn.open_bi().await.context("quic open_bi")?;
         Ok(QuicBiStream::new(send, recv).boxed())
+    }
+
+    /// Returns `true` if the monitor task has detected that the underlying
+    /// connection is closed.  Useful for `select!` loops.
+    pub fn is_closed(&self) -> bool {
+        *self.closed_rx.borrow()
     }
 
     pub fn remote_address(&self) -> SocketAddr {
