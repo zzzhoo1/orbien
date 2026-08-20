@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Build server image ─────────────────────────────────────────────────
+      # ── Build server image ────────────────────────────────────────────────────
       - name: Build orbien-server image
         run: |
           docker build \
@@ -21,7 +21,7 @@ jobs:
             -t orbien-server:ci \
             .
 
-      # ── Build client image ─────────────────────────────────────────────────
+      # ── Build client image ────────────────────────────────────────────────────
       - name: Build orbien-client image
         run: |
           docker build \
@@ -29,14 +29,14 @@ jobs:
             -t orbien-client:ci \
             .
 
-      # ── Verify binaries exist inside images ────────────────────────────────
+      # ── Verify binaries exist inside images ────────────────────────────
       - name: Verify server binary
-        run: docker run --rm orbien-server:ci orbien-server --help
+        run: docker run --rm --entrypoint which orbien-server:ci orbien-server
 
       - name: Verify client binary
-        run: docker run --rm orbien-client:ci orbien --help
+        run: docker run --rm --entrypoint which orbien-client:ci orbien
 
-      # ── Smoke test: TCP tunnel through Docker ──────────────────────────────
+      # ── Smoke test: TCP tunnel through Docker ────────────────────────────────────
       - name: TCP tunnel smoke test
         shell: bash
         run: |
