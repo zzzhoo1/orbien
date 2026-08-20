@@ -17,7 +17,7 @@ pub use websocket::{
     accept_websocket, dial_websocket, is_websocket_http_request, websocket_url, WsByteStream,
     ORBIEN_WEBSOCKET_PATH,
 };
-pub use yamux_mux::{client_session, serve_yamux_session, YamuxClient};
+pub use yamux_mux::{client_session, serve_yamux_session, YamuxClient, MAX_NUM_STREAMS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
