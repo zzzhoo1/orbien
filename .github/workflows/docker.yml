@@ -42,25 +42,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Server config (written to host, mounted into container)
           mkdir -p /tmp/orbien-ci
+
+          # Server config — heredoc body at column 0 to avoid leading-space TOML parse error
           cat > /tmp/orbien-ci/srv.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9527
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9527
+EOF
 
           # Client config
           cat > /tmp/orbien-ci/cli.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9527
+serverAddr = "127.0.0.1"
+serverPort = 9527
 
-          [[proxies]]
-          name       = "echo"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 18000
-          remotePort = 18001
-          EOF
+[[proxies]]
+name       = "echo"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 18000
+remotePort = 18001
+EOF
 
           cleanup() {
             set +e
