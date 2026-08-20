@@ -1,0 +1,47 @@
+/* ============================================================
+   Orbien Server UI — Semantic Design Tokens
+   Step 001: Theme Foundation
+   Note: server-ui already has full light/dark vars in main.css.
+   This file adds semantic aliases to bridge toward the new system.
+   ============================================================ */
+
+:root,
+html[data-theme='dark'],
+html[data-theme='light'] {
+  /* Semantic aliases mapping to existing server-ui vars */
+  --color-bg: var(--bg);
+  --color-surface: var(--panel);
+  --color-surface-secondary: var(--surface-secondary);
+
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--muted);
+
+  --color-border: var(--line);
+  --color-border-strong: var(--line-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-success: var(--status-ok);
+  --color-success-soft: var(--status-ok-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+
+  /* Spacing — extend existing vars */
+  --space-1: var(--space-1, 4px);
+  --space-2: var(--space-2, 8px);
+  --space-3: var(--space-3, 12px);
+  --space-4: var(--space-4, 16px);
+  --space-5: var(--space-5, 20px);
+  --space-6: var(--space-6, 24px);
+
+  /* Control heights */
+  --control-height-sm: 32px;
+  --control-height-md: 40px;
+  --control-height-lg: 48px;
+}

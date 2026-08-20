@@ -1,0 +1,62 @@
+/* ============================================================
+   Orbien Desktop — Semantic Design Tokens
+   Step 001: Theme Foundation
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* Background */
+  --color-bg: #f5f5f7;
+  --color-surface: #ffffff;
+  --color-surface-secondary: #f2f2f7;
+
+  /* Text */
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #6e6e73;
+  --color-text-tertiary: #8e8e93;
+
+  /* Border */
+  --color-border: rgba(60, 60, 67, 0.18);
+  --color-border-strong: rgba(60, 60, 67, 0.30);
+
+  /* Accent */
+  --color-accent: #0071e3;
+  --color-accent-hover: #0077ed;
+  --color-accent-soft: rgba(0, 113, 227, 0.10);
+
+  /* Semantic states */
+  --color-success: #28a745;
+  --color-success-soft: rgba(40, 167, 69, 0.10);
+  --color-warning: #ff9f0a;
+  --color-warning-soft: rgba(255, 159, 10, 0.10);
+  --color-danger: #ff3b30;
+  --color-danger-soft: rgba(255, 59, 48, 0.10);
+  --color-danger-border: rgba(255, 59, 48, 0.25);
+
+  /* Radius */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.10);
+
+  /* Control heights */
+  --control-height-sm: 32px;
+  --control-height-md: 40px;
+  --control-height-lg: 48px;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+}

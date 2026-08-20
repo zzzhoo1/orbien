@@ -1,0 +1,23 @@
+/* ============================================================
+   Orbien Server UI — Accessibility & Motion
+   Step 001: Theme Foundation
+   server-ui light/dark theme vars already live in main.css.
+   This file adds :focus-visible and prefers-reduced-motion.
+   ============================================================ */
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
