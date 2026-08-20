@@ -1,6 +1,7 @@
 use super::types::*;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::time::Duration;
 
 #[derive(Debug, Error)]
 pub enum MessageReadError {
@@ -12,6 +13,8 @@ pub enum MessageReadError {
     UnknownType(u8),
     #[error("message body too large: {0} bytes")]
     TooLarge(u32),
+    #[error("read timed out after {0:?}")]
+    Timeout(Duration),
 }
 
 #[derive(Debug, Error)]
@@ -23,6 +26,9 @@ pub enum MessageWriteError {
 }
 
 const MAX_MSG_SIZE: u32 = 256 * 1024;
+
+/// Default timeout applied when using [`read_msg_timeout`].
+pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn write_msg<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -76,4 +82,15 @@ pub async fn read_msg<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Message, M
         other => return Err(MessageReadError::UnknownType(other)),
     };
     Ok(msg)
+}
+
+/// Like [`read_msg`] but fails with [`MessageReadError::Timeout`] if the
+/// full message is not received within `timeout`.
+pub async fn read_msg_timeout<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    timeout: Duration,
+) -> Result<Message, MessageReadError> {
+    tokio::time::timeout(timeout, read_msg(reader))
+        .await
+        .unwrap_or(Err(MessageReadError::Timeout(timeout)))
 }
