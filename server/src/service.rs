@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use orbien_core::auth;
 use orbien_core::config::ServerConfig;
 use orbien_core::msg::{self, Login, LoginResp, Message, NewWorkConn};
-use orbien_core::transport::{self, boxed_stream, DynStream};
+use orbien_core::transport::{self, boxed_stream, DynStream, MAX_NUM_STREAMS};
 use orbien_core::VERSION;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -215,7 +215,13 @@ impl Service {
         if self.cfg.transport.tcp_mux {
             tracing::debug!(%peer, "yamux server session started");
             let svc = Arc::clone(&self);
-            transport::serve_yamux_session(physical, move |stream| {
+            let max_streams = self
+                .cfg
+                .transport
+                .max_yamux_streams
+                .unwrap_or(MAX_NUM_STREAMS as i64)
+                .max(1) as usize;
+            transport::serve_yamux_session(physical, max_streams, move |stream| {
                 let svc = Arc::clone(&svc);
                 tokio::spawn(async move {
                     if let Err(e) = svc.handle_connection(stream, peer).await {
@@ -385,8 +391,6 @@ impl Service {
             offline.remove(&run_id);
         }
 
-        // #3 — single_client_per_user: kick any existing connection from the
-        // same user (different run_id) before inserting the new one.
         if self.cfg.single_client_per_user && !login.user.trim().is_empty() {
             let to_kick: Vec<Arc<Control>> = {
                 let map = self.controls.lock().await;
