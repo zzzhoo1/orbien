@@ -3,12 +3,13 @@ use async_trait::async_trait;
 use orbien_core::config::ClientConfig;
 use orbien_core::transport::{
     boxed_stream, client_enable_tls, dial_kcp, dial_websocket, new_client_tls_config, DynStream,
-    Protocol, QuicSession, YamuxClient,
+    Protocol, QuicSession, YamuxClient, MAX_NUM_STREAMS,
 };
 use rustls::ClientConfig as RustlsClientConfig;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 
 #[async_trait]
 pub trait Connector: Send + Sync {
@@ -19,7 +20,6 @@ struct TlsDialOpts {
     enable: bool,
     cfg: Arc<RustlsClientConfig>,
     server_name: String,
-
     write_custom_head: bool,
 }
 
@@ -52,6 +52,7 @@ impl TlsDialOpts {
 
 pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
     let tls = TlsDialOpts::from_config(cfg)?;
+    let max_streams = cfg.transport.max_yamux_streams.unwrap_or(MAX_NUM_STREAMS);
     match cfg.protocol()? {
         Protocol::Tcp => {
             if cfg.transport.tcp_mux {
@@ -61,9 +62,13 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
                     tls = tls.enable,
                     "tcpMux: physical TCP opened, yamux client started"
                 );
-                Ok(Arc::new(YamuxConnector {
-                    yamux: YamuxClient::start(stream),
-                }))
+                Ok(Arc::new(YamuxConnector::new(
+                    YamuxClient::start(stream, max_streams),
+                    cfg.clone(),
+                    tls,
+                    Protocol::Tcp,
+                    max_streams,
+                )))
             } else {
                 Ok(Arc::new(TcpConnector {
                     endpoint: cfg.server_endpoint(),
@@ -79,9 +84,13 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
                     tls = tls.enable,
                     "tcpMux: physical WebSocket opened, yamux client started"
                 );
-                Ok(Arc::new(YamuxConnector {
-                    yamux: YamuxClient::start(stream),
-                }))
+                Ok(Arc::new(YamuxConnector::new(
+                    YamuxClient::start(stream, max_streams),
+                    cfg.clone(),
+                    tls,
+                    Protocol::Websocket,
+                    max_streams,
+                )))
             } else {
                 Ok(Arc::new(WebsocketConnector {
                     endpoint: cfg.server_endpoint(),
@@ -98,9 +107,13 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
                     tls = tls.enable,
                     "tcpMux: physical KCP opened, yamux client started"
                 );
-                Ok(Arc::new(YamuxConnector {
-                    yamux: YamuxClient::start(stream),
-                }))
+                Ok(Arc::new(YamuxConnector::new(
+                    YamuxClient::start(stream, max_streams),
+                    cfg.clone(),
+                    tls,
+                    Protocol::Kcp,
+                    max_streams,
+                )))
             } else {
                 Ok(Arc::new(KcpConnector { addr, tls }))
             }
@@ -148,14 +161,76 @@ fn resolve_addr(cfg: &ClientConfig) -> Result<SocketAddr> {
         .ok_or_else(|| anyhow!("cannot resolve {}", cfg.server_endpoint()))
 }
 
+/// yamux connector that automatically re-dials the physical connection when
+/// the yamux session closes, instead of failing permanently.
 struct YamuxConnector {
-    yamux: YamuxClient,
+    /// Current active yamux client — replaced on reconnect.
+    inner: Mutex<YamuxClient>,
+    cfg: ClientConfig,
+    tls: TlsDialOpts,
+    protocol: Protocol,
+    max_streams: usize,
+    /// Prevents concurrent dial storms: only one goroutine rebuilds at a time.
+    rebuild_lock: Mutex<()>,
+}
+
+impl YamuxConnector {
+    fn new(
+        initial: YamuxClient,
+        cfg: ClientConfig,
+        tls: TlsDialOpts,
+        protocol: Protocol,
+        max_streams: usize,
+    ) -> Self {
+        Self {
+            inner: Mutex::new(initial),
+            cfg,
+            tls,
+            protocol,
+            max_streams,
+            rebuild_lock: Mutex::new(()),
+        }
+    }
+
+    async fn rebuild(&self) -> Result<()> {
+        let _guard = self.rebuild_lock.lock().await;
+        // Re-check: another task may have already rebuilt while we waited.
+        // We can't easily detect "still broken" without trying open_stream,
+        // so just always rebuild — the cost is one extra physical dial.
+        let stream = match self.protocol {
+            Protocol::Tcp => dial_tcp_tls(&self.cfg, &self.tls).await?,
+            Protocol::Websocket => dial_ws_tls(&self.cfg, &self.tls).await?,
+            Protocol::Kcp => {
+                let addr = resolve_addr(&self.cfg)?;
+                dial_kcp_tls(addr, &self.tls).await?
+            }
+            Protocol::Quic => return Err(anyhow!("yamux over quic is not supported")),
+        };
+        tracing::info!(
+            protocol = ?self.protocol,
+            "yamux session re-established after physical reconnect"
+        );
+        let new_client = YamuxClient::start(stream, self.max_streams);
+        *self.inner.lock().await = new_client;
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl Connector for YamuxConnector {
     async fn open(&self) -> Result<DynStream> {
-        self.yamux.open_stream().await
+        // First attempt.
+        let result = self.inner.lock().await.open_stream().await;
+        match result {
+            Ok(s) => return Ok(s),
+            Err(ref e) if e.to_string().contains("yamux client session closed") => {
+                tracing::warn!("yamux session closed, rebuilding physical connection");
+            }
+            Err(e) => return Err(e),
+        }
+        // Rebuild then retry once.
+        self.rebuild().await?;
+        self.inner.lock().await.open_stream().await
     }
 }
 

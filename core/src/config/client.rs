@@ -73,6 +73,17 @@ pub struct TransportConfig {
 
     #[serde(default)]
     pub tls: ClientTlsConfig,
+
+    /// Override the per-connection yamux stream concurrency limit.
+    /// Defaults to [`orbien_core::transport::MAX_NUM_STREAMS`] (256) when absent.
+    /// Set via config key `transport.maxYamuxStreams` / `transport.max_yamux_streams`.
+    #[serde(
+        default,
+        rename = "maxYamuxStreams",
+        alias = "max_yamux_streams",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_yamux_streams: Option<usize>,
 }
 
 impl Default for TransportConfig {
@@ -86,6 +97,7 @@ impl Default for TransportConfig {
             heartbeat_timeout: default_heartbeat_timeout(),
             quic: QuicOptions::default(),
             tls: ClientTlsConfig::default(),
+            max_yamux_streams: None,
         }
     }
 }
