@@ -899,21 +899,17 @@ jobs:
           set -euo pipefail
           SECRET="super-secret-token-abc123"
 
-          cat > srv1.toml <<EOF
+          # Write base config (no [auth] section — avoids heredoc+bracket issues)
+          cat > srv1.toml <<'EOF'
           bindAddr = "0.0.0.0"
           bindPort = 29527
-
-          [auth]
-          method = "token"
-          token  = "${SECRET}"
           EOF
+          # Append [auth] section via printf to safely expand $SECRET
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv1.toml
 
-          cat > cli1.toml <<EOF
+          cat > cli1.toml <<'EOF'
           serverAddr = "127.0.0.1"
           serverPort = 29527
-
-          [auth]
-          token = "${SECRET}"
 
           [[proxies]]
           name       = "echo1"
@@ -922,6 +918,7 @@ jobs:
           localPort  = 27000
           remotePort = 26000
           EOF
+          printf '[auth]\ntoken = "%s"\n' "$SECRET" >> cli1.toml
 
           cleanup() {
             set +e
@@ -958,14 +955,11 @@ jobs:
           set -euo pipefail
           SECRET="super-secret-token-abc123"
 
-          cat > srv2.toml <<EOF
+          cat > srv2.toml <<'EOF'
           bindAddr = "0.0.0.0"
           bindPort = 29528
-
-          [auth]
-          method = "token"
-          token  = "${SECRET}"
           EOF
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv2.toml
 
           cat > cli2.toml <<'EOF'
           serverAddr = "127.0.0.1"
@@ -1007,14 +1001,11 @@ jobs:
           set -euo pipefail
           SECRET="super-secret-token-abc123"
 
-          cat > srv3.toml <<EOF
+          cat > srv3.toml <<'EOF'
           bindAddr = "0.0.0.0"
           bindPort = 29529
-
-          [auth]
-          method = "token"
-          token  = "${SECRET}"
           EOF
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv3.toml
 
           cat > cli3.toml <<'EOF'
           serverAddr = "127.0.0.1"
