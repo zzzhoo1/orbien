@@ -5,15 +5,33 @@ use tokio::io::{copy_bidirectional_with_sizes, AsyncRead, AsyncWrite};
 // Each active connection uses 2 × JOIN_BUF bytes; scale down if memory is tight.
 const JOIN_BUF: usize = 512 * 1024;
 
+/// Bidirectional copy that returns `(a_to_b, b_to_a)` on success, or
+/// propagates the first I/O error encountered.
 pub async fn join<A, B>(a: A, b: B) -> std::io::Result<(u64, u64)>
 where
     A: AsyncRead + AsyncWrite + Unpin,
     B: AsyncRead + AsyncWrite + Unpin,
 {
-    let (a_to_b, b_to_a, _err) = join_counted(a, b).await;
-    Ok((a_to_b, b_to_a))
+    let (sent, recv, err) = join_counted(a, b).await;
+    match err {
+        None => Ok((sent, recv)),
+        Some(e) => Err(e),
+    }
 }
 
+/// Like [`join`] but never fails: returns byte counts regardless of any error.
+/// Use this when the caller genuinely does not care about mid-stream failures
+/// (e.g. UDP splice where partial delivery is expected).
+pub async fn join_discard_err<A, B>(a: A, b: B) -> (u64, u64)
+where
+    A: AsyncRead + AsyncWrite + Unpin,
+    B: AsyncRead + AsyncWrite + Unpin,
+{
+    let (sent, recv, _err) = join_counted(a, b).await;
+    (sent, recv)
+}
+
+/// Full result: byte counters **and** the error (if any).
 pub async fn join_counted<A, B>(a: A, b: B) -> (u64, u64, Option<std::io::Error>)
 where
     A: AsyncRead + AsyncWrite + Unpin,
