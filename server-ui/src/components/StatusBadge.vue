@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 export type StatusType = 'running' | 'stopped' | 'pending' | 'error' | 'info'
 export type StatusSize = 'sm' | 'md'
 
@@ -24,8 +26,6 @@ const defaultLabels: Record<StatusType, string> = {
 }
 
 const displayLabel = computed(() => props.label ?? defaultLabels[props.status])
-
-import { computed } from 'vue'
 </script>
 
 <template>
