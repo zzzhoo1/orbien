@@ -306,8 +306,7 @@ impl Control {
             return Err(anyhow!("control closed"));
         }
         let mut writer = self.writer.lock().await;
-        msg::write_msg(&mut *writer, &Message::ReqWorkConn(ReqWorkConn {}))
-            .await?;
+        msg::write_msg(&mut *writer, &Message::ReqWorkConn(ReqWorkConn {})).await?;
         Ok(())
     }
 
