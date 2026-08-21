@@ -224,7 +224,9 @@ impl Control {
                     // Per rustls docs, this is safe when the application protocol
                     // (our framed msgpack) already provides message-length framing.
                     Err(e) if is_unexpected_eof(&e) => {
-                        tracing::debug!("control stream closed (unexpected EOF treated as clean disconnect)");
+                        tracing::debug!(
+                            "control stream closed (unexpected EOF treated as clean disconnect)"
+                        );
                         return Ok(ReaderEnd::Closed);
                     }
                     Err(_) => return Ok(ReaderEnd::Closed),
