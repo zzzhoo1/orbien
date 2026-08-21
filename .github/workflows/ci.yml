@@ -1118,8 +1118,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # udpPacketSize=8192 must be set on BOTH server and client so that
-          # neither side truncates the 4096-byte datagram.
           printf 'bindAddr = "0.0.0.0"\nbindPort = 39529\nudpPacketSize = 8192\n' > orbien-server.toml
 
           printf 'serverAddr = "127.0.0.1"\nserverPort = 39529\nudpPacketSize = 8192\n\n[[proxies]]\nname       = "udp-large"\ntype       = "udp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 37020\nremotePort = 37021\n' > orbien.toml
@@ -1225,11 +1223,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # quicBindPort activates the QUIC listener on the server side.
+          # Server: TCP control on 49527, QUIC (UDP) control/work on 49528.
           printf 'bindAddr = "0.0.0.0"\nbindPort = 49527\nquicBindPort = 49528\n' > orbien-server.toml
 
-          # transport.protocol = "quic" makes the client use QUIC.
-          printf 'serverAddr = "127.0.0.1"\nserverPort = 49527\n\n[transport]\nprotocol = "quic"\n\n[[proxies]]\nname       = "quic-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47000\nremotePort = 46000\n' > orbien.toml
+          # Client: serverPort must point at quicBindPort (49528, UDP) when
+          # protocol = "quic".  The TCP bindPort is NOT used for QUIC connections.
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 49528\n\n[transport]\nprotocol = "quic"\n\n[[proxies]]\nname       = "quic-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47000\nremotePort = 46000\n' > orbien.toml
 
           cleanup() {
             set +e
@@ -1257,6 +1256,7 @@ jobs:
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/quic-server.log 2>&1 &
           SERVER_PID=$!
+          # Wait for the TCP control port so we know the server is up
           for i in $(seq 1 40); do nc -z 127.0.0.1 49527 && break; sleep 0.25; done
           nc -z 127.0.0.1 49527 || { echo "server not up"; cat /tmp/quic-server.log; exit 1; }
 
@@ -1289,7 +1289,8 @@ jobs:
           printf 'bindAddr = "0.0.0.0"\nbindPort = 49529\nquicBindPort = 49530\n' > orbien-server.toml
           printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> orbien-server.toml
 
-          printf 'serverAddr = "127.0.0.1"\nserverPort = 49529\n\n[transport]\nprotocol = "quic"\n\n[auth]\ntoken = "%s"\n\n[[proxies]]\nname       = "quic-auth-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47001\nremotePort = 46001\n' "$SECRET" > orbien.toml
+          # serverPort = quicBindPort (49530) for QUIC protocol
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 49530\n\n[transport]\nprotocol = "quic"\n\n[auth]\ntoken = "%s"\n\n[[proxies]]\nname       = "quic-auth-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47001\nremotePort = 46001\n' "$SECRET" > orbien.toml
 
           cleanup() {
             set +e
@@ -1373,8 +1374,6 @@ jobs:
 
           printf 'bindAddr = "0.0.0.0"\nbindPort = 59527\n' > orbien-server.toml
 
-          # heartbeatInterval/heartbeatTimeout are in seconds (non-tcpMux path).
-          # Set short values so the client detects the server drop quickly.
           printf 'serverAddr = "127.0.0.1"\nserverPort = 59527\n\n[transport]\ntcpMux = false\nheartbeatInterval = 2\nheartbeatTimeout  = 6\n\n[[proxies]]\nname       = "re-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 57000\nremotePort = 56000\n' > orbien.toml
 
           cleanup() {
@@ -1401,7 +1400,6 @@ jobs:
           python3 /tmp/_py_re_echo.py > /tmp/re-echo.log 2>&1 &
           ECHO_PID=$!
 
-          # --- start server + client ---
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/re-server1.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 40); do nc -z 127.0.0.1 59527 && break; sleep 0.25; done
@@ -1421,20 +1419,17 @@ jobs:
           [ "$R1" = "$PAYLOAD1" ] || { echo "FAIL: pre-restart echo mismatch"; exit 1; }
           echo "Pre-restart echo OK: $R1"
 
-          # --- kill server, wait for port to close ---
           kill "$SERVER_PID" 2>/dev/null || true
           wait "$SERVER_PID" 2>/dev/null || true
           unset SERVER_PID
           for i in $(seq 1 20); do nc -z 127.0.0.1 59527 2>/dev/null || break; sleep 0.25; done
 
-          # --- restart server ---
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/re-server2.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 40); do nc -z 127.0.0.1 59527 && break; sleep 0.25; done
           nc -z 127.0.0.1 59527 || { echo "restarted server not up"; cat /tmp/re-server2.log; exit 1; }
           echo "Server restarted"
 
-          # --- wait for client to re-establish the tunnel (up to 30 s) ---
           for i in $(seq 1 120); do nc -z 127.0.0.1 56000 && break; sleep 0.25; done
           nc -z 127.0.0.1 56000 || {
             echo "FAIL: tunnel not re-established after server restart"
@@ -1461,7 +1456,6 @@ jobs:
 
           cleanup() {
             set +e
-            # Always restore firewall rules first
             sudo iptables -D INPUT  -p tcp --dport 59528 -j DROP 2>/dev/null || true
             sudo iptables -D OUTPUT -p tcp --sport 59528 -j DROP 2>/dev/null || true
             kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
@@ -1505,7 +1499,6 @@ jobs:
           [ "$R1" = "$PAYLOAD1" ] || { echo "FAIL: pre-drop echo mismatch"; exit 1; }
           echo "Pre-drop echo OK: $R1"
 
-          # --- silently drop control-channel packets for 10 s ---
           echo "Dropping packets to port 59528 for 10 s ..."
           sudo iptables -I INPUT  1 -p tcp --dport 59528 -j DROP
           sudo iptables -I OUTPUT 1 -p tcp --sport 59528 -j DROP
@@ -1514,7 +1507,6 @@ jobs:
           sudo iptables -D OUTPUT -p tcp --sport 59528 -j DROP
           echo "Packets restored"
 
-          # --- wait for reconnect (up to 30 s) ---
           for i in $(seq 1 120); do nc -z 127.0.0.1 56001 && break; sleep 0.25; done
           nc -z 127.0.0.1 56001 || {
             echo "FAIL: tunnel not re-established after network drop"
