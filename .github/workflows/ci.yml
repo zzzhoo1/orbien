@@ -1203,3 +1203,342 @@ jobs:
             /tmp/udp3-server.log
             /tmp/udp3-client.log
             /tmp/udp3-echo.log
+
+  e2e-quic:
+    name: E2E – QUIC transport
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Case 1: basic TCP-over-QUIC echo ───────────────────────────────
+      - name: "QUIC E2E – 1: basic TCP-over-QUIC echo"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # quicBindPort activates the QUIC listener on the server side.
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 49527\nquicBindPort = 49528\n' > orbien-server.toml
+
+          # transport.protocol = "quic" makes the client use QUIC.
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 49527\n\n[transport]\nprotocol = "quic"\n\n[[proxies]]\nname       = "quic-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47000\nremotePort = 46000\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_quic_echo.py << 'PYEOF'
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class Server(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with Server(("127.0.0.1", 47000), EchoHandler) as s:
+              s.serve_forever()
+          PYEOF
+          python3 /tmp/_py_quic_echo.py > /tmp/quic-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/quic-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 49527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 49527 || { echo "server not up"; cat /tmp/quic-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/quic-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 46000 && break; sleep 0.25; done
+          nc -z 127.0.0.1 46000 || {
+            echo "FAIL: QUIC tunnel not up"
+            cat /tmp/quic-server.log; cat /tmp/quic-client.log; exit 1
+          }
+
+          PAYLOAD="quic-e2e-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 46000)
+          echo "Sent:     $PAYLOAD"
+          echo "Received: $RESPONSE"
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: QUIC echo mismatch"
+            cat /tmp/quic-server.log; cat /tmp/quic-client.log; exit 1
+          fi
+          echo "PASS: basic TCP-over-QUIC echo"
+
+      # ── Case 2: QUIC with token auth ────────────────────────────────────
+      - name: "QUIC E2E – 2: QUIC transport with token auth"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="quic-secret-$(date +%s)"
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 49529\nquicBindPort = 49530\n' > orbien-server.toml
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 49529\n\n[transport]\nprotocol = "quic"\n\n[auth]\ntoken = "%s"\n\n[[proxies]]\nname       = "quic-auth-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47001\nremotePort = 46001\n' "$SECRET" > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_quic2_echo.py << 'PYEOF'
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class Server(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with Server(("127.0.0.1", 47001), EchoHandler) as s:
+              s.serve_forever()
+          PYEOF
+          python3 /tmp/_py_quic2_echo.py > /tmp/quic2-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/quic2-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 49529 && break; sleep 0.25; done
+          nc -z 127.0.0.1 49529 || { echo "server not up"; cat /tmp/quic2-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/quic2-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 46001 && break; sleep 0.25; done
+          nc -z 127.0.0.1 46001 || {
+            echo "FAIL: QUIC+token tunnel not up"
+            cat /tmp/quic2-server.log; cat /tmp/quic2-client.log; exit 1
+          }
+
+          PAYLOAD="quic-auth-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 46001)
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: QUIC+token echo mismatch"
+            cat /tmp/quic2-server.log; cat /tmp/quic2-client.log; exit 1
+          fi
+          echo "PASS: QUIC transport with token auth"
+
+      - name: Upload QUIC logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-quic-logs
+          path: |
+            /tmp/quic-server.log
+            /tmp/quic-client.log
+            /tmp/quic-echo.log
+            /tmp/quic2-server.log
+            /tmp/quic2-client.log
+            /tmp/quic2-echo.log
+
+  e2e-reconnect:
+    name: E2E – Client reconnect
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Case 1: client reconnects after server restart ──────────────────
+      - name: "Reconnect – 1: client reconnects after server restart"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 59527\n' > orbien-server.toml
+
+          # heartbeatInterval/heartbeatTimeout are in seconds (non-tcpMux path).
+          # Set short values so the client detects the server drop quickly.
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 59527\n\n[transport]\ntcpMux = false\nheartbeatInterval = 2\nheartbeatTimeout  = 6\n\n[[proxies]]\nname       = "re-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 57000\nremotePort = 56000\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_re_echo.py << 'PYEOF'
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class Server(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with Server(("127.0.0.1", 57000), EchoHandler) as s:
+              s.serve_forever()
+          PYEOF
+          python3 /tmp/_py_re_echo.py > /tmp/re-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          # --- start server + client ---
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/re-server1.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 59527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 59527 || { echo "server not up"; cat /tmp/re-server1.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/re-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 56000 && break; sleep 0.25; done
+          nc -z 127.0.0.1 56000 || {
+            echo "FAIL: initial tunnel not up"
+            cat /tmp/re-server1.log; cat /tmp/re-client.log; exit 1
+          }
+
+          PAYLOAD1="before-restart-$(date +%s)"
+          R1=$(printf '%s' "$PAYLOAD1" | nc -w 3 127.0.0.1 56000)
+          [ "$R1" = "$PAYLOAD1" ] || { echo "FAIL: pre-restart echo mismatch"; exit 1; }
+          echo "Pre-restart echo OK: $R1"
+
+          # --- kill server, wait for port to close ---
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          unset SERVER_PID
+          for i in $(seq 1 20); do nc -z 127.0.0.1 59527 2>/dev/null || break; sleep 0.25; done
+
+          # --- restart server ---
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/re-server2.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 59527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 59527 || { echo "restarted server not up"; cat /tmp/re-server2.log; exit 1; }
+          echo "Server restarted"
+
+          # --- wait for client to re-establish the tunnel (up to 30 s) ---
+          for i in $(seq 1 120); do nc -z 127.0.0.1 56000 && break; sleep 0.25; done
+          nc -z 127.0.0.1 56000 || {
+            echo "FAIL: tunnel not re-established after server restart"
+            cat /tmp/re-server2.log; cat /tmp/re-client.log; exit 1
+          }
+
+          PAYLOAD2="after-restart-$(date +%s)"
+          R2=$(printf '%s' "$PAYLOAD2" | nc -w 3 127.0.0.1 56000)
+          if [ "$R2" != "$PAYLOAD2" ]; then
+            echo "FAIL: post-restart echo mismatch (sent=$PAYLOAD2 got=$R2)"
+            cat /tmp/re-server2.log; cat /tmp/re-client.log; exit 1
+          fi
+          echo "PASS: client reconnected after server restart (echo=$R2)"
+
+      # ── Case 2: client reconnects after transient network drop (iptables) ──
+      - name: "Reconnect – 2: client reconnects after transient network drop"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 59528\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 59528\n\n[transport]\ntcpMux = false\nheartbeatInterval = 2\nheartbeatTimeout  = 6\n\n[[proxies]]\nname       = "drop-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 57001\nremotePort = 56001\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            # Always restore firewall rules first
+            sudo iptables -D INPUT  -p tcp --dport 59528 -j DROP 2>/dev/null || true
+            sudo iptables -D OUTPUT -p tcp --sport 59528 -j DROP 2>/dev/null || true
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_drop_echo.py << 'PYEOF'
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class Server(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with Server(("127.0.0.1", 57001), EchoHandler) as s:
+              s.serve_forever()
+          PYEOF
+          python3 /tmp/_py_drop_echo.py > /tmp/drop-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/drop-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 59528 && break; sleep 0.25; done
+          nc -z 127.0.0.1 59528 || { echo "server not up"; cat /tmp/drop-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/drop-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 56001 && break; sleep 0.25; done
+          nc -z 127.0.0.1 56001 || {
+            echo "FAIL: initial tunnel not up"
+            cat /tmp/drop-server.log; cat /tmp/drop-client.log; exit 1
+          }
+
+          PAYLOAD1="before-drop-$(date +%s)"
+          R1=$(printf '%s' "$PAYLOAD1" | nc -w 3 127.0.0.1 56001)
+          [ "$R1" = "$PAYLOAD1" ] || { echo "FAIL: pre-drop echo mismatch"; exit 1; }
+          echo "Pre-drop echo OK: $R1"
+
+          # --- silently drop control-channel packets for 10 s ---
+          echo "Dropping packets to port 59528 for 10 s ..."
+          sudo iptables -I INPUT  1 -p tcp --dport 59528 -j DROP
+          sudo iptables -I OUTPUT 1 -p tcp --sport 59528 -j DROP
+          sleep 10
+          sudo iptables -D INPUT  -p tcp --dport 59528 -j DROP
+          sudo iptables -D OUTPUT -p tcp --sport 59528 -j DROP
+          echo "Packets restored"
+
+          # --- wait for reconnect (up to 30 s) ---
+          for i in $(seq 1 120); do nc -z 127.0.0.1 56001 && break; sleep 0.25; done
+          nc -z 127.0.0.1 56001 || {
+            echo "FAIL: tunnel not re-established after network drop"
+            cat /tmp/drop-server.log; cat /tmp/drop-client.log; exit 1
+          }
+
+          PAYLOAD2="after-drop-$(date +%s)"
+          R2=$(printf '%s' "$PAYLOAD2" | nc -w 3 127.0.0.1 56001)
+          if [ "$R2" != "$PAYLOAD2" ]; then
+            echo "FAIL: post-drop echo mismatch (sent=$PAYLOAD2 got=$R2)"
+            cat /tmp/drop-server.log; cat /tmp/drop-client.log; exit 1
+          fi
+          echo "PASS: client reconnected after transient network drop (echo=$R2)"
+
+      - name: Upload reconnect logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-reconnect-logs
+          path: |
+            /tmp/re-server1.log
+            /tmp/re-server2.log
+            /tmp/re-client.log
+            /tmp/re-echo.log
+            /tmp/drop-server.log
+            /tmp/drop-client.log
+            /tmp/drop-echo.log
