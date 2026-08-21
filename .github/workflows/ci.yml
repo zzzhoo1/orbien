@@ -78,21 +78,21 @@ jobs:
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9527
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9527
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9527
+serverAddr = "127.0.0.1"
+serverPort = 9527
 
-          [[proxies]]
-          name       = "echo"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 7000
-          remotePort = 16000
-          EOF
+[[proxies]]
+name       = "echo"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 7000
+remotePort = 16000
+EOF
 
           cleanup() {
             set +e
@@ -106,19 +106,19 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/echo.log 2>&1 &
-          import socketserver
-          class EchoHandler(socketserver.BaseRequestHandler):
-              def handle(self):
-                  while True:
-                      data = self.request.recv(65536)
-                      if not data:
-                          break
-                      self.request.sendall(data)
-          class ThreadedTCPServer(socketserver.ThreadingTCPServer):
-              allow_reuse_address = True
-          with ThreadedTCPServer(("127.0.0.1", 7000), EchoHandler) as server:
-              server.serve_forever()
-          PY
+import socketserver
+class EchoHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        while True:
+            data = self.request.recv(65536)
+            if not data:
+                break
+            self.request.sendall(data)
+class ThreadedTCPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+with ThreadedTCPServer(("127.0.0.1", 7000), EchoHandler) as server:
+    server.serve_forever()
+PY
           ECHO_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
@@ -188,30 +188,30 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bins/orbien-server bins/orbien
 
-      # ── Case 1: basic forward + Host header ────────────────────────────────
+      # ── Case 1: basic forward + Host header ───────────────────────────────────
       - name: "HTTP E2E – 1: basic forward + Host header"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9527
-          vhostHTTPPort = 18080
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9527
+vhostHTTPPort = 18080
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9527
+serverAddr = "127.0.0.1"
+serverPort = 9527
 
-          [[proxies]]
-          name      = "web"
-          type      = "http"
-          localIP   = "127.0.0.1"
-          localPort = 17070
-          subdomain = "demo"
-          EOF
+[[proxies]]
+name      = "web"
+type      = "http"
+localIP   = "127.0.0.1"
+localPort = 17070
+subdomain = "demo"
+EOF
 
           cleanup() {
             set +e
@@ -221,18 +221,18 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/http-upstream.log 2>&1 &
-          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-          class Handler(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  body = f"orbien-http-ok path={self.path} host={self.headers.get('Host','')}".encode()
-                  self.send_response(200)
-                  self.send_header('Content-Type', 'text/plain; charset=utf-8')
-                  self.send_header('Content-Length', str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ThreadingHTTPServer(("127.0.0.1", 17070), Handler).serve_forever()
-          PY
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = f"orbien-http-ok path={self.path} host={self.headers.get('Host','')}".encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ThreadingHTTPServer(("127.0.0.1", 17070), Handler).serve_forever()
+PY
           HTTP_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
@@ -255,18 +255,18 @@ jobs:
           }
           echo "PASS: basic forward + Host header"
 
-      # ── Case 2: unknown domain → 4xx / connection refused ──────────────────
+      # ── Case 2: unknown domain → 4xx / connection refused ──────────────
       - name: "HTTP E2E – 2: unknown domain returns 4xx"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9528
-          vhostHTTPPort = 18081
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9528
+vhostHTTPPort = 18081
+subDomainHost = "test.local"
+EOF
 
           cleanup() {
             set +e
@@ -288,30 +288,30 @@ jobs:
             *) echo "FAIL: expected 4xx or connection refused, got $HTTP_CODE"; exit 1 ;;
           esac
 
-      # ── Case 3: same-name tunnel re-registration ───────────────────────────
+      # ── Case 3: same-name tunnel re-registration ───────────────────────
       - name: "HTTP E2E – 3: re-register same tunnel, route survives"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9529
-          vhostHTTPPort = 18082
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9529
+vhostHTTPPort = 18082
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9529
+serverAddr = "127.0.0.1"
+serverPort = 9529
 
-          [[proxies]]
-          name      = "web"
-          type      = "http"
-          localIP   = "127.0.0.1"
-          localPort = 17071
-          subdomain = "demo2"
-          EOF
+[[proxies]]
+name      = "web"
+type      = "http"
+localIP   = "127.0.0.1"
+localPort = 17071
+subdomain = "demo2"
+EOF
 
           cleanup() {
             set +e
@@ -321,17 +321,17 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/http2-upstream.log 2>&1 &
-          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-          class Handler(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  body = b"alive"
-                  self.send_response(200)
-                  self.send_header('Content-Length', str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ThreadingHTTPServer(("127.0.0.1", 17071), Handler).serve_forever()
-          PY
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"alive"
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ThreadingHTTPServer(("127.0.0.1", 17071), Handler).serve_forever()
+PY
           HTTP_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server3.log 2>&1 &
@@ -366,30 +366,30 @@ jobs:
           }
           echo "PASS: re-registration route survives"
 
-      # ── Case 4: concurrent requests ────────────────────────────────────────
+      # ── Case 4: concurrent requests ──────────────────────────────────
       - name: "HTTP E2E – 4: concurrent requests"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9530
-          vhostHTTPPort = 18083
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9530
+vhostHTTPPort = 18083
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9530
+serverAddr = "127.0.0.1"
+serverPort = 9530
 
-          [[proxies]]
-          name      = "web"
-          type      = "http"
-          localIP   = "127.0.0.1"
-          localPort = 17072
-          subdomain = "conc"
-          EOF
+[[proxies]]
+name      = "web"
+type      = "http"
+localIP   = "127.0.0.1"
+localPort = 17072
+subdomain = "conc"
+EOF
 
           cleanup() {
             set +e
@@ -399,19 +399,19 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/http3-upstream.log 2>&1 &
-          import time
-          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-          class Handler(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  time.sleep(0.05)
-                  body = b"concurrent-ok"
-                  self.send_response(200)
-                  self.send_header('Content-Length', str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ThreadingHTTPServer(("127.0.0.1", 17072), Handler).serve_forever()
-          PY
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        time.sleep(0.05)
+        body = b"concurrent-ok"
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ThreadingHTTPServer(("127.0.0.1", 17072), Handler).serve_forever()
+PY
           HTTP_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server4.log 2>&1 &
@@ -443,31 +443,31 @@ jobs:
           fi
           echo "PASS: 20/20 concurrent requests succeeded"
 
-      # ── Case 5: maxConnections → 503 ──────────────────────────────────────
+      # ── Case 5: maxConnections → 503 ──────────────────────────────────
       - name: "HTTP E2E – 5: maxConnections limit returns 503"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9531
-          vhostHTTPPort = 18084
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 9531
+vhostHTTPPort = 18084
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9531
+serverAddr = "127.0.0.1"
+serverPort = 9531
 
-          [[proxies]]
-          name           = "web"
-          type           = "http"
-          localIP        = "127.0.0.1"
-          localPort      = 17073
-          subdomain      = "limited"
-          maxConnections = 1
-          EOF
+[[proxies]]
+name           = "web"
+type           = "http"
+localIP        = "127.0.0.1"
+localPort      = 17073
+subdomain      = "limited"
+maxConnections = 1
+EOF
 
           cleanup() {
             set +e
@@ -477,19 +477,19 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/http4-upstream.log 2>&1 &
-          import time
-          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-          class Handler(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  time.sleep(3)
-                  body = b"slow-ok"
-                  self.send_response(200)
-                  self.send_header('Content-Length', str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ThreadingHTTPServer(("127.0.0.1", 17073), Handler).serve_forever()
-          PY
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        time.sleep(3)
+        body = b"slow-ok"
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ThreadingHTTPServer(("127.0.0.1", 17073), Handler).serve_forever()
+PY
           HTTP_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server5.log 2>&1 &
@@ -568,23 +568,23 @@ jobs:
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 19527
-          vhostHTTPSPort = 19443
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 19527
+vhostHTTPSPort = 19443
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 19527
+serverAddr = "127.0.0.1"
+serverPort = 19527
 
-          [[proxies]]
-          name       = "web-tls"
-          type       = "https"
-          localIP    = "127.0.0.1"
-          localPort  = 17443
-          subdomain  = "demo-tls"
-          EOF
+[[proxies]]
+name       = "web-tls"
+type       = "https"
+localIP    = "127.0.0.1"
+localPort  = 17443
+subdomain  = "demo-tls"
+EOF
 
           cleanup() {
             set +e
@@ -594,21 +594,21 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/https-upstream.log 2>&1 &
-          import ssl, http.server
-          class Handler(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  body = f"orbien-https-ok path={self.path}".encode()
-                  self.send_response(200)
-                  self.send_header("Content-Length", str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
-          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17443), Handler)
-          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-          srv.serve_forever()
-          PY
+import ssl, http.server
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = f"orbien-https-ok path={self.path}".encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17443), Handler)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()
+PY
           HTTPS_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server.log 2>&1 &
@@ -645,11 +645,11 @@ jobs:
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 19528
-          vhostHTTPSPort = 19444
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 19528
+vhostHTTPSPort = 19444
+subDomainHost = "test.local"
+EOF
 
           cleanup() {
             set +e
@@ -679,23 +679,23 @@ jobs:
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 19529
-          vhostHTTPSPort = 19445
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 19529
+vhostHTTPSPort = 19445
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 19529
+serverAddr = "127.0.0.1"
+serverPort = 19529
 
-          [[proxies]]
-          name       = "web-tls2"
-          type       = "https"
-          localIP    = "127.0.0.1"
-          localPort  = 17444
-          subdomain  = "retls"
-          EOF
+[[proxies]]
+name       = "web-tls2"
+type       = "https"
+localIP    = "127.0.0.1"
+localPort  = 17444
+subdomain  = "retls"
+EOF
 
           cleanup() {
             set +e
@@ -705,21 +705,21 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/https2-upstream.log 2>&1 &
-          import ssl, http.server
-          class Handler(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  body = b"re-registered-ok"
-                  self.send_response(200)
-                  self.send_header("Content-Length", str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
-          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17444), Handler)
-          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-          srv.serve_forever()
-          PY
+import ssl, http.server
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"re-registered-ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17444), Handler)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()
+PY
           HTTPS_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server3.log 2>&1 &
@@ -764,23 +764,23 @@ jobs:
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 19530
-          vhostHTTPSPort = 19446
-          subDomainHost = "test.local"
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 19530
+vhostHTTPSPort = 19446
+subDomainHost = "test.local"
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 19530
+serverAddr = "127.0.0.1"
+serverPort = 19530
 
-          [[proxies]]
-          name       = "web-tls-conc"
-          type       = "https"
-          localIP    = "127.0.0.1"
-          localPort  = 17445
-          subdomain  = "conc-tls"
-          EOF
+[[proxies]]
+name       = "web-tls-conc"
+type       = "https"
+localIP    = "127.0.0.1"
+localPort  = 17445
+subdomain  = "conc-tls"
+EOF
 
           cleanup() {
             set +e
@@ -790,22 +790,22 @@ jobs:
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/https3-upstream.log 2>&1 &
-          import ssl, time, http.server
-          class Handler(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  time.sleep(0.05)
-                  body = b"conc-tls-ok"
-                  self.send_response(200)
-                  self.send_header("Content-Length", str(len(body)))
-                  self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, fmt, *args): pass
-          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
-          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17445), Handler)
-          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-          srv.serve_forever()
-          PY
+import ssl, time, http.server
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        time.sleep(0.05)
+        body = b"conc-tls-ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args): pass
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17445), Handler)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()
+PY
           HTTPS_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server4.log 2>&1 &
@@ -878,19 +878,19 @@ jobs:
         shell: bash
         run: |
           python3 -u - <<'PY' > /tmp/token-echo.log 2>&1 &
-          import socketserver
-          class EchoHandler(socketserver.BaseRequestHandler):
-              def handle(self):
-                  while True:
-                      data = self.request.recv(65536)
-                      if not data:
-                          break
-                      self.request.sendall(data)
-          class Server(socketserver.ThreadingTCPServer):
-              allow_reuse_address = True
-          with Server(("127.0.0.1", 27000), EchoHandler) as s:
-              s.serve_forever()
-          PY
+import socketserver
+class EchoHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        while True:
+            data = self.request.recv(65536)
+            if not data:
+                break
+            self.request.sendall(data)
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+with Server(("127.0.0.1", 27000), EchoHandler) as s:
+    s.serve_forever()
+PY
           echo "ECHO_PID=$!" >> "$GITHUB_ENV"
 
       - name: "Token auth – 1: correct token → tunnel established"
@@ -901,23 +901,23 @@ jobs:
 
           # Write base config (no [auth] section — avoids heredoc+bracket issues)
           cat > srv1.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 29527
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 29527
+EOF
           # Append [auth] section via printf to safely expand $SECRET
           printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv1.toml
 
           cat > cli1.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 29527
+serverAddr = "127.0.0.1"
+serverPort = 29527
 
-          [[proxies]]
-          name       = "echo1"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 27000
-          remotePort = 26000
-          EOF
+[[proxies]]
+name       = "echo1"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 27000
+remotePort = 26000
+EOF
           printf '[auth]\ntoken = "%s"\n' "$SECRET" >> cli1.toml
 
           cleanup() {
@@ -956,22 +956,22 @@ jobs:
           SECRET="super-secret-token-abc123"
 
           cat > srv2.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 29528
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 29528
+EOF
           printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv2.toml
 
           cat > cli2.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 29528
+serverAddr = "127.0.0.1"
+serverPort = 29528
 
-          [[proxies]]
-          name       = "echo2"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 27000
-          remotePort = 26001
-          EOF
+[[proxies]]
+name       = "echo2"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 27000
+remotePort = 26001
+EOF
 
           cleanup() {
             set +e
@@ -1002,25 +1002,25 @@ jobs:
           SECRET="super-secret-token-abc123"
 
           cat > srv3.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 29529
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 29529
+EOF
           printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv3.toml
 
           cat > cli3.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 29529
+serverAddr = "127.0.0.1"
+serverPort = 29529
 
-          [auth]
-          token = "totally-wrong-token"
+[auth]
+token = "totally-wrong-token"
 
-          [[proxies]]
-          name       = "echo3"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 27000
-          remotePort = 26002
-          EOF
+[[proxies]]
+name       = "echo3"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 27000
+remotePort = 26002
+EOF
 
           cleanup() {
             set +e
@@ -1050,24 +1050,24 @@ jobs:
           set -euo pipefail
 
           cat > srv4.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 29530
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 29530
+EOF
 
           cat > cli4.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 29530
+serverAddr = "127.0.0.1"
+serverPort = 29530
 
-          [auth]
-          token = "any-token-ignored"
+[auth]
+token = "any-token-ignored"
 
-          [[proxies]]
-          name       = "echo4"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 27000
-          remotePort = 26003
-          EOF
+[[proxies]]
+name       = "echo4"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 27000
+remotePort = 26003
+EOF
 
           cleanup() {
             set +e
@@ -1129,28 +1129,28 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bins/orbien-server bins/orbien
 
-      # ── Case 1: basic UDP echo ────────────────────────────────────────────────
+      # ── Case 1: basic UDP echo ────────────────────────────────────────────
       - name: "UDP E2E – 1: basic echo"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 39527
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 39527
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 39527
+serverAddr = "127.0.0.1"
+serverPort = 39527
 
-          [[proxies]]
-          name       = "udp-echo"
-          type       = "udp"
-          localIP    = "127.0.0.1"
-          localPort  = 37000
-          remotePort = 37001
-          EOF
+[[proxies]]
+name       = "udp-echo"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 37000
+remotePort = 37001
+EOF
 
           cleanup() {
             set +e
@@ -1161,14 +1161,14 @@ jobs:
 
           # UDP echo server (localPort 37000)
           python3 -u - <<'PY' > /tmp/udp1-echo.log 2>&1 &
-          import socket
-          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-          s.bind(("127.0.0.1", 37000))
-          while True:
-              data, addr = s.recvfrom(65535)
-              s.sendto(data, addr)
-          PY
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 37000))
+while True:
+    data, addr = s.recvfrom(65535)
+    s.sendto(data, addr)
+PY
           ECHO_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp1-server.log 2>&1 &
@@ -1208,28 +1208,28 @@ PY
           fi
           echo "PASS: basic UDP echo"
 
-      # ── Case 2: burst – 50 packets in quick succession ────────────────────────
+      # ── Case 2: burst – 50 packets in quick succession ────────────────────
       - name: "UDP E2E – 2: burst 50 packets"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 39528
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 39528
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 39528
+serverAddr = "127.0.0.1"
+serverPort = 39528
 
-          [[proxies]]
-          name       = "udp-burst"
-          type       = "udp"
-          localIP    = "127.0.0.1"
-          localPort  = 37010
-          remotePort = 37011
-          EOF
+[[proxies]]
+name       = "udp-burst"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 37010
+remotePort = 37011
+EOF
 
           cleanup() {
             set +e
@@ -1239,14 +1239,14 @@ PY
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/udp2-echo.log 2>&1 &
-          import socket
-          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-          s.bind(("127.0.0.1", 37010))
-          while True:
-              data, addr = s.recvfrom(65535)
-              s.sendto(data, addr)
-          PY
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 37010))
+while True:
+    data, addr = s.recvfrom(65535)
+    s.sendto(data, addr)
+PY
           ECHO_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp2-server.log 2>&1 &
@@ -1275,27 +1275,27 @@ PY
 
           # Burst test via Python
           python3 - <<'PY'
-          import socket, sys
-          REMOTE = ("127.0.0.1", 37011)
-          N = 50
-          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          s.settimeout(2.0)
-          ok = 0
-          for i in range(N):
-              payload = f"burst-{i:04d}".encode()
-              s.sendto(payload, REMOTE)
-              try:
-                  data, _ = s.recvfrom(65535)
-                  if data == payload:
-                      ok += 1
-                  else:
-                      print(f"mismatch #{i}: sent={payload} got={data}", file=sys.stderr)
-              except socket.timeout:
-                  print(f"timeout on packet #{i}", file=sys.stderr)
-          print(f"{ok}/{N} packets echoed correctly")
-          if ok < N:
-              sys.exit(1)
-          PY
+import socket, sys
+REMOTE = ("127.0.0.1", 37011)
+N = 50
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(2.0)
+ok = 0
+for i in range(N):
+    payload = f"burst-{i:04d}".encode()
+    s.sendto(payload, REMOTE)
+    try:
+        data, _ = s.recvfrom(65535)
+        if data == payload:
+            ok += 1
+        else:
+            print(f"mismatch #{i}: sent={payload} got={data}", file=sys.stderr)
+    except socket.timeout:
+        print(f"timeout on packet #{i}", file=sys.stderr)
+print(f"{ok}/{N} packets echoed correctly")
+if ok < N:
+    sys.exit(1)
+PY
           BURST_RC=$?
 
           if [ "$BURST_RC" -ne 0 ]; then
@@ -1305,29 +1305,29 @@ PY
           fi
           echo "PASS: burst 50 packets"
 
-      # ── Case 3: large packet (4 KB) ───────────────────────────────────────────
+      # ── Case 3: large packet (4 KB) ─────────────────────────────────────────────
       - name: "UDP E2E – 3: large packet (4 KB)"
         shell: bash
         run: |
           set -euo pipefail
 
           cat > orbien-server.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 39529
-          EOF
+bindAddr = "0.0.0.0"
+bindPort = 39529
+EOF
 
           cat > orbien.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 39529
-          udpPacketSize = 8192
+serverAddr = "127.0.0.1"
+serverPort = 39529
+udpPacketSize = 8192
 
-          [[proxies]]
-          name       = "udp-large"
-          type       = "udp"
-          localIP    = "127.0.0.1"
-          localPort  = 37020
-          remotePort = 37021
-          EOF
+[[proxies]]
+name       = "udp-large"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 37020
+remotePort = 37021
+EOF
 
           cleanup() {
             set +e
@@ -1337,15 +1337,15 @@ PY
           trap cleanup EXIT
 
           python3 -u - <<'PY' > /tmp/udp3-echo.log 2>&1 &
-          import socket
-          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
-          s.bind(("127.0.0.1", 37020))
-          while True:
-              data, addr = s.recvfrom(65535)
-              s.sendto(data, addr)
-          PY
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+s.bind(("127.0.0.1", 37020))
+while True:
+    data, addr = s.recvfrom(65535)
+    s.sendto(data, addr)
+PY
           ECHO_PID=$!
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp3-server.log 2>&1 &
@@ -1374,24 +1374,24 @@ PY
 
           # 4 KB payload test
           python3 - <<'PY'
-          import socket, sys, os
-          REMOTE = ("127.0.0.1", 37021)
-          payload = os.urandom(4096)
-          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
-          s.settimeout(5.0)
-          s.sendto(payload, REMOTE)
-          try:
-              data, _ = s.recvfrom(65535)
-              if data == payload:
-                  print(f"PASS: 4096-byte packet echoed correctly")
-              else:
-                  print(f"FAIL: payload mismatch (sent={len(payload)}B got={len(data)}B)", file=sys.stderr)
-                  sys.exit(1)
-          except socket.timeout:
-              print("FAIL: timeout waiting for large packet echo", file=sys.stderr)
-              sys.exit(1)
-          PY
+import socket, sys, os
+REMOTE = ("127.0.0.1", 37021)
+payload = os.urandom(4096)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+s.settimeout(5.0)
+s.sendto(payload, REMOTE)
+try:
+    data, _ = s.recvfrom(65535)
+    if data == payload:
+        print(f"PASS: 4096-byte packet echoed correctly")
+    else:
+        print(f"FAIL: payload mismatch (sent={len(payload)}B got={len(data)}B)", file=sys.stderr)
+        sys.exit(1)
+except socket.timeout:
+    print("FAIL: timeout waiting for large packet echo", file=sys.stderr)
+    sys.exit(1)
+PY
 
       - name: Upload UDP logs on failure
         if: failure()
