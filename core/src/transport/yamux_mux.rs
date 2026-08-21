@@ -44,7 +44,10 @@ impl YamuxClient {
         let cap = max_streams.max(1);
         let (open_tx, open_rx) = mpsc::channel::<OpenReply>(cap);
         tokio::spawn(drive_client(io, open_rx, max_streams));
-        Self { open_tx, max_streams }
+        Self {
+            open_tx,
+            max_streams,
+        }
     }
 
     pub async fn open_stream(&self) -> Result<DynStream> {
@@ -63,12 +66,9 @@ impl YamuxClient {
     }
 }
 
-async fn drive_client(
-    io: DynStream,
-    mut open_rx: mpsc::Receiver<OpenReply>,
-    max_streams: usize,
-) {
-    let mut conn = yamux::Connection::new(io.compat(), yamux_config(max_streams), yamux::Mode::Client);
+async fn drive_client(io: DynStream, mut open_rx: mpsc::Receiver<OpenReply>, max_streams: usize) {
+    let mut conn =
+        yamux::Connection::new(io.compat(), yamux_config(max_streams), yamux::Mode::Client);
     let mut open_count: usize = 0;
     loop {
         tokio::select! {
@@ -118,7 +118,8 @@ pub async fn serve_yamux_session(
     max_streams: usize,
     mut on_stream: impl FnMut(DynStream),
 ) -> Result<()> {
-    let mut conn = yamux::Connection::new(io.compat(), yamux_config(max_streams), yamux::Mode::Server);
+    let mut conn =
+        yamux::Connection::new(io.compat(), yamux_config(max_streams), yamux::Mode::Server);
     loop {
         match poll_fn(|cx| conn.poll_next_inbound(cx)).await {
             Some(Ok(stream)) => {
