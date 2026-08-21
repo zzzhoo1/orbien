@@ -12,10 +12,13 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -38,15 +41,15 @@ jobs:
         with:
           prefix-key: portable-cpu-v1
 
-      - name: fmt (auto-fix on push)
-        run: |
-          cargo fmt --all
-          if ! git diff --quiet; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit -am "style: cargo fmt (auto)"
-            git push
-          fi
+      - name: fmt (auto-fix)
+        run: cargo fmt --all
+
+      - name: Commit fmt fixes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: cargo fmt (auto)"
+          commit_user_name: github-actions[bot]
+          commit_user_email: github-actions[bot]@users.noreply.github.com
 
       - name: clippy
         run: cargo clippy --workspace --locked --all-targets
