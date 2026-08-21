@@ -55,10 +55,12 @@ fn get_auth(state: &DashState) -> Result<&AuthState, Box<Response>> {
 }
 
 fn get_sessions(state: &DashState) -> Result<&AuthState, Box<Response>> {
-    state
-        .auth
-        .as_deref()
-        .ok_or_else(|| Box::new(err(StatusCode::INTERNAL_SERVER_ERROR, "auth not configured")))
+    state.auth.as_deref().ok_or_else(|| {
+        Box::new(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "auth not configured",
+        ))
+    })
 }
 
 fn cookie_is_secure(state: &DashState, headers: &axum::http::HeaderMap) -> bool {

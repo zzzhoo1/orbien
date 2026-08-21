@@ -197,10 +197,7 @@ impl MemMetrics {
         }
         let mut g = self.state.lock().expect("metrics lock");
         // fix: unwrap_or_default replaces or_insert_with(Counter::new)
-        g.token_conns
-            .entry(token.to_string())
-            .or_default()
-            .inc(1);
+        g.token_conns.entry(token.to_string()).or_default().inc(1);
     }
 
     pub fn dec_token_conn(&self, token: &str) {
