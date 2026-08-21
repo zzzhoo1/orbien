@@ -14,8 +14,10 @@ pub struct TcpProxy {
     pub name: String,
     pub remote_port: u16,
     /// Current number of active (in-flight) connections.
+    #[allow(dead_code)]
     pub active_conns: Arc<AtomicUsize>,
     /// Optional upper bound on simultaneous connections (0 = unlimited).
+    #[allow(dead_code)]
     pub max_connections: usize,
     closed: Arc<AtomicBool>,
     notify: Arc<Notify>,
@@ -74,7 +76,6 @@ impl TcpProxy {
                                 let active = Arc::clone(&active_conns_spawn);
 
                                 tokio::spawn(async move {
-                                    // #6 — Access log
                                     tracing::info!(
                                         proxy = %pname,
                                         peer = %peer,
@@ -119,6 +120,7 @@ impl TcpProxy {
     }
 
     /// Returns the current number of active connections.
+    #[allow(dead_code)]
     pub fn active_connections(&self) -> usize {
         self.active_conns.load(Ordering::Relaxed)
     }

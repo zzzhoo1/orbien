@@ -144,6 +144,7 @@ impl AuthState {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn update_passkey(&self, username: &str, updated: &Passkey) {
         if let Some(mut entry) = self.passkeys.get_mut(username) {
             for pk in entry.iter_mut() {

@@ -4,7 +4,7 @@ use crate::run_id;
 use anyhow::{anyhow, Result};
 use orbien_core::auth;
 use orbien_core::config::ClientConfig;
-use orbien_core::msg::{self, Login, Message, NewProxy, NewWorkConn, Ping};
+use orbien_core::msg::{self, Login, Message, MessageReadError, NewProxy, NewWorkConn, Ping};
 use std::path::Path;
 
 #[derive(Debug)]
@@ -332,14 +332,17 @@ enum ReaderEnd {
 /// Returns true if the error represents an EOF without TLS close_notify.
 /// Per rustls documentation, this can be safely treated as a clean shutdown
 /// when the application protocol uses length-framed messages (as we do).
-fn is_unexpected_eof(e: &anyhow::Error) -> bool {
+fn is_unexpected_eof(e: &MessageReadError) -> bool {
     use std::io::ErrorKind;
-    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-        return io_err.kind() == ErrorKind::UnexpectedEof;
+    match e {
+        MessageReadError::Io(io_err) => io_err.kind() == ErrorKind::UnexpectedEof,
+        _ => {
+            let msg = e.to_string();
+            msg.contains("unexpected eof")
+                || msg.contains("UnexpectedEof")
+                || msg.contains("close_notify")
+        }
     }
-    // Also check the chain for wrapped IO errors
-    let msg = e.to_string();
-    msg.contains("unexpected eof") || msg.contains("UnexpectedEof") || msg.contains("close_notify")
 }
 
 fn now_secs() -> i64 {

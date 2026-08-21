@@ -62,6 +62,7 @@ impl Drop for TokenConnGuard {
 }
 
 impl Control {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         run_id: String,
         stream: DynStream,
@@ -305,7 +306,8 @@ impl Control {
             return Err(anyhow!("control closed"));
         }
         let mut writer = self.writer.lock().await;
-        msg::write_msg(&mut *writer, &Message::ReqWorkConn(ReqWorkConn {})).await?;
+        msg::write_msg(&mut *writer, &Message::ReqWorkConn(ReqWorkConn {}))
+            .await?;
         Ok(())
     }
 
@@ -409,7 +411,6 @@ impl Control {
             max_connections,
         )
         .await?;
-        // fix: uninlined_format_args
         let remote_addr = format!(":{remote_port}");
 
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
@@ -578,7 +579,6 @@ impl Control {
             max_connections,
         )
         .await?;
-        // fix: uninlined_format_args
         let remote_addr = format!(":{remote_port}");
 
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
