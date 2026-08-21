@@ -349,7 +349,10 @@ impl Service {
             // Graceful shutdown: flush the error response before closing so the
             // client can read it without hitting an UnexpectedEof.
             let _ = stream.shutdown().await;
-            return Err(anyhow!("authorization failed for {peer} user={}", login.user));
+            return Err(anyhow!(
+                "authorization failed for {peer} user={}",
+                login.user
+            ));
         }
 
         if let Err(reason) = validate_login_fields(&login) {
