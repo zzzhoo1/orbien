@@ -1,1 +1,1188 @@
-# content will be read from variable
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.88"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Build server-ui
+        working-directory: server-ui
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: portable-cpu-v1
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --locked --all-targets
+
+      - name: test
+        run: cargo test --workspace --locked
+
+      - name: build release bins
+        run: cargo build --release --locked -p orbien-server -p orbien-client
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbien-bins
+          path: |
+            target/release/orbien-server
+            target/release/orbien
+          retention-days: 1
+
+  e2e-tcp:
+    name: E2E – TCP tunnel
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      - name: Run E2E TCP tunnel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 9527\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 9527\n\n[[proxies]]\nname       = "echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 7000\nremotePort = 16000\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            if [ -n "${CLIENT_PID:-}" ]; then kill "$CLIENT_PID" 2>/dev/null || true; fi
+            if [ -n "${SERVER_PID:-}" ]; then kill "$SERVER_PID" 2>/dev/null || true; fi
+            if [ -n "${ECHO_PID:-}" ]; then kill "$ECHO_PID" 2>/dev/null || true; fi
+            wait "${CLIENT_PID:-}" 2>/dev/null || true
+            wait "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_echo.py << 'PYEOF'
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class ThreadedTCPServer(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with ThreadedTCPServer(("127.0.0.1", 7000), EchoHandler) as server:
+              server.serve_forever()
+          PYEOF
+          python3 /tmp/_py_echo.py > /tmp/echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+
+          for i in $(seq 1 40); do
+            if nc -z 127.0.0.1 9527; then
+              echo "server ready"
+              break
+            fi
+            sleep 0.25
+          done
+          nc -z 127.0.0.1 9527 || { echo "orbien-server failed to start"; cat /tmp/server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do
+            if nc -z 127.0.0.1 16000; then
+              echo "tunnel ready"
+              break
+            fi
+            sleep 0.25
+          done
+          nc -z 127.0.0.1 16000 || {
+            echo "tunnel failed to establish"
+            echo "=== server ===" && cat /tmp/server.log
+            echo "=== client ===" && cat /tmp/client.log
+            echo "=== echo ===" && cat /tmp/echo.log
+            exit 1
+          }
+
+          PAYLOAD="orbien-e2e-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 16000)
+          echo "Sent:     $PAYLOAD"
+          echo "Received: $RESPONSE"
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "response mismatch"
+            echo "=== server ===" && cat /tmp/server.log
+            echo "=== client ===" && cat /tmp/client.log
+            echo "=== echo ===" && cat /tmp/echo.log
+            exit 1
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            /tmp/server.log
+            /tmp/client.log
+            /tmp/echo.log
+
+  e2e-http:
+    name: E2E – HTTP tunnel
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Case 1: basic forward + Host header ───────────────────────────────────
+      - name: "HTTP E2E – 1: basic forward + Host header"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 9527\nvhostHTTPPort = 18080\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 9527\n\n[[proxies]]\nname      = "web"\ntype      = "http"\nlocalIP   = "127.0.0.1"\nlocalPort = 17070\nsubdomain = "demo"\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_http_upstream.py << 'PYEOF'
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = f"orbien-http-ok path={self.path} host={self.headers.get('Host','')}".encode()
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17070), Handler).serve_forever()
+          PYEOF
+          python3 /tmp/_py_http_upstream.py > /tmp/http-upstream.log 2>&1 &
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: demo.test.local' http://127.0.0.1:18080/healthz >/tmp/http-response.txt 2>/dev/null && break
+            sleep 0.25
+          done
+
+          curl -fsSo /tmp/http-response.txt -H 'Host: demo.test.local' http://127.0.0.1:18080/healthz || {
+            echo "FAIL: basic tunnel not up"
+            cat /tmp/server.log; cat /tmp/client.log; exit 1
+          }
+          grep -F 'orbien-http-ok path=/healthz host=demo.test.local' /tmp/http-response.txt || {
+            echo "FAIL: unexpected body: $(cat /tmp/http-response.txt)"
+            exit 1
+          }
+          echo "PASS: basic forward + Host header"
+
+      # ── Case 2: unknown domain → 4xx / connection refused ──────────────
+      - name: "HTTP E2E – 2: unknown domain returns 4xx"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 9528\nvhostHTTPPort = 18081\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          cleanup() {
+            set +e
+            kill "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server2.log 2>&1 &
+          SERVER_PID=$!
+
+          for i in $(seq 1 40); do nc -z 127.0.0.1 18081 && break; sleep 0.25; done
+          nc -z 127.0.0.1 18081 || { echo "server not up"; cat /tmp/server2.log; exit 1; }
+
+          HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' -H 'Host: notregistered.test.local' http://127.0.0.1:18081/ || true)
+          echo "HTTP status for unknown domain: $HTTP_CODE"
+          case "$HTTP_CODE" in
+            4*|000) echo "PASS: unknown domain rejected (status=$HTTP_CODE)" ;;
+            *) echo "FAIL: expected 4xx or connection refused, got $HTTP_CODE"; exit 1 ;;
+          esac
+
+      # ── Case 3: same-name tunnel re-registration ───────────────────────
+      - name: "HTTP E2E – 3: re-register same tunnel, route survives"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 9529\nvhostHTTPPort = 18082\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 9529\n\n[[proxies]]\nname      = "web"\ntype      = "http"\nlocalIP   = "127.0.0.1"\nlocalPort = 17071\nsubdomain = "demo2"\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_http2_upstream.py << 'PYEOF'
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = b"alive"
+                  self.send_response(200)
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17071), Handler).serve_forever()
+          PYEOF
+          python3 /tmp/_py_http2_upstream.py > /tmp/http2-upstream.log 2>&1 &
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server3.log 2>&1 &
+          SERVER_PID=$!
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client3a.log 2>&1 &
+          CLIENT1_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null || {
+            echo "FAIL: first registration not up"
+            cat /tmp/server3.log; cat /tmp/client3a.log; exit 1
+          }
+          echo "First client up"
+
+          kill "$CLIENT1_PID" 2>/dev/null || true
+          wait "$CLIENT1_PID" 2>/dev/null || true
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client3b.log 2>&1 &
+          CLIENT2_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS -H 'Host: demo2.test.local' http://127.0.0.1:18082/ >/dev/null || {
+            echo "FAIL: route gone after re-registration"
+            cat /tmp/server3.log; cat /tmp/client3b.log; exit 1
+          }
+          echo "PASS: re-registration route survives"
+
+      # ── Case 4: concurrent requests ──────────────────────────────────
+      - name: "HTTP E2E – 4: concurrent requests"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 9530\nvhostHTTPPort = 18083\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 9530\n\n[[proxies]]\nname      = "web"\ntype      = "http"\nlocalIP   = "127.0.0.1"\nlocalPort = 17072\nsubdomain = "conc"\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_http3_upstream.py << 'PYEOF'
+          import time
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(0.05)
+                  body = b"concurrent-ok"
+                  self.send_response(200)
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17072), Handler).serve_forever()
+          PYEOF
+          python3 /tmp/_py_http3_upstream.py > /tmp/http3-upstream.log 2>&1 &
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server4.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client4.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: conc.test.local' http://127.0.0.1:18083/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS -H 'Host: conc.test.local' http://127.0.0.1:18083/ >/dev/null || {
+            echo "FAIL: concurrent test tunnel not up"
+            cat /tmp/server4.log; cat /tmp/client4.log; exit 1
+          }
+
+          FAIL=0
+          PIDS=()
+          for idx in $(seq 1 20); do
+            curl -fsS -H 'Host: conc.test.local' http://127.0.0.1:18083/ -o /tmp/conc-$idx.txt &
+            PIDS+=($!)
+          done
+          for pid in "${PIDS[@]}"; do
+            wait "$pid" || FAIL=$((FAIL+1))
+          done
+          if [ "$FAIL" -gt 0 ]; then
+            echo "FAIL: $FAIL / 20 concurrent requests failed"
+            cat /tmp/server4.log; cat /tmp/client4.log; exit 1
+          fi
+          echo "PASS: 20/20 concurrent requests succeeded"
+
+      # ── Case 5: maxConnections → 503 ──────────────────────────────────
+      - name: "HTTP E2E – 5: maxConnections limit returns 503"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 9531\nvhostHTTPPort = 18084\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 9531\n\n[[proxies]]\nname           = "web"\ntype           = "http"\nlocalIP        = "127.0.0.1"\nlocalPort      = 17073\nsubdomain      = "limited"\nmaxConnections = 1\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTP_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_http4_upstream.py << 'PYEOF'
+          import time
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(3)
+                  body = b"slow-ok"
+                  self.send_response(200)
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ThreadingHTTPServer(("127.0.0.1", 17073), Handler).serve_forever()
+          PYEOF
+          python3 /tmp/_py_http4_upstream.py > /tmp/http4-upstream.log 2>&1 &
+          HTTP_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/server5.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/client5.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsS -H 'Host: limited.test.local' http://127.0.0.1:18084/ >/dev/null 2>/dev/null && break
+            CODE=$(curl -so /dev/null -w '%{http_code}' -H 'Host: limited.test.local' http://127.0.0.1:18084/ 2>/dev/null || true)
+            [ "$CODE" = "503" ] && break
+            sleep 0.25
+          done
+
+          curl -s -H 'Host: limited.test.local' http://127.0.0.1:18084/ -o /tmp/slow-resp.txt &
+          SLOW_PID=$!
+          sleep 0.3
+
+          CODE2=$(curl -so /dev/null -w '%{http_code}' -H 'Host: limited.test.local' http://127.0.0.1:18084/ 2>/dev/null || true)
+          echo "Second request status: $CODE2"
+          if [ "$CODE2" != "503" ]; then
+            echo "FAIL: expected 503 when maxConnections=1 is saturated, got $CODE2"
+            wait "$SLOW_PID" 2>/dev/null || true
+            cat /tmp/server5.log; cat /tmp/client5.log; exit 1
+          fi
+          echo "PASS: maxConnections=1 saturated → 503"
+          wait "$SLOW_PID" 2>/dev/null || true
+
+      - name: Upload HTTP logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-http-logs
+          path: |
+            /tmp/server.log
+            /tmp/server2.log
+            /tmp/server3.log
+            /tmp/server4.log
+            /tmp/server5.log
+            /tmp/client.log
+            /tmp/client3a.log
+            /tmp/client3b.log
+            /tmp/client4.log
+            /tmp/client5.log
+            /tmp/http-upstream.log
+            /tmp/http2-upstream.log
+            /tmp/http3-upstream.log
+            /tmp/http4-upstream.log
+            /tmp/http-response.txt
+
+  e2e-https:
+    name: E2E – HTTPS tunnel (SNI passthrough)
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      - name: Generate self-signed TLS certificate
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /tmp/tls.key -out /tmp/tls.crt \
+            -days 1 -subj '/CN=demo-tls.test.local' \
+            -addext 'subjectAltName=DNS:demo-tls.test.local,DNS:retls.test.local,DNS:conc-tls.test.local'
+
+      - name: "HTTPS E2E – 1: basic SNI passthrough"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 19527\nvhostHTTPSPort = 19443\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 19527\n\n[[proxies]]\nname       = "web-tls"\ntype       = "https"\nlocalIP    = "127.0.0.1"\nlocalPort  = 17443\nsubdomain  = "demo-tls"\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_https_upstream.py << 'PYEOF'
+          import ssl, http.server
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = f"orbien-https-ok path={self.path}".encode()
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17443), Handler)
+          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          PYEOF
+          python3 /tmp/_py_https_upstream.py > /tmp/https-upstream.log 2>&1 &
+          HTTPS_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk \
+              --resolve "demo-tls.test.local:19443:127.0.0.1" \
+              https://demo-tls.test.local:19443/ping \
+              -o /tmp/https-poll.txt 2>/tmp/https-curl.log && break
+            sleep 0.25
+          done
+
+          BODY=$(curl -fsSk \
+            --resolve "demo-tls.test.local:19443:127.0.0.1" \
+            https://demo-tls.test.local:19443/ping 2>/tmp/https-curl.log) || {
+            echo "FAIL: curl failed"
+            cat /tmp/https-curl.log
+            cat /tmp/https-server.log; cat /tmp/https-client.log
+            exit 1
+          }
+          echo "Response: $BODY"
+          echo "$BODY" | grep -F 'orbien-https-ok path=/ping' || {
+            echo "FAIL: unexpected response body"
+            cat /tmp/https-server.log; cat /tmp/https-client.log; exit 1
+          }
+          echo "PASS: basic SNI passthrough"
+
+      - name: "HTTPS E2E – 2: unknown SNI connection is silently dropped"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 19528\nvhostHTTPSPort = 19444\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          cleanup() {
+            set +e
+            kill "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server2.log 2>&1 &
+          SERVER_PID=$!
+
+          for i in $(seq 1 40); do nc -z 127.0.0.1 19444 && break; sleep 0.25; done
+          nc -z 127.0.0.1 19444 || { echo "server not up"; cat /tmp/https-server2.log; exit 1; }
+
+          HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' -k \
+            --resolve "ghost.test.local:19444:127.0.0.1" \
+            https://ghost.test.local:19444/ 2>/dev/null || true)
+          echo "HTTP code for unknown SNI: $HTTP_CODE"
+          case "$HTTP_CODE" in
+            000|5*) echo "PASS: unknown SNI rejected (code=$HTTP_CODE)" ;;
+            *) echo "FAIL: expected connection failure, got $HTTP_CODE"; exit 1 ;;
+          esac
+
+      - name: "HTTPS E2E – 3: re-register same SNI route, tunnel survives"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 19529\nvhostHTTPSPort = 19445\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 19529\n\n[[proxies]]\nname       = "web-tls2"\ntype       = "https"\nlocalIP    = "127.0.0.1"\nlocalPort  = 17444\nsubdomain  = "retls"\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+            wait "${CLIENT1_PID:-}" "${CLIENT2_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_https2_upstream.py << 'PYEOF'
+          import ssl, http.server
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = b"re-registered-ok"
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17444), Handler)
+          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          PYEOF
+          python3 /tmp/_py_https2_upstream.py > /tmp/https2-upstream.log 2>&1 &
+          HTTPS_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server3.log 2>&1 &
+          SERVER_PID=$!
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client3a.log 2>&1 &
+          CLIENT1_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+              https://retls.test.local:19445/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+            https://retls.test.local:19445/ >/dev/null || {
+            echo "FAIL: first registration not up"
+            cat /tmp/https-server3.log; cat /tmp/https-client3a.log; exit 1
+          }
+          echo "First client up"
+
+          kill "$CLIENT1_PID" 2>/dev/null || true
+          wait "$CLIENT1_PID" 2>/dev/null || true
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client3b.log 2>&1 &
+          CLIENT2_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+              https://retls.test.local:19445/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsSk --resolve "retls.test.local:19445:127.0.0.1" \
+            https://retls.test.local:19445/ >/dev/null || {
+            echo "FAIL: route gone after SNI re-registration"
+            cat /tmp/https-server3.log; cat /tmp/https-client3b.log; exit 1
+          }
+          echo "PASS: SNI re-registration route survives"
+
+      - name: "HTTPS E2E – 4: concurrent HTTPS requests"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 19530\nvhostHTTPSPort = 19446\nsubDomainHost = "test.local"\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 19530\n\n[[proxies]]\nname       = "web-tls-conc"\ntype       = "https"\nlocalIP    = "127.0.0.1"\nlocalPort  = 17445\nsubdomain  = "conc-tls"\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${HTTPS_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_https3_upstream.py << 'PYEOF'
+          import ssl, time, http.server
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(0.05)
+                  body = b"conc-tls-ok"
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, fmt, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain("/tmp/tls.crt", "/tmp/tls.key")
+          srv = http.server.ThreadingHTTPServer(("127.0.0.1", 17445), Handler)
+          srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          PYEOF
+          python3 /tmp/_py_https3_upstream.py > /tmp/https3-upstream.log 2>&1 &
+          HTTPS_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/https-server4.log 2>&1 &
+          SERVER_PID=$!
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/https-client4.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 120); do
+            curl -fsSk --resolve "conc-tls.test.local:19446:127.0.0.1" \
+              https://conc-tls.test.local:19446/ >/dev/null 2>/dev/null && break
+            sleep 0.25
+          done
+          curl -fsSk --resolve "conc-tls.test.local:19446:127.0.0.1" \
+            https://conc-tls.test.local:19446/ >/dev/null || {
+            echo "FAIL: concurrent tls test tunnel not up"
+            cat /tmp/https-server4.log; cat /tmp/https-client4.log; exit 1
+          }
+
+          FAIL=0
+          PIDS=()
+          for idx in $(seq 1 10); do
+            curl -fsSk --resolve "conc-tls.test.local:19446:127.0.0.1" \
+              https://conc-tls.test.local:19446/ -o /tmp/conc-tls-$idx.txt &
+            PIDS+=($!)
+          done
+          for pid in "${PIDS[@]}"; do
+            wait "$pid" || FAIL=$((FAIL+1))
+          done
+          if [ "$FAIL" -gt 0 ]; then
+            echo "FAIL: $FAIL / 10 concurrent HTTPS requests failed"
+            cat /tmp/https-server4.log; cat /tmp/https-client4.log; exit 1
+          fi
+          echo "PASS: 10/10 concurrent HTTPS requests succeeded"
+
+      - name: Upload HTTPS logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-https-logs
+          path: |
+            /tmp/https-server.log
+            /tmp/https-server2.log
+            /tmp/https-server3.log
+            /tmp/https-server4.log
+            /tmp/https-client.log
+            /tmp/https-client3a.log
+            /tmp/https-client3b.log
+            /tmp/https-client4.log
+            /tmp/https-upstream.log
+            /tmp/https2-upstream.log
+            /tmp/https3-upstream.log
+            /tmp/https-curl.log
+
+  e2e-token-auth:
+    name: E2E – Token authentication
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      - name: Start echo backend
+        shell: bash
+        run: |
+          cat > /tmp/_py_token_echo.py << 'PYEOF'
+          import socketserver
+          class EchoHandler(socketserver.BaseRequestHandler):
+              def handle(self):
+                  while True:
+                      data = self.request.recv(65536)
+                      if not data:
+                          break
+                      self.request.sendall(data)
+          class Server(socketserver.ThreadingTCPServer):
+              allow_reuse_address = True
+          with Server(("127.0.0.1", 27000), EchoHandler) as s:
+              s.serve_forever()
+          PYEOF
+          python3 /tmp/_py_token_echo.py > /tmp/token-echo.log 2>&1 &
+          echo "ECHO_PID=$!" >> "$GITHUB_ENV"
+
+      - name: "Token auth – 1: correct token → tunnel established"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="super-secret-token-abc123"
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 29527\n' > srv1.toml
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv1.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 29527\n\n[[proxies]]\nname       = "echo1"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 27000\nremotePort = 26000\n' > cli1.toml
+          printf '[auth]\ntoken = "%s"\n' "$SECRET" >> cli1.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv1.toml > /tmp/tok1-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29527 || { echo "server not up"; cat /tmp/tok1-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli1.toml > /tmp/tok1-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 26000 && break; sleep 0.25; done
+          nc -z 127.0.0.1 26000 || {
+            echo "FAIL: tunnel not up with correct token"
+            cat /tmp/tok1-server.log; cat /tmp/tok1-client.log; exit 1
+          }
+
+          PAYLOAD="token-auth-ok-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 26000)
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: echo mismatch (sent=$PAYLOAD received=$RESPONSE)"
+            cat /tmp/tok1-server.log; cat /tmp/tok1-client.log; exit 1
+          fi
+          echo "PASS: correct token → tunnel works (echo=$RESPONSE)"
+
+      - name: "Token auth – 2: no token → client rejected"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="super-secret-token-abc123"
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 29528\n' > srv2.toml
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv2.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 29528\n\n[[proxies]]\nname       = "echo2"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 27000\nremotePort = 26001\n' > cli2.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv2.toml > /tmp/tok2-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29528 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29528 || { echo "server not up"; cat /tmp/tok2-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli2.toml > /tmp/tok2-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          sleep 5
+          if nc -z 127.0.0.1 26001 2>/dev/null; then
+            echo "FAIL: remotePort 26001 opened despite missing token"
+            cat /tmp/tok2-server.log; cat /tmp/tok2-client.log; exit 1
+          fi
+          echo "PASS: no token → remotePort not opened"
+
+      - name: "Token auth – 3: wrong token → client rejected"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECRET="super-secret-token-abc123"
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 29529\n' > srv3.toml
+          printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> srv3.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 29529\n\n[auth]\ntoken = "totally-wrong-token"\n\n[[proxies]]\nname       = "echo3"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 27000\nremotePort = 26002\n' > cli3.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv3.toml > /tmp/tok3-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29529 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29529 || { echo "server not up"; cat /tmp/tok3-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli3.toml > /tmp/tok3-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          sleep 5
+          if nc -z 127.0.0.1 26002 2>/dev/null; then
+            echo "FAIL: remotePort 26002 opened despite wrong token"
+            cat /tmp/tok3-server.log; cat /tmp/tok3-client.log; exit 1
+          fi
+          echo "PASS: wrong token → remotePort not opened"
+
+      - name: "Token auth – 4: no server token → unauthenticated client connects"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 29530\n' > srv4.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 29530\n\n[auth]\ntoken = "any-token-ignored"\n\n[[proxies]]\nname       = "echo4"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 27000\nremotePort = 26003\n' > cli4.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          stdbuf -oL -eL bins/orbien-server -c srv4.toml > /tmp/tok4-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 29530 && break; sleep 0.25; done
+          nc -z 127.0.0.1 29530 || { echo "server not up"; cat /tmp/tok4-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c cli4.toml > /tmp/tok4-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do nc -z 127.0.0.1 26003 && break; sleep 0.25; done
+          nc -z 127.0.0.1 26003 || {
+            echo "FAIL: tunnel not up when server has no token requirement"
+            cat /tmp/tok4-server.log; cat /tmp/tok4-client.log; exit 1
+          }
+
+          PAYLOAD="no-auth-required-$(date +%s)"
+          RESPONSE=$(printf '%s' "$PAYLOAD" | nc -w 3 127.0.0.1 26003)
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: echo mismatch"
+            cat /tmp/tok4-server.log; cat /tmp/tok4-client.log; exit 1
+          fi
+          echo "PASS: no server token → client connects freely"
+
+      - name: Upload token-auth logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-token-auth-logs
+          path: |
+            /tmp/tok1-server.log
+            /tmp/tok1-client.log
+            /tmp/tok2-server.log
+            /tmp/tok2-client.log
+            /tmp/tok3-server.log
+            /tmp/tok3-client.log
+            /tmp/tok4-server.log
+            /tmp/tok4-client.log
+            /tmp/token-echo.log
+
+  e2e-udp:
+    name: E2E – UDP tunnel
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: bins
+
+      - name: Make binaries executable
+        run: chmod +x bins/orbien-server bins/orbien
+
+      # ── Case 1: basic UDP echo ────────────────────────────────────────────
+      - name: "UDP E2E – 1: basic echo"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 39527\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 39527\n\n[[proxies]]\nname       = "udp-echo"\ntype       = "udp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 37000\nremotePort = 37001\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_udp1_echo.py << 'PYEOF'
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(("127.0.0.1", 37000))
+          while True:
+              data, addr = s.recvfrom(65535)
+              s.sendto(data, addr)
+          PYEOF
+          python3 /tmp/_py_udp1_echo.py > /tmp/udp1-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp1-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 39527 && break; sleep 0.25; done
+          nc -z 127.0.0.1 39527 || { echo "server not up"; cat /tmp/udp1-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/udp1-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          PAYLOAD="udp-basic-$(date +%s)"
+          RESPONSE=""
+          for i in $(seq 1 80); do
+            RESPONSE=$(python3 - "$PAYLOAD" << 'PYEOF'
+          import sys, socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(0.4)
+          try:
+              s.sendto(sys.argv[1].encode(), ('127.0.0.1', 37001))
+              print(s.recv(65535).decode(), end="")
+          except Exception:
+              pass
+          PYEOF
+            )
+            [ -n "$RESPONSE" ] && break
+            sleep 0.25
+          done
+
+          echo "Sent:     $PAYLOAD"
+          echo "Received: $RESPONSE"
+          if [ "$RESPONSE" != "$PAYLOAD" ]; then
+            echo "FAIL: UDP echo mismatch"
+            cat /tmp/udp1-server.log; cat /tmp/udp1-client.log; cat /tmp/udp1-echo.log
+            exit 1
+          fi
+          echo "PASS: basic UDP echo"
+
+      # ── Case 2: burst – 50 packets in quick succession ────────────────────
+      - name: "UDP E2E – 2: burst 50 packets"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 39528\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 39528\n\n[[proxies]]\nname       = "udp-burst"\ntype       = "udp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 37010\nremotePort = 37011\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_udp2_echo.py << 'PYEOF'
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(("127.0.0.1", 37010))
+          while True:
+              data, addr = s.recvfrom(65535)
+              s.sendto(data, addr)
+          PYEOF
+          python3 /tmp/_py_udp2_echo.py > /tmp/udp2-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp2-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 39528 && break; sleep 0.25; done
+          nc -z 127.0.0.1 39528 || { echo "server not up"; cat /tmp/udp2-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/udp2-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do
+            python3 - << 'PYEOF' 2>/dev/null && break
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(0.4)
+          try:
+              s.sendto(b'ping', ('127.0.0.1', 37011))
+              s.recv(65535)
+              exit(0)
+          except Exception:
+              exit(1)
+          PYEOF
+            sleep 0.25
+          done
+
+          cat > /tmp/_py_burst_test.py << 'PYEOF'
+          import socket, sys
+          REMOTE = ("127.0.0.1", 37011)
+          N = 50
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(2.0)
+          ok = 0
+          for i in range(N):
+              payload = f"burst-{i:04d}".encode()
+              s.sendto(payload, REMOTE)
+              try:
+                  data, _ = s.recvfrom(65535)
+                  if data == payload:
+                      ok += 1
+                  else:
+                      print(f"mismatch #{i}: sent={payload} got={data}", file=sys.stderr)
+              except socket.timeout:
+                  print(f"timeout on packet #{i}", file=sys.stderr)
+          print(f"{ok}/{N} packets echoed correctly")
+          if ok < N:
+              sys.exit(1)
+          PYEOF
+          python3 /tmp/_py_burst_test.py
+          BURST_RC=$?
+
+          if [ "$BURST_RC" -ne 0 ]; then
+            echo "FAIL: burst test"
+            cat /tmp/udp2-server.log; cat /tmp/udp2-client.log; cat /tmp/udp2-echo.log
+            exit 1
+          fi
+          echo "PASS: burst 50 packets"
+
+      # ── Case 3: large packet (4 KB) ─────────────────────────────────────────────
+      - name: "UDP E2E – 3: large packet (4 KB)"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 39529\n' > orbien-server.toml
+
+          printf 'serverAddr = "127.0.0.1"\nserverPort = 39529\nudpPacketSize = 8192\n\n[[proxies]]\nname       = "udp-large"\ntype       = "udp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 37020\nremotePort = 37021\n' > orbien.toml
+
+          cleanup() {
+            set +e
+            kill "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+            wait "${CLIENT_PID:-}" "${SERVER_PID:-}" "${ECHO_PID:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cat > /tmp/_py_udp3_echo.py << 'PYEOF'
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+          s.bind(("127.0.0.1", 37020))
+          while True:
+              data, addr = s.recvfrom(65535)
+              s.sendto(data, addr)
+          PYEOF
+          python3 /tmp/_py_udp3_echo.py > /tmp/udp3-echo.log 2>&1 &
+          ECHO_PID=$!
+
+          stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/udp3-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 40); do nc -z 127.0.0.1 39529 && break; sleep 0.25; done
+          nc -z 127.0.0.1 39529 || { echo "server not up"; cat /tmp/udp3-server.log; exit 1; }
+
+          stdbuf -oL -eL bins/orbien -c orbien.toml > /tmp/udp3-client.log 2>&1 &
+          CLIENT_PID=$!
+
+          for i in $(seq 1 80); do
+            python3 - << 'PYEOF' 2>/dev/null && break
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(0.4)
+          try:
+              s.sendto(b'ping', ('127.0.0.1', 37021))
+              s.recv(65535)
+              exit(0)
+          except Exception:
+              exit(1)
+          PYEOF
+            sleep 0.25
+          done
+
+          cat > /tmp/_py_large_test.py << 'PYEOF'
+          import socket, sys, os
+          REMOTE = ("127.0.0.1", 37021)
+          payload = os.urandom(4096)
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+          s.settimeout(5.0)
+          s.sendto(payload, REMOTE)
+          try:
+              data, _ = s.recvfrom(65535)
+              if data == payload:
+                  print(f"PASS: 4096-byte packet echoed correctly")
+              else:
+                  print(f"FAIL: payload mismatch (sent={len(payload)}B got={len(data)}B)", file=sys.stderr)
+                  sys.exit(1)
+          except socket.timeout:
+              print("FAIL: timeout waiting for large packet echo", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          python3 /tmp/_py_large_test.py
+
+      - name: Upload UDP logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-udp-logs
+          path: |
+            /tmp/udp1-server.log
+            /tmp/udp1-client.log
+            /tmp/udp1-echo.log
+            /tmp/udp2-server.log
+            /tmp/udp2-client.log
+            /tmp/udp2-echo.log
+            /tmp/udp3-server.log
+            /tmp/udp3-client.log
+            /tmp/udp3-echo.log
