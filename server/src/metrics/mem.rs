@@ -196,9 +196,10 @@ impl MemMetrics {
             return;
         }
         let mut g = self.state.lock().expect("metrics lock");
+        // fix: unwrap_or_default replaces or_insert_with(Counter::new)
         g.token_conns
             .entry(token.to_string())
-            .or_insert_with(Counter::new)
+            .or_default()
             .inc(1);
     }
 
@@ -293,9 +294,10 @@ impl ServerMetrics for MemMetrics {
 
     fn new_proxy(&self, name: &str, proxy_type: &str, user: &str, client_id: &str) {
         let mut g = self.state.lock().expect("metrics lock");
+        // fix: unwrap_or_default replaces or_insert_with(Counter::new)
         g.proxy_type_counts
             .entry(proxy_type.to_string())
-            .or_insert_with(Counter::new)
+            .or_default()
             .inc(1);
 
         let now_unix = Local::now().timestamp();

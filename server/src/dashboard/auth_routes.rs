@@ -39,22 +39,26 @@ fn err(status: StatusCode, msg: &str) -> Response {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn get_auth(state: &DashState) -> Result<&AuthState, Response> {
+// fix: result_large_err — box the Response to shrink the Err variant below 128 bytes
+fn get_auth(state: &DashState) -> Result<&AuthState, Box<Response>> {
     let auth = state
         .auth
         .as_deref()
-        .ok_or_else(|| err(StatusCode::NOT_IMPLEMENTED, "auth not configured"))?;
+        .ok_or_else(|| Box::new(err(StatusCode::NOT_IMPLEMENTED, "auth not configured")))?;
     if auth.webauthn.is_none() {
-        return Err(err(StatusCode::NOT_IMPLEMENTED, "webauthn not configured"));
+        return Err(Box::new(err(
+            StatusCode::NOT_IMPLEMENTED,
+            "webauthn not configured",
+        )));
     }
     Ok(auth)
 }
 
-fn get_sessions(state: &DashState) -> Result<&AuthState, Response> {
+fn get_sessions(state: &DashState) -> Result<&AuthState, Box<Response>> {
     state
         .auth
         .as_deref()
-        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "auth not configured"))
+        .ok_or_else(|| Box::new(err(StatusCode::INTERNAL_SERVER_ERROR, "auth not configured")))
 }
 
 fn cookie_is_secure(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
@@ -64,12 +68,6 @@ fn cookie_is_secure(state: &DashState, headers: &axum::http::HeaderMap) -> bool 
 // ── auth status (public) ───────────────────────────────────────────────────
 
 /// `GET /api/v1/auth/status` — always public (no auth required).
-///
-/// Returns a small JSON payload the SPA uses to decide which login methods
-/// to show.  Example response:
-/// ```json
-/// { "code": 200, "msg": "", "data": { "webauthn": true, "password": true } }
-/// ```
 pub async fn auth_status(State(state): State<Arc<DashState>>) -> Response {
     let webauthn_available = state
         .auth
@@ -123,7 +121,7 @@ pub async fn login(
     let mut res = ok(serde_json::json!({ "username": body.username })).into_response();
     let auth = match get_sessions(&state) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let token = auth.create_session(&body.username);
     let cookie = session_cookie(&token, false, cookie_is_secure(&state, &headers));
@@ -168,7 +166,7 @@ pub async fn webauthn_register_begin(
     }
     let auth = match get_auth(&state) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
 
     let existing: Vec<_> = auth
@@ -233,7 +231,7 @@ pub async fn webauthn_register_finish(
     }
     let auth = match get_auth(&state) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
 
     let reg_state = match auth.take_reg_state(&body.username) {
@@ -271,7 +269,7 @@ pub async fn webauthn_register_finish(
 pub async fn webauthn_login_begin(State(state): State<Arc<DashState>>) -> Response {
     let auth = match get_auth(&state) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
 
     let all_keys = auth.all_passkeys();
@@ -298,7 +296,6 @@ pub async fn webauthn_login_begin(State(state): State<Arc<DashState>>) -> Respon
     auth.save_auth_state(&state_key, auth_state);
 
     let mut res = ok(challenge).into_response();
-    // begin has no incoming headers besides State; treat configured origin as source of truth
     let secure = state
         .cfg
         .webauthn_origin
@@ -319,7 +316,7 @@ pub async fn webauthn_login_finish(
 ) -> Response {
     let auth = match get_auth(&state) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
 
     let state_key = match super::auth::extract_cookie(&req_headers, "orbien_wa_state") {
@@ -362,8 +359,6 @@ pub async fn webauthn_login_finish(
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn uuid_for_name(name: &str) -> uuid::Uuid {
-    // Stable 128-bit FNV-1a so the same username always maps to the same WebAuthn user id
-    // without requiring the uuid crate `v5` feature.
     const OFFSET: u128 = 0x6c62272e07bb014262b821756295c58d;
     const PRIME: u128 = 0x0000000001000000000000000000013B;
     let mut hash = OFFSET;
@@ -388,7 +383,6 @@ fn registration_authorized(state: &DashState, headers: &axum::http::HeaderMap) -
             }
         }
     }
-    // Keep Basic Auth as a bootstrap path for the first passkey.
     basic_headers_ok(state, headers)
 }
 

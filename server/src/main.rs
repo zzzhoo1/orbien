@@ -96,15 +96,18 @@ fn load_server_config(args: &Args) -> Result<ServerConfig> {
     }
 
     tracing::info!("using CLI flags for config");
-    let mut cfg = ServerConfig::default();
-    cfg.bind_addr = args.bind_addr.clone();
-    cfg.bind_port = args.bind_port;
-    cfg.kcp_bind_port = args.kcp_bind_port;
-    cfg.quic_bind_port = args.quic_bind_port;
-    cfg.proxy_bind_addr = args.proxy_bind_addr.clone();
-    cfg.vhost_http_port = args.vhost_http_port;
-    cfg.vhost_https_port = args.vhost_https_port;
-    cfg.sub_domain_host = args.subdomain_host.clone();
+    // fix: field_reassign_with_default — use struct literal with ..Default::default()
+    let mut cfg = ServerConfig {
+        bind_addr: args.bind_addr.clone(),
+        bind_port: args.bind_port,
+        kcp_bind_port: args.kcp_bind_port,
+        quic_bind_port: args.quic_bind_port,
+        proxy_bind_addr: args.proxy_bind_addr.clone(),
+        vhost_http_port: args.vhost_http_port,
+        vhost_https_port: args.vhost_https_port,
+        sub_domain_host: args.subdomain_host.clone(),
+        ..ServerConfig::default()
+    };
     cfg.auth.token = args.token.clone();
     cfg.web_server.addr = args.dashboard_addr.clone();
     cfg.web_server.port = args.dashboard_port;

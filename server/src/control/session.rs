@@ -409,7 +409,8 @@ impl Control {
             max_connections,
         )
         .await?;
-        let remote_addr = format!(":{}", remote_port);
+        // fix: uninlined_format_args
+        let remote_addr = format!(":{remote_port}");
 
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
         let mut pm = self.proxies.lock().await;
@@ -577,7 +578,8 @@ impl Control {
             max_connections,
         )
         .await?;
-        let remote_addr = format!(":{}", remote_port);
+        // fix: uninlined_format_args
+        let remote_addr = format!(":{remote_port}");
 
         let local_addr = format_local_addr(&np.local_ip, np.local_port);
         let mut pm = self.proxies.lock().await;
