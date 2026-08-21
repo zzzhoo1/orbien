@@ -1372,7 +1372,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          printf 'bindAddr = "0.0.0.0"\nbindPort = 59527\n' > orbien-server.toml
+          # tcpMux=false on server must match client config below
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 59527\n\n[transport]\ntcpMux = false\n' > orbien-server.toml
 
           printf 'serverAddr = "127.0.0.1"\nserverPort = 59527\n\n[transport]\ntcpMux = false\nheartbeatInterval = 2\nheartbeatTimeout  = 6\n\n[[proxies]]\nname       = "re-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 57000\nremotePort = 56000\n' > orbien.toml
 
@@ -1450,7 +1451,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          printf 'bindAddr = "0.0.0.0"\nbindPort = 59528\n' > orbien-server.toml
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 59528\n\n[transport]\ntcpMux = false\n' > orbien-server.toml
 
           printf 'serverAddr = "127.0.0.1"\nserverPort = 59528\n\n[transport]\ntcpMux = false\nheartbeatInterval = 2\nheartbeatTimeout  = 6\n\n[[proxies]]\nname       = "drop-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 57001\nremotePort = 56001\n' > orbien.toml
 
