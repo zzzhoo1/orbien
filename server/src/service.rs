@@ -216,12 +216,7 @@ impl Service {
         if self.cfg.transport.tcp_mux {
             tracing::debug!(%peer, "yamux server session started");
             let svc = Arc::clone(&self);
-            let max_streams = self
-                .cfg
-                .transport
-                .max_yamux_streams
-                .unwrap_or(MAX_NUM_STREAMS as i64)
-                .max(1) as usize;
+            let max_streams = MAX_NUM_STREAMS;
             transport::serve_yamux_session(physical, max_streams, move |stream| {
                 let svc = Arc::clone(&svc);
                 tokio::spawn(async move {
