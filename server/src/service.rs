@@ -209,7 +209,8 @@ impl Service {
             Arc::clone(&self.tls_config),
             self.cfg.transport.tls.force,
         )
-        .await?;
+        .await
+        .map_err(|e| anyhow!("TLS negotiation failed for {peer}: {e}"))?;
         self.handle_physical(physical, peer).await
     }
 
@@ -256,7 +257,8 @@ impl Service {
                         Arc::clone(&svc.tls_config),
                         svc.cfg.transport.tls.force,
                     )
-                    .await?;
+                    .await
+                    .map_err(|e| anyhow!("TLS negotiation failed for {peer}: {e}"))?;
                     svc.handle_physical(stream, peer).await
                 }
                 .await;
@@ -308,11 +310,16 @@ impl Service {
         mut stream: DynStream,
         peer: SocketAddr,
     ) -> Result<()> {
-        let first = msg::read_msg(&mut stream).await?;
+        let first = msg::read_msg(&mut stream)
+            .await
+            .map_err(|e| anyhow!("failed to read first control message from {peer}: {e}"))?;
         match first {
             Message::Login(login) => self.register_control(stream, login, peer).await,
             Message::NewWorkConn(nw) => self.register_work_conn(stream, nw).await,
-            other => Err(anyhow!("unexpected first message: {:?}", other.type_byte())),
+            other => Err(anyhow!(
+                "unexpected first message type {} from {peer}",
+                other.type_byte()
+            )),
         }
     }
 
@@ -323,6 +330,12 @@ impl Service {
         peer: SocketAddr,
     ) -> Result<()> {
         if !auth::verify_login(&self.cfg.auth.token, &login.privilege_key, login.timestamp) {
+            tracing::warn!(
+                %peer,
+                user = %login.user,
+                run_id = %login.run_id,
+                "login rejected: authorization failed (check token on both sides)"
+            );
             let mut stream = stream;
             let _ = msg::write_msg(
                 &mut stream,
@@ -336,10 +349,17 @@ impl Service {
             // Graceful shutdown: flush the error response before closing so the
             // client can read it without hitting an UnexpectedEof.
             let _ = stream.shutdown().await;
-            return Err(anyhow!("authorization failed"));
+            return Err(anyhow!("authorization failed for {peer} user={}", login.user));
         }
 
         if let Err(reason) = validate_login_fields(&login) {
+            tracing::warn!(
+                %peer,
+                user = %login.user,
+                run_id = %login.run_id,
+                %reason,
+                "login rejected: invalid fields"
+            );
             let mut stream = stream;
             let _ = msg::write_msg(
                 &mut stream,

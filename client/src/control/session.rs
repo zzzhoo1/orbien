@@ -69,18 +69,28 @@ impl Control {
         );
 
         msg::write_msg(&mut stream, &Message::Login(login)).await?;
-        let resp = match msg::read_msg(&mut stream).await? {
-            Message::LoginResp(r) => r,
-            other => {
+
+        // Explicit match so an EOF here (e.g. server rejects due to TLS/auth
+        // mismatch and closes the connection) produces an actionable message
+        // instead of a raw rustls "peer closed connection without close_notify".
+        let resp = match msg::read_msg(&mut stream).await {
+            Ok(Message::LoginResp(r)) => r,
+            Ok(other) => {
                 return Err(anyhow!(
-                    "expected LoginResp, got type {}",
+                    "expected LoginResp, got message type {}; check server version",
                     other.type_byte()
-                ))
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "server closed connection before sending LoginResp: {e}; \
+                     verify transport.tls, tcpMux, protocol, token, and bind_port match on both sides"
+                ));
             }
         };
 
         if !resp.error.is_empty() {
-            return Err(anyhow!("login failed: {}", resp.error));
+            return Err(anyhow!("login rejected by server: {}", resp.error));
         }
 
         tracing::info!(run_id = %resp.run_id, "login ok");
