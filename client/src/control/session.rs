@@ -16,7 +16,7 @@ use orbien_core::transport::DynStream;
 use orbien_core::VERSION;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::Mutex;
 use tokio::time::interval;
 
@@ -220,6 +220,13 @@ impl Control {
                 let mut reader = self.reader.lock().await;
                 match msg::read_msg(&mut *reader).await {
                     Ok(m) => m,
+                    // EOF without TLS close_notify: treat as clean disconnect.
+                    // Per rustls docs, this is safe when the application protocol
+                    // (our framed msgpack) already provides message-length framing.
+                    Err(e) if is_unexpected_eof(&e) => {
+                        tracing::debug!("control stream closed (unexpected EOF treated as clean disconnect)");
+                        return Ok(ReaderEnd::Closed);
+                    }
                     Err(_) => return Ok(ReaderEnd::Closed),
                 }
             };
@@ -318,6 +325,19 @@ impl Control {
 enum ReaderEnd {
     Closed,
     Kicked(String),
+}
+
+/// Returns true if the error represents an EOF without TLS close_notify.
+/// Per rustls documentation, this can be safely treated as a clean shutdown
+/// when the application protocol uses length-framed messages (as we do).
+fn is_unexpected_eof(e: &anyhow::Error) -> bool {
+    use std::io::ErrorKind;
+    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+        return io_err.kind() == ErrorKind::UnexpectedEof;
+    }
+    // Also check the chain for wrapped IO errors
+    let msg = e.to_string();
+    msg.contains("unexpected eof") || msg.contains("UnexpectedEof") || msg.contains("close_notify")
 }
 
 fn now_secs() -> i64 {

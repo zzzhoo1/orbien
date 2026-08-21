@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinSet;
@@ -332,6 +333,9 @@ impl Service {
                 }),
             )
             .await;
+            // Graceful shutdown: flush the error response before closing so the
+            // client can read it without hitting an UnexpectedEof.
+            let _ = stream.shutdown().await;
             return Err(anyhow!("authorization failed"));
         }
 
@@ -346,6 +350,8 @@ impl Service {
                 }),
             )
             .await;
+            // Graceful shutdown: flush the error response before closing.
+            let _ = stream.shutdown().await;
             return Err(anyhow!(reason));
         }
 
