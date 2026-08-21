@@ -44,10 +44,13 @@ jobs:
       - name: fmt (auto-fix)
         run: cargo fmt --all
 
-      - name: Commit fmt fixes
+      - name: Update Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Commit fmt + lockfile fixes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "style: cargo fmt (auto)"
+          commit_message: "chore: cargo fmt + update Cargo.lock (auto)"
           commit_user_name: github-actions[bot]
           commit_user_email: github-actions[bot]@users.noreply.github.com
 
@@ -1109,7 +1112,7 @@ jobs:
           fi
           echo "PASS: burst 50 packets"
 
-      # ── Case 3: large packet (4 KB) ─────────────────────────────────────────────
+      # ── Case 3: large packet (4 KB) ──────────────────────────────────────────
       - name: "UDP E2E – 3: large packet (4 KB)"
         shell: bash
         run: |
