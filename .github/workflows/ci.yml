@@ -1118,7 +1118,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          printf 'bindAddr = "0.0.0.0"\nbindPort = 39529\n' > orbien-server.toml
+          # udpPacketSize=8192 must be set on BOTH server and client so that
+          # neither side truncates the 4096-byte datagram.
+          printf 'bindAddr = "0.0.0.0"\nbindPort = 39529\nudpPacketSize = 8192\n' > orbien-server.toml
 
           printf 'serverAddr = "127.0.0.1"\nserverPort = 39529\nudpPacketSize = 8192\n\n[[proxies]]\nname       = "udp-large"\ntype       = "udp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 37020\nremotePort = 37021\n' > orbien.toml
 
