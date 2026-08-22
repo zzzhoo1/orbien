@@ -102,23 +102,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools perl
 
-      - name: Install OpenSSL (Windows)
-        if: runner.os == 'Windows'
+      - name: Install OpenSSL — Windows x64 (vcpkg)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: powershell
         run: |
-          # Install Strawberry Perl (required by openssl-sys vendored build on Windows)
-          # and use vcpkg to provide a pre-built OpenSSL so we don't need to vendor.
-          choco install strawberryperl -y --no-progress
-          # Refresh PATH so perl is available immediately
-          $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
-          # Use the OpenSSL already provided by the GitHub Actions runner via vcpkg
           $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if ($vcpkgRoot) {
-            vcpkg install openssl:x64-windows-static-md
-            echo "OPENSSL_DIR=$vcpkgRoot/installed/x64-windows-static-md" >> $env:GITHUB_ENV
-            echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-          }
-          echo "OPENSSL_NO_VENDOR=1" >> $env:GITHUB_ENV
+          vcpkg install openssl:x64-windows-static-md
+          "OPENSSL_DIR=$vcpkgRoot/installed/x64-windows-static-md" >> $env:GITHUB_ENV
+          "OPENSSL_STATIC=1"   >> $env:GITHUB_ENV
+          "OPENSSL_NO_VENDOR=1" >> $env:GITHUB_ENV
+
+      - name: Install OpenSSL — Windows ARM64 (Strawberry Perl + vendored)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: powershell
+        run: |
+          # vcpkg on windows-11-arm does not provide arm64-windows-static-md reliably.
+          # Use Strawberry Perl (full Perl distribution) so openssl-sys can build
+          # OpenSSL from source via the vendored feature.
+          choco install strawberryperl -y --no-progress
+          # Prepend Strawberry Perl to PATH for subsequent steps
+          "C:\Strawberry\perl\bin" >> $env:GITHUB_PATH
+          "C:\Strawberry\c\bin"    >> $env:GITHUB_PATH
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -134,10 +138,6 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          # On musl targets: vendored OpenSSL (built from source, no pkg-config).
-          # On Windows: OPENSSL_NO_VENDOR=1 is set above; system OpenSSL via vcpkg.
-          # On GNU Linux / macOS: system OpenSSL is available.
-          OPENSSL_STATIC: ${{ endsWith(matrix.target, '-musl') && '1' || '' }}
         run: |
           cargo build --release --locked \
             -p orbien-server -p orbien-client \
@@ -340,18 +340,23 @@ jobs:
           echo "C:/Program Files (x86)/WiX Toolset v3.14/bin" >> "$GITHUB_PATH"
           echo "C:/Program Files (x86)/WiX Toolset v3.11/bin" >> "$GITHUB_PATH"
 
-      - name: Install OpenSSL (Windows desktop)
-        if: runner.os == 'Windows'
+      - name: Install OpenSSL — Windows x64 desktop (vcpkg)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: powershell
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          vcpkg install openssl:x64-windows-static-md
+          "OPENSSL_DIR=$vcpkgRoot/installed/x64-windows-static-md" >> $env:GITHUB_ENV
+          "OPENSSL_STATIC=1"    >> $env:GITHUB_ENV
+          "OPENSSL_NO_VENDOR=1" >> $env:GITHUB_ENV
+
+      - name: Install OpenSSL — Windows ARM64 desktop (Strawberry Perl + vendored)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: powershell
         run: |
           choco install strawberryperl -y --no-progress
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if ($vcpkgRoot) {
-            vcpkg install openssl:x64-windows-static-md
-            echo "OPENSSL_DIR=$vcpkgRoot/installed/x64-windows-static-md" >> $env:GITHUB_ENV
-            echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-          }
-          echo "OPENSSL_NO_VENDOR=1" >> $env:GITHUB_ENV
+          "C:\Strawberry\perl\bin" >> $env:GITHUB_PATH
+          "C:\Strawberry\c\bin"    >> $env:GITHUB_PATH
 
       - uses: dtolnay/rust-toolchain@master
         with:
