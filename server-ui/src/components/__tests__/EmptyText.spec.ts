@@ -1,8 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import EmptyText from '../EmptyText.vue'
 
-// Stub the i18n composable used inside EmptyText
 vi.mock('@/composables/useLocale', () => ({
   useLocale: () => ({ t: (k: string) => k }),
 }))
@@ -24,9 +23,9 @@ describe('EmptyText', () => {
   })
 
   it('renders icon when provided', () => {
-    const wrapper = mount(EmptyText, { props: { icon: '⎕', title: 'Empty' } })
+    const wrapper = mount(EmptyText, { props: { icon: '⊕', title: 'Empty' } })
     expect(wrapper.find('.empty-state__icon').exists()).toBe(true)
-    expect(wrapper.find('.empty-state__icon').text()).toBe('⎕')
+    expect(wrapper.find('.empty-state__icon').text()).toBe('⊕')
   })
 
   it('does not render icon element when icon prop is omitted', () => {
