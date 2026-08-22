@@ -35,6 +35,19 @@ jobs:
             echo "version is empty" >&2
             exit 1
           fi
+          # Normalize to X.Y.Z[-pre]: split off pre-release, pad core to 3 segments.
+          # Examples: "0.3-1" -> "0.3.0-1", "0.3" -> "0.3.0", "1.2.3-beta" -> "1.2.3-beta"
+          PRE=""
+          CORE="$V"
+          if [[ "$V" == *-* ]]; then
+            CORE="${V%%-*}"
+            PRE="-${V#*-}"
+          fi
+          DOTS="${CORE//[^.]}"
+          if [ ${#DOTS} -eq 0 ]; then CORE="${CORE}.0.0"
+          elif [ ${#DOTS} -eq 1 ]; then CORE="${CORE}.0"
+          fi
+          V="${CORE}${PRE}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Release version: $V"
 
