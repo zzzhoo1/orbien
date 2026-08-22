@@ -31,6 +31,8 @@ jobs:
           else
             V="${GITHUB_REF_NAME#v}"
           fi
+          # Strip any accidental leading 'v' (e.g. user types "v1.2.3" in workflow_dispatch)
+          V="${V#v}"
           if [ -z "$V" ]; then
             echo "version is empty" >&2
             exit 1
