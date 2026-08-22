@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, ref} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
+import EmptyText from '@/components/EmptyText.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
 import TrafficSummary from '@/components/TrafficSummary.vue'
@@ -41,16 +42,15 @@ const fields = computed<FieldRow[]>(() => {
 </script>
 
 <template>
+  <!-- proxy not found -->
   <div v-if="!proxy" class="not-found">
-    <div class="not-found-inner">
-      <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-        <rect x="12" y="20" width="40" height="28" rx="5"/>
-        <path d="M22 20V14M42 20V14M12 32h40"/>
-        <path d="M26 42h12" opacity="0.4"/>
-      </svg>
-      <p>{{ t('clients.notFound') }}</p>
-      <button class="back-btn" @click="router.push({name:'proxies'})">← {{ t('common.back') }}</button>
-    </div>
+    <EmptyText icon="⎕" :title="t('clients.notFound')">
+      <template #action>
+        <button class="back-btn" @click="router.push({name:'proxies'})">
+          ← {{ t('common.back') }}
+        </button>
+      </template>
+    </EmptyText>
   </div>
 
   <div v-else class="proxy-detail">
@@ -144,13 +144,12 @@ const fields = computed<FieldRow[]>(() => {
 
 /* not found */
 .not-found { display: grid; place-items: center; min-height: 20rem; }
-.not-found-inner { display: flex; flex-direction: column; align-items: center; gap: 1rem; color: var(--muted); }
-.not-found-inner svg { width: 4rem; height: 4rem; opacity: 0.4; }
-.not-found-inner p { margin: 0; font-size: 0.9rem; }
+
 .back-btn {
   padding: 0.4rem 1rem; border-radius: 8px;
   border: 1px solid var(--line); background: var(--panel);
   color: var(--text); font: inherit; font-size: 0.85rem; cursor: pointer;
+  transition: background 0.15s;
 }
 .back-btn:hover { background: var(--panel-hover); }
 
