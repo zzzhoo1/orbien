@@ -102,7 +102,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools perl
 
-      - name: Install OpenSSL — Windows x64 (vcpkg)
+      - name: Install OpenSSL — Windows x64 (vcpkg, no-vendor)
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: powershell
         run: |
@@ -112,15 +112,16 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - name: Install OpenSSL — Windows ARM64 (Strawberry Perl + vendored)
+      - name: Install OpenSSL — Windows ARM64 (Strawberry Perl, vendored)
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: powershell
         run: |
-          # Install full Strawberry Perl so openssl-sys vendored build can run Configure
+          # Install Strawberry Perl — a complete Perl distribution for Windows.
+          # MSYS2/Git-Bash perl in PATH is missing Locale::Maketext::Simple, so we
+          # point openssl-sys directly at the Strawberry binary via OPENSSL_SRC_PERL,
+          # bypassing PATH lookup entirely.
           choco install strawberryperl -y --no-progress
-          # Add-Content is the correct way to append a line to the GITHUB_PATH file
-          Add-Content $env:GITHUB_PATH "C:\Strawberry\perl\bin"
-          Add-Content $env:GITHUB_PATH "C:\Strawberry\c\bin"
+          Add-Content $env:GITHUB_ENV "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe"
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -338,7 +339,7 @@ jobs:
           echo "C:/Program Files (x86)/WiX Toolset v3.14/bin" >> "$GITHUB_PATH"
           echo "C:/Program Files (x86)/WiX Toolset v3.11/bin" >> "$GITHUB_PATH"
 
-      - name: Install OpenSSL — Windows x64 desktop (vcpkg)
+      - name: Install OpenSSL — Windows x64 desktop (vcpkg, no-vendor)
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: powershell
         run: |
@@ -348,13 +349,12 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - name: Install OpenSSL — Windows ARM64 desktop (Strawberry Perl + vendored)
+      - name: Install OpenSSL — Windows ARM64 desktop (Strawberry Perl, vendored)
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: powershell
         run: |
           choco install strawberryperl -y --no-progress
-          Add-Content $env:GITHUB_PATH "C:\Strawberry\perl\bin"
-          Add-Content $env:GITHUB_PATH "C:\Strawberry\c\bin"
+          Add-Content $env:GITHUB_ENV "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe"
 
       - uses: dtolnay/rust-toolchain@master
         with:
