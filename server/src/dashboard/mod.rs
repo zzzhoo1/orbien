@@ -2,6 +2,8 @@ pub(crate) mod auth;
 pub(crate) mod auth_routes;
 pub(crate) mod model;
 mod routes;
+#[cfg(test)]
+mod routes_test;
 
 use crate::service::Service;
 use anyhow::Result;
