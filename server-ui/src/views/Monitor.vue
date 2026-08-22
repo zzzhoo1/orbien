@@ -2,6 +2,7 @@
 import {computed, ref} from 'vue'
 import ConfigValue from '@/components/ConfigValue.vue'
 import DonutChart, {type ChartSlice} from '@/components/DonutChart.vue'
+import EmptyText from '@/components/EmptyText.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import StatCard from '@/components/StatCard.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
@@ -96,7 +97,6 @@ const configFields = computed<ConfigField[]>(() => {
   )
   return fields
 })
-
 </script>
 
 <template>
@@ -157,7 +157,7 @@ const configFields = computed<ConfigField[]>(() => {
             <span class="config-val"><ConfigValue :type="field.type" :value="field.value"/></span>
           </div>
         </div>
-        <p v-else class="empty-hint">{{ t('overview.emptyConfig') }}</p>
+        <EmptyText v-else :title="t('overview.emptyConfig')" />
       </SectionCard>
 
       <SectionCard class="token-panel" :title="t('monitor.tokenConns')">
@@ -182,7 +182,7 @@ const configFields = computed<ConfigField[]>(() => {
             </div>
           </div>
         </div>
-        <p v-else class="empty-hint">{{ t('monitor.emptyTokens') }}</p>
+        <EmptyText v-else :title="t('monitor.emptyTokens')" />
       </SectionCard>
     </div>
   </div>
@@ -277,7 +277,7 @@ const configFields = computed<ConfigField[]>(() => {
 
 .seg-btn:hover:not(.active) { color: var(--text); }
 
-/* Config grid — 2-column key/value pairs */
+/* Config grid */
 .config-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -297,7 +297,6 @@ const configFields = computed<ConfigField[]>(() => {
 
 .config-row:hover { background: color-mix(in srgb, var(--muted) 5%, transparent); }
 .config-row:last-child, .config-row:nth-last-child(2):nth-child(odd) { border-bottom: none; }
-
 .config-row:nth-child(odd) { border-right: 1px solid var(--line); }
 
 .config-label {
@@ -315,14 +314,6 @@ const configFields = computed<ConfigField[]>(() => {
   color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: right;
-}
-
-.empty-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.88rem;
-  text-align: center;
-  padding: 1.5rem 0;
 }
 
 .token-table-wrap { display: flex; flex-direction: column; }
