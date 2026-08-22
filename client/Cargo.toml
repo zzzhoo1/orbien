@@ -24,3 +24,6 @@ tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 httparse = { workspace = true }
 hostname = { workspace = true }
+# Activate vendored OpenSSL so musl cross-compilation does not need pkg-config.
+# kcp-tokio pulls in openssl-sys transitively; vendored builds it from source.
+openssl = { version = "0.10", features = ["vendored"] }
