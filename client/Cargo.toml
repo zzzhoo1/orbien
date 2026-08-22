@@ -24,6 +24,9 @@ tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 httparse = { workspace = true }
 hostname = { workspace = true }
-# Activate vendored OpenSSL so musl cross-compilation does not need pkg-config.
-# kcp-tokio pulls in openssl-sys transitively; vendored builds it from source.
+
+# ── musl cross-compilation ──────────────────────────────────────────────────────────
+# vendored feature builds OpenSSL from source — no pkg-config needed.
+# kcp-tokio (via orbien-core) pulls in openssl-sys transitively;
+# declaring it here forces the vendored path via cargo feature unification.
 openssl = { version = "0.10", features = ["vendored"] }
