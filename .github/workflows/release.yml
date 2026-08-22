@@ -102,7 +102,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools perl
 
-      - name: Install OpenSSL — Windows x64 (vcpkg, no-vendor)
+      - name: Install OpenSSL — Windows x64 (vcpkg)
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: powershell
         run: |
@@ -112,16 +112,17 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - name: Install OpenSSL — Windows ARM64 (Strawberry Perl, vendored)
+      - name: Install OpenSSL — Windows ARM64 (vcpkg)
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: powershell
         run: |
-          # Install Strawberry Perl — a complete Perl distribution for Windows.
-          # MSYS2/Git-Bash perl in PATH is missing Locale::Maketext::Simple, so we
-          # point openssl-sys directly at the Strawberry binary via OPENSSL_SRC_PERL,
-          # bypassing PATH lookup entirely.
-          choco install strawberryperl -y --no-progress
-          Add-Content $env:GITHUB_ENV "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe"
+          # windows-11-arm runner ships vcpkg; arm64-windows-static-md avoids any
+          # Perl dependency entirely — no vendored source build needed.
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          vcpkg install openssl:arm64-windows-static-md
+          Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/arm64-windows-static-md"
+          Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
+          Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -130,7 +131,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: cli-${{ matrix.target }}
+          key: cli-${{ matrix.target }}-v2
 
       - name: Build orbien-server + orbien
         shell: bash
@@ -339,7 +340,7 @@ jobs:
           echo "C:/Program Files (x86)/WiX Toolset v3.14/bin" >> "$GITHUB_PATH"
           echo "C:/Program Files (x86)/WiX Toolset v3.11/bin" >> "$GITHUB_PATH"
 
-      - name: Install OpenSSL — Windows x64 desktop (vcpkg, no-vendor)
+      - name: Install OpenSSL — Windows x64 desktop (vcpkg)
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: powershell
         run: |
@@ -349,12 +350,15 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - name: Install OpenSSL — Windows ARM64 desktop (Strawberry Perl, vendored)
+      - name: Install OpenSSL — Windows ARM64 desktop (vcpkg)
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: powershell
         run: |
-          choco install strawberryperl -y --no-progress
-          Add-Content $env:GITHUB_ENV "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe"
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          vcpkg install openssl:arm64-windows-static-md
+          Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/arm64-windows-static-md"
+          Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
+          Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -366,7 +370,7 @@ jobs:
           workspaces: |
             . -> target
             desktop/src-tauri -> target
-          key: desktop-${{ matrix.target }}
+          key: desktop-${{ matrix.target }}-v2
 
       - name: Install npm deps
         working-directory: desktop
