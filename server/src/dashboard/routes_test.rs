@@ -7,6 +7,9 @@
 //!   returns false and the auth middleware passes every request through.
 //! * Use `tower::ServiceExt::oneshot` to drive individual requests.
 //! * All assertions are JSON-level (serde_json), not string-matching.
+//! * `Service::new(ServerConfig::default())` is safe in CI: when cert/key
+//!   paths are empty the transport layer auto-generates an ephemeral
+//!   self-signed certificate via rcgen — no filesystem dependency.
 
 #[cfg(test)]
 mod tests {
@@ -22,7 +25,6 @@ mod tests {
 
     use crate::{
         dashboard::{auth::AuthState, routes, DashState},
-        metrics::MemMetrics,
         service::Service,
     };
     use orbien_core::config::{ServerConfig, WebServerConfig};
@@ -43,19 +45,17 @@ mod tests {
             ..Default::default()
         };
         let auth = Some(Arc::new(AuthState::session_only()));
-        Arc::new(DashState {
-            svc,
-            cfg: web_cfg,
-            auth,
-        })
+        Arc::new(DashState { svc, cfg: web_cfg, auth })
     }
 
-    /// Send a request through the router and collect the full response body.
+    /// Send a request through the full middleware stack and collect the body.
     async fn call(state: Arc<DashState>, req: Request<Body>) -> (StatusCode, Value) {
-        let app = routes::router(Arc::clone(&state)).layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&state),
-            crate::dashboard::auth::auth_middleware,
-        ));
+        let app = routes::router(Arc::clone(&state)).layer(
+            axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                crate::dashboard::auth::auth_middleware,
+            ),
+        );
         let resp = app.oneshot(req).await.expect("oneshot");
         let status = resp.status();
         let bytes = resp
@@ -115,7 +115,6 @@ mod tests {
         let (status, json) = call(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["code"], 200);
-        // version field must be a non-empty string
         let ver = json["data"]["version"].as_str().unwrap_or("");
         assert!(!ver.is_empty(), "version should not be empty");
     }
@@ -141,8 +140,6 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let (status, json) = call(state, req).await;
-        // HTTP status is 200 (axum handler always returns 200 envelope)
-        // but the API code inside should be non-200 (404-style)
         assert_eq!(status, StatusCode::OK);
         assert_ne!(
             json["code"].as_i64().unwrap_or(200),
@@ -191,7 +188,6 @@ mod tests {
         let (status, json) = call(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["code"], 200);
-        // history is an array (may be empty on a fresh server)
         assert!(
             json["data"]["history"].is_array(),
             "expected history array, got: {json}"
@@ -257,7 +253,8 @@ mod tests {
             cfg: web_cfg,
             auth: Some(Arc::new(AuthState::session_only())),
         });
-        let credentials = base64::engine::general_purpose::STANDARD.encode(b"admin:secret");
+        let credentials =
+            base64::engine::general_purpose::STANDARD.encode(b"admin:secret");
         let req = Request::get("/api/v1/clients")
             .header("Authorization", format!("Basic {credentials}"))
             .body(Body::empty())
