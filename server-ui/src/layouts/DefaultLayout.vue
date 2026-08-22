@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import {RouterView} from 'vue-router'
-import {computed, onMounted, onUnmounted} from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
 import AppHeader from '@/layouts/AppHeader.vue'
 import AppSidebar from '@/layouts/AppSidebar.vue'
+import InlineAlert from '@/components/InlineAlert.vue'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 import {useSidebar} from '@/composables/useSidebar'
@@ -10,6 +11,8 @@ import {useSidebar} from '@/composables/useSidebar'
 const store = useDashboardStore()
 const {t} = useLocale()
 const {desktopCollapsed, isMobile} = useSidebar()
+
+const dismissed = ref(false)
 
 const errorText = computed(() => {
   const err = store.error
@@ -22,6 +25,9 @@ const errorText = computed(() => {
   }
   return t(`errors.${err.code}`)
 })
+
+// Re-show the alert whenever a new error arrives
+watch(() => store.error, (e) => { if (e) dismissed.value = false })
 
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -46,8 +52,21 @@ onUnmounted(() => {
     <AppHeader/>
     <AppSidebar/>
     <main class="content">
-      <p v-if="errorText" class="err">{{ errorText }}</p>
+      <InlineAlert
+        v-if="errorText && !dismissed"
+        variant="error"
+        :title="errorText"
+        :closable="true"
+        class="refresh-alert"
+        @close="dismissed = true"
+      />
       <RouterView/>
     </main>
   </div>
 </template>
+
+<style scoped>
+.refresh-alert {
+  margin-bottom: 1rem;
+}
+</style>
