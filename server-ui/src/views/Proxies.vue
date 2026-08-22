@@ -6,6 +6,7 @@ import SectionCard from '@/components/SectionCard.vue'
 import EmptyText from '@/components/EmptyText.vue'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
+import {kickProxy} from '@/api/client'
 
 const store = useDashboardStore()
 const router = useRouter()
@@ -15,6 +16,7 @@ const page = ref(1)
 const pageSize = ref(15)
 const typeFilter = ref('all')
 const search = ref('')
+const kickingProxy = ref<string | null>(null)
 
 const allTypes = computed(() => {
   const types = new Set<string>()
@@ -60,6 +62,20 @@ function typeColor(type: string) {
 function openDetail(name: string) { router.push({name: 'proxy-detail', params: {name}}) }
 function onKeyOpen(evt: KeyboardEvent, name: string) {
   if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); openDetail(name) }
+}
+
+async function handleKickProxy(evt: MouseEvent | KeyboardEvent, name: string) {
+  evt.stopPropagation()
+  if (!confirm(`确定要强制下线代理 "${name}" 吗？`)) return
+  kickingProxy.value = name
+  try {
+    await kickProxy(name)
+    await store.refresh()
+  } catch (e) {
+    alert(`下线失败: ${e instanceof Error ? e.message : e}`)
+  } finally {
+    kickingProxy.value = null
+  }
 }
 
 const maxConns = computed(() => {
@@ -117,6 +133,7 @@ const maxConns = computed(() => {
             <th class="num-col">{{ t('proxies.connections') }}</th>
             <th class="num-col">{{ t('proxies.trafficIn') }}</th>
             <th class="num-col">{{ t('proxies.trafficOut') }}</th>
+            <th class="action-col"></th>
           </tr>
         </thead>
         <tbody>
@@ -145,6 +162,16 @@ const maxConns = computed(() => {
             </td>
             <td class="num-col mono">{{ p.todayTrafficIn ?? '—' }}</td>
             <td class="num-col mono">{{ p.todayTrafficOut ?? '—' }}</td>
+            <td class="action-col" @click.stop @keydown.stop>
+              <button
+                class="kick-btn"
+                :disabled="kickingProxy === p.name"
+                :aria-label="`强制下线 ${p.name}`"
+                @click="handleKickProxy($event, p.name)"
+              >
+                {{ kickingProxy === p.name ? '…' : t('clients.kick') }}
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -345,5 +372,38 @@ const maxConns = computed(() => {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   font-size: 0.78rem;
   color: var(--muted);
+}
+
+.action-col {
+  text-align: center;
+  width: 5rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.kick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.22rem 0.6rem;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, #ef4444 45%, transparent);
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+.kick-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 18%, transparent);
+  color: #dc2626;
+}
+
+.kick-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

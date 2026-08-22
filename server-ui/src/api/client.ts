@@ -75,6 +75,11 @@ export function fetchProxies(pageOrParams: number | ProxyListParams = 1, pageSiz
     return api<Page<ProxyInfo>>(`/api/v1/proxies?${qs.toString()}`)
 }
 
+/** DELETE /api/v1/proxies/{name} — force-remove a running proxy */
+export function kickProxy(name: string) {
+    return api<unknown>(`/api/v1/proxies/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
 export type TrafficRange = '7d' | '24h'
 
 function trafficQuery(range: TrafficRange = '7d') {
