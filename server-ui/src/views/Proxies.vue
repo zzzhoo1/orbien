@@ -3,6 +3,7 @@ import {computed, ref, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import PaginationBar from '@/components/PaginationBar.vue'
 import SectionCard from '@/components/SectionCard.vue'
+import EmptyText from '@/components/EmptyText.vue'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 
@@ -74,7 +75,6 @@ const maxConns = computed(() => {
 
     <!-- toolbar -->
     <div class="toolbar">
-      <!-- type filter tabs -->
       <div class="type-tabs" role="tablist">
         <button
           v-for="type in allTypes" :key="type"
@@ -94,11 +94,17 @@ const maxConns = computed(() => {
       </label>
     </div>
 
-    <!-- empty -->
-    <div v-if="!store.proxies.length || !filtered.length" class="empty-state">
-      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="8" y="14" width="32" height="22" rx="4"/><path d="M16 14V10M32 14V10M8 22h32"/></svg>
-      <p>{{ !store.proxies.length ? t('overview.emptyProxies') : t('clients.filterEmpty') }}</p>
-    </div>
+    <!-- empty states -->
+    <EmptyText
+      v-if="!store.proxies.length"
+      icon="⎕"
+      :title="t('overview.emptyProxies')"
+    />
+    <EmptyText
+      v-else-if="!filtered.length"
+      icon="⌕"
+      :title="t('clients.filterEmpty')"
+    />
 
     <!-- proxy table -->
     <div v-else class="proxy-table-wrap">
@@ -208,7 +214,6 @@ const maxConns = computed(() => {
   flex-shrink: 0;
 }
 
-/* search */
 .search-wrap {
   display: flex;
   align-items: center;
@@ -234,15 +239,6 @@ const maxConns = computed(() => {
   width: 10rem; outline: none;
 }
 .search-input::placeholder { color: var(--muted); }
-
-/* empty */
-.empty-state {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 0.75rem; padding: 3rem 1rem;
-  color: var(--muted);
-}
-.empty-state svg { width: 2.8rem; height: 2.8rem; opacity: 0.4; }
-.empty-state p { margin: 0; font-size: 0.88rem; }
 
 /* table */
 .proxy-table-wrap {
