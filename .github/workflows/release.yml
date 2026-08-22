@@ -387,6 +387,65 @@ jobs:
             desktop/src-tauri -> target
           key: desktop-${{ matrix.target }}-v2
 
+      # ── Version sync BEFORE npm ci so package-lock.json is consistent ──
+      - name: Sync desktop version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.meta.outputs.version }}"
+
+          # TAURI_VERSION: strict X.Y.Z — drop any pre-release suffix entirely.
+          # Tauri 2 rejects anything that isn't a plain semver triple.
+          TAURI_VERSION="${VERSION%%-*}"
+          # Safety: ensure exactly 3 dot-segments
+          DOTS="${TAURI_VERSION//[^.]}"
+          if [ ${#DOTS} -eq 0 ]; then TAURI_VERSION="${TAURI_VERSION}.0.0"
+          elif [ ${#DOTS} -eq 1 ]; then TAURI_VERSION="${TAURI_VERSION}.0"
+          fi
+          if [[ ! "$TAURI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::TAURI_VERSION '${TAURI_VERSION}' is not X.Y.Z" >&2
+            exit 1
+          fi
+
+          export TAURI_VERSION
+          echo "release version : ${VERSION}"
+          echo "tauri version   : ${TAURI_VERSION}"
+
+          # Update tauri.conf.json, package.json, and package-lock.json
+          node - "$TAURI_VERSION" <<'EOF'
+          const fs = require("fs");
+          const version = process.argv[2];
+
+          // tauri.conf.json — must be strict X.Y.Z
+          const confPath = "desktop/src-tauri/tauri.conf.json";
+          const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
+          conf.version = version;
+          fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + "\n");
+
+          // package.json
+          const pkgPath = "desktop/package.json";
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          pkg.version = version;
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+          // package-lock.json — keep root + packages[""] in sync so npm ci is happy
+          const lockPath = "desktop/package-lock.json";
+          if (fs.existsSync(lockPath)) {
+            const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+            lock.version = version;
+            if (lock.packages && lock.packages[""]) {
+              lock.packages[""].version = version;
+            }
+            fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
+          }
+          EOF
+
+          # Cargo.toml
+          sed -i.bak -E \
+            "s/^version = \".*\"/version = \"${TAURI_VERSION}\"/" \
+            desktop/src-tauri/Cargo.toml
+          rm -f desktop/src-tauri/Cargo.toml.bak
+
       - name: Install npm deps
         working-directory: desktop
         run: npm ci
@@ -409,61 +468,6 @@ jobs:
             exit 1
           fi
           ls -lh "$SIDE"
-
-      - name: Sync desktop version
-        shell: bash
-        run: |
-          set -euo pipefail
-          export VERSION="${{ needs.meta.outputs.version }}"
-
-          # BUNDLE_VERSION: MSI-safe version (numeric pre-release suffix kept if <= 65535)
-          BUNDLE_VERSION="$(node <<'EOF'
-          const v = process.env.VERSION || "";
-          const m = v.match(/^(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?$/);
-          if (!m) { console.log(v); process.exit(0); }
-          const core = m[1];
-          const pre = m[2];
-          if (!pre) { console.log(core); process.exit(0); }
-          if (/^\d+$/.test(pre)) {
-            const n = Number(pre);
-            console.log(n > 65535 ? core : `${core}-${pre}`);
-            process.exit(0);
-          }
-          const num = pre.match(/(\d+)$/);
-          if (num) {
-            const n = Number(num[1]);
-            console.log(n > 65535 ? core : `${core}-${n}`);
-            process.exit(0);
-          }
-          console.log(core);
-          EOF
-          )"
-
-          # TAURI_VERSION: Tauri 2 requires strict X.Y.Z — strip any pre-release suffix.
-          TAURI_VERSION="$(node -e "
-          const v = process.env.BUNDLE_VERSION || '';
-          const m = v.match(/^(\\d+\\.\\d+\\.\\d+)/); console.log(m ? m[1] : v);
-          " BUNDLE_VERSION="$BUNDLE_VERSION")"
-
-          export BUNDLE_VERSION TAURI_VERSION
-          echo "release tag version  : ${VERSION}"
-          echo "bundle version (MSI) : ${BUNDLE_VERSION}"
-          echo "tauri version (X.Y.Z): ${TAURI_VERSION}"
-
-          node <<'EOF'
-          const fs = require("fs");
-          // tauri.conf.json must be strict X.Y.Z
-          const tauriConf = JSON.parse(fs.readFileSync("desktop/src-tauri/tauri.conf.json", "utf8"));
-          tauriConf.version = process.env.TAURI_VERSION;
-          fs.writeFileSync("desktop/src-tauri/tauri.conf.json", JSON.stringify(tauriConf, null, 2) + "\n");
-          // package.json can carry the fuller bundle version
-          const pkg = JSON.parse(fs.readFileSync("desktop/package.json", "utf8"));
-          pkg.version = process.env.BUNDLE_VERSION;
-          fs.writeFileSync("desktop/package.json", JSON.stringify(pkg, null, 2) + "\n");
-          EOF
-
-          sed -i.bak -E "s/^version = \".*\"/version = \"${BUNDLE_VERSION}\"/" desktop/src-tauri/Cargo.toml
-          rm -f desktop/src-tauri/Cargo.toml.bak
 
       - name: Configure Apple code signing
         if: runner.os == 'macOS'
@@ -534,6 +538,20 @@ jobs:
             echo "Notarization credentials exported"
           else
             echo "Developer ID cert exported; notarization secrets incomplete — skip notarization"
+          fi
+
+      - name: Validate Tauri version
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONF_VER="$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+          PKG_VER="$(node -p 'require("./package.json").version')"
+          echo "tauri.conf.json version : $CONF_VER"
+          echo "package.json version    : $PKG_VER"
+          if [[ ! "$CONF_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tauri.conf.json version '$CONF_VER' is not valid X.Y.Z semver" >&2
+            exit 1
           fi
 
       - name: Build Tauri installers
