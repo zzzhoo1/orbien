@@ -2,6 +2,7 @@
   <img src="docs/static/img/logo.png" alt="Logo" width="180" height="180" style="border-radius:24px;margin-bottom:20px;"/>
 </div>
 <p align="center" style="font-size:18px;color:#555;margin-top:-10px;margin-bottom:24px;">
+  ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/zzzhoo1/orbien?utm_source=oss&utm_medium=github&utm_campaign=zzzhoo1%2Forbien&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
   Intranet penetration built with Rust and Tokio
 </p>
 <div align="center">
