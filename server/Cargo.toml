@@ -37,3 +37,9 @@ webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"]
 rand        = "0.8"
 # Argon2 password hashing for the password-login path
 argon2      = "0.5"
+
+[dev-dependencies]
+tokio       = { workspace = true }
+serde_json  = { workspace = true }
+tower       = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
