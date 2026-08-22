@@ -10,7 +10,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use orbien_core::VERSION;
 use rust_embed::Embed;
@@ -31,8 +31,6 @@ pub fn router(state: Arc<DashState>) -> Router {
         .route("/static/", get(|| async { Redirect::permanent("/") }))
         .route("/static/{*path}", get(redirect_legacy_static))
         // ── auth endpoints ───────────────────────────────────────────────────────────
-        // GET  /api/v1/auth/status — public; tells the SPA whether WebAuthn is
-        //      available so it can show/hide the passkey login button.
         .route("/api/v1/auth/status", get(auth_routes::auth_status))
         .route("/api/v1/auth/login", post(auth_routes::login))
         .route("/api/v1/auth/logout", post(auth_routes::logout))
@@ -60,6 +58,7 @@ pub fn router(state: Arc<DashState>) -> Router {
         .route("/api/v1/clients/{run_id}", get(get_client))
         .route("/api/v1/clients/{run_id}/kick", post(kick_client))
         .route("/api/v1/proxies", get(list_proxies))
+        .route("/api/v1/proxies/{name}", delete(kick_proxy))
         .route("/api/v1/proxies/{name}/traffic", get(proxy_traffic))
         .route("/{*path}", get(static_file))
         .with_state(state)
@@ -74,9 +73,6 @@ async fn redirect_legacy_static(Path(path): Path<String>) -> Redirect {
     }
 }
 
-/// Kept as a named symbol so callers that still reference `routes::basic_auth`
-/// in tests compile cleanly.  In production the `auth_middleware` from
-/// `auth.rs` is the authoritative gate — this wrapper just delegates to it.
 #[allow(dead_code)]
 pub async fn basic_auth(
     state: axum::extract::State<Arc<DashState>>,
@@ -374,6 +370,23 @@ async fn list_proxies(
         page_size,
         items: filtered.into_iter().skip(start).take(page_size).collect(),
     }))
+}
+
+/// DELETE /api/v1/proxies/{name}
+/// Remove and stop a running proxy by name.
+async fn kick_proxy(
+    State(state): State<Arc<DashState>>,
+    Path(name): Path<String>,
+) -> Json<ApiResponse<()>> {
+    let name = urlencoding_decode(&name);
+    match state.svc.kick_proxy(&name).await {
+        Ok(()) => Json(ApiResponse::ok(())),
+        Err(e) => Json(ApiResponse {
+            code: 404,
+            msg: e.to_string(),
+            data: (),
+        }),
+    }
 }
 
 async fn proxy_traffic(

@@ -126,6 +126,19 @@ impl Control {
         self.proxies.lock().await.len()
     }
 
+    /// Remove and stop a single proxy by name.
+    /// Returns `true` if the proxy was found and removed, `false` if not found.
+    pub async fn kick_proxy(&self, name: &str) -> bool {
+        let mut pm = self.proxies.lock().await;
+        if let Some(ty) = pm.remove(name).await {
+            self.metrics.close_proxy(name, ty);
+            tracing::info!(run_id = %self.run_id, proxy = %name, "proxy kicked from dashboard");
+            true
+        } else {
+            false
+        }
+    }
+
     pub async fn run(self: Arc<Self>) -> Result<()> {
         self.metrics.inc_token_conn(&self.user);
         let _token_guard = TokenConnGuard {

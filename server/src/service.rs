@@ -346,8 +346,6 @@ impl Service {
                 }),
             )
             .await;
-            // Graceful shutdown: flush the error response before closing so the
-            // client can read it without hitting an UnexpectedEof.
             let _ = stream.shutdown().await;
             return Err(anyhow!(
                 "authorization failed for {peer} user={}",
@@ -373,7 +371,6 @@ impl Service {
                 }),
             )
             .await;
-            // Graceful shutdown: flush the error response before closing.
             let _ = stream.shutdown().await;
             return Err(anyhow!(reason));
         }
@@ -537,6 +534,22 @@ impl Service {
             }
             None => Err(anyhow!("client not online: {run_id}")),
         }
+    }
+
+    /// Remove and stop a single proxy by name across all online clients.
+    /// Searches every online client for `proxy_name`; stops at the first match.
+    /// Returns `Ok(())` when found and removed, `Err` when not found.
+    pub async fn kick_proxy(&self, proxy_name: &str) -> Result<()> {
+        let controls: Vec<Arc<Control>> = {
+            let map = self.controls.lock().await;
+            map.values().cloned().collect()
+        };
+        for ctrl in controls {
+            if ctrl.kick_proxy(proxy_name).await {
+                return Ok(());
+            }
+        }
+        Err(anyhow!("proxy not found: {proxy_name}"))
     }
 
     pub async fn dashboard_snapshot(&self) -> DashboardSnapshot {
