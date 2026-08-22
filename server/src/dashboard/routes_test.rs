@@ -45,17 +45,19 @@ mod tests {
             ..Default::default()
         };
         let auth = Some(Arc::new(AuthState::session_only()));
-        Arc::new(DashState { svc, cfg: web_cfg, auth })
+        Arc::new(DashState {
+            svc,
+            cfg: web_cfg,
+            auth,
+        })
     }
 
     /// Send a request through the full middleware stack and collect the body.
     async fn call(state: Arc<DashState>, req: Request<Body>) -> (StatusCode, Value) {
-        let app = routes::router(Arc::clone(&state)).layer(
-            axum::middleware::from_fn_with_state(
-                Arc::clone(&state),
-                crate::dashboard::auth::auth_middleware,
-            ),
-        );
+        let app = routes::router(Arc::clone(&state)).layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            crate::dashboard::auth::auth_middleware,
+        ));
         let resp = app.oneshot(req).await.expect("oneshot");
         let status = resp.status();
         let bytes = resp
@@ -253,8 +255,7 @@ mod tests {
             cfg: web_cfg,
             auth: Some(Arc::new(AuthState::session_only())),
         });
-        let credentials =
-            base64::engine::general_purpose::STANDARD.encode(b"admin:secret");
+        let credentials = base64::engine::general_purpose::STANDARD.encode(b"admin:secret");
         let req = Request::get("/api/v1/clients")
             .header("Authorization", format!("Basic {credentials}"))
             .body(Body::empty())
