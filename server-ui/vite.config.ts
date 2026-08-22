@@ -28,4 +28,9 @@ export default defineConfig({
         emptyOutDir: true,
         assetsDir: 'assets',
     },
+    test: {
+        environment: 'jsdom',
+        globals: true,
+        include: ['src/**/*.{spec,test}.ts'],
+    },
 })
