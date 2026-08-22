@@ -4,6 +4,9 @@ import {useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import EmptyText from '@/components/EmptyText.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
+import InlineAlert from '@/components/InlineAlert.vue'
 import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
@@ -20,6 +23,7 @@ const pageSize = ref(10)
 const statusFilter = ref<StatusFilter>('all')
 const kicking = ref<string | null>(null)
 const search = ref('')
+const kickError = ref('')
 
 function isOnline(raw?: string) { return !raw || raw === 'online' }
 
@@ -62,12 +66,6 @@ function filterLabel(key: StatusFilter) {
   return t('status.offline')
 }
 
-function statusLabel(raw?: string) {
-  if (isOnline(raw)) return t('status.online')
-  if (raw === 'offline') return t('status.offline')
-  return raw || t('status.offline')
-}
-
 function formatSeen(secs: number, online: boolean) {
   const n = Math.max(0, Math.floor(secs || 0))
   if (online) {
@@ -92,12 +90,12 @@ async function onKick(runId: string, evt: Event) {
   if (kicking.value) return
   if (!window.confirm(t('clients.kickConfirm'))) return
   kicking.value = runId
+  kickError.value = ''
   try {
     await kickClient(runId)
     await store.refresh()
   } catch {
-    // Never expose raw error internals to the user — show a generic translated message.
-    window.alert(t('clients.kickFailed'))
+    kickError.value = t('clients.kickFailed')
   } finally {
     kicking.value = null
   }
@@ -106,6 +104,15 @@ async function onKick(runId: string, evt: Event) {
 
 <template>
   <section class="client-list">
+    <!-- kick error alert -->
+    <InlineAlert
+      v-if="kickError"
+      variant="error"
+      :title="kickError"
+      :closable="true"
+      @close="kickError = ''"
+    />
+
     <!-- toolbar -->
     <div class="toolbar">
       <div class="filter-group" role="group" :aria-label="t('clients.filter')">
@@ -131,14 +138,16 @@ async function onKick(runId: string, evt: Event) {
     </div>
 
     <!-- empty states -->
-    <div v-if="!store.clients.length" class="empty-state">
-      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="24" cy="16" r="8"/><path d="M8 40c0-8.837 7.163-16 16-16s16 7.163 16 16"/></svg>
-      <p>{{ t('clients.empty') }}</p>
-    </div>
-    <div v-else-if="!filtered.length" class="empty-state">
-      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="20" cy="20" r="12"/><path d="M32 32L42 42"/><path d="M15 20h10M20 15v10"/></svg>
-      <p>{{ t('clients.filterEmpty') }}</p>
-    </div>
+    <EmptyText
+      v-if="!store.clients.length"
+      icon="⌁"
+      :title="t('clients.empty')"
+    />
+    <EmptyText
+      v-else-if="!filtered.length"
+      icon="⌕"
+      :title="t('clients.filterEmpty')"
+    />
 
     <!-- client cards -->
     <transition-group name="list" tag="div" class="cards">
@@ -186,10 +195,7 @@ async function onKick(runId: string, evt: Event) {
           >
             <AppIcon name="kick"/>
           </button>
-          <span class="status-pill" :class="{online: isOnline(c.status)}">
-            <span class="pill-dot"/>
-            {{ statusLabel(c.status) }}
-          </span>
+          <StatusBadge :status="isOnline(c.status) ? 'running' : 'stopped'" />
         </div>
       </article>
     </transition-group>
@@ -315,31 +321,6 @@ async function onKick(runId: string, evt: Event) {
 }
 
 .search-input::placeholder { color: var(--muted); }
-
-/* empty states */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.85rem;
-  padding: 3.5rem 1rem;
-  background: var(--panel);
-  border: 1px dashed var(--line-strong);
-  border-radius: 16px;
-  color: var(--muted);
-}
-
-.empty-state svg {
-  width: 3rem;
-  height: 3rem;
-  opacity: 0.45;
-}
-
-.empty-state p {
-  margin: 0;
-  font-size: 0.9rem;
-}
 
 /* card list */
 .cards {
@@ -505,35 +486,6 @@ async function onKick(runId: string, evt: Event) {
 
 /* card right */
 .card-right { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.38rem;
-  min-width: 4rem;
-  padding: 0.26rem 0.7rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 650;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
-  justify-content: center;
-}
-
-.status-pill.online {
-  color: var(--status-ok);
-  background: var(--status-ok-soft);
-  border-color: color-mix(in srgb, var(--status-ok) 25%, transparent);
-}
-
-.pill-dot {
-  width: 0.36rem;
-  height: 0.36rem;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
 
 .kick-btn {
   width: 1.85rem;
