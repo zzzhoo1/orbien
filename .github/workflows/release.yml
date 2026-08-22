@@ -400,6 +400,8 @@ jobs:
         run: |
           set -euo pipefail
           export VERSION="${{ needs.meta.outputs.version }}"
+
+          # BUNDLE_VERSION: MSI-safe version (numeric pre-release suffix kept if <= 65535)
           BUNDLE_VERSION="$(node <<'EOF'
           const v = process.env.VERSION || "";
           const m = v.match(/^(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?$/);
@@ -421,21 +423,30 @@ jobs:
           console.log(core);
           EOF
           )"
-          export BUNDLE_VERSION
-          echo "release tag version: ${VERSION}"
-          echo "bundle version (msi-safe): ${BUNDLE_VERSION}"
+
+          # TAURI_VERSION: Tauri 2 requires strict X.Y.Z — strip any pre-release suffix.
+          TAURI_VERSION="$(node -e "
+          const v = process.env.BUNDLE_VERSION || '';
+          const m = v.match(/^(\\d+\\.\\d+\\.\\d+)/); console.log(m ? m[1] : v);
+          " BUNDLE_VERSION="$BUNDLE_VERSION")"
+
+          export BUNDLE_VERSION TAURI_VERSION
+          echo "release tag version  : ${VERSION}"
+          echo "bundle version (MSI) : ${BUNDLE_VERSION}"
+          echo "tauri version (X.Y.Z): ${TAURI_VERSION}"
 
           node <<'EOF'
           const fs = require("fs");
-          for (const p of [
-            "desktop/src-tauri/tauri.conf.json",
-            "desktop/package.json",
-          ]) {
-            const j = JSON.parse(fs.readFileSync(p, "utf8"));
-            j.version = process.env.BUNDLE_VERSION;
-            fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
-          }
+          // tauri.conf.json must be strict X.Y.Z
+          const tauriConf = JSON.parse(fs.readFileSync("desktop/src-tauri/tauri.conf.json", "utf8"));
+          tauriConf.version = process.env.TAURI_VERSION;
+          fs.writeFileSync("desktop/src-tauri/tauri.conf.json", JSON.stringify(tauriConf, null, 2) + "\n");
+          // package.json can carry the fuller bundle version
+          const pkg = JSON.parse(fs.readFileSync("desktop/package.json", "utf8"));
+          pkg.version = process.env.BUNDLE_VERSION;
+          fs.writeFileSync("desktop/package.json", JSON.stringify(pkg, null, 2) + "\n");
           EOF
+
           sed -i.bak -E "s/^version = \".*\"/version = \"${BUNDLE_VERSION}\"/" desktop/src-tauri/Cargo.toml
           rm -f desktop/src-tauri/Cargo.toml.bak
 
