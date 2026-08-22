@@ -100,7 +100,7 @@ jobs:
         if: endsWith(matrix.target, '-musl')
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools perl
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -116,6 +116,8 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          # vendored openssl: static link, no system library needed
+          OPENSSL_STATIC: "1"
         run: |
           cargo build --release --locked \
             -p orbien-server -p orbien-client \
@@ -600,4 +602,3 @@ jobs:
             artifacts/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
