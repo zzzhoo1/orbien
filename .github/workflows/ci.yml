@@ -23,14 +23,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Install server-ui deps
+        working-directory: server-ui
+        run: npm install
+
+      - name: Test server-ui
+        working-directory: server-ui
+        run: npm test
 
       - name: Build server-ui
         working-directory: server-ui
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -1223,11 +1227,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Server: TCP control on 49527, QUIC (UDP) control/work on 49528.
           printf 'bindAddr = "0.0.0.0"\nbindPort = 49527\nquicBindPort = 49528\n' > orbien-server.toml
 
-          # Client: serverPort must point at quicBindPort (49528, UDP) when
-          # protocol = "quic".  The TCP bindPort is NOT used for QUIC connections.
           printf 'serverAddr = "127.0.0.1"\nserverPort = 49528\n\n[transport]\nprotocol = "quic"\n\n[[proxies]]\nname       = "quic-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47000\nremotePort = 46000\n' > orbien.toml
 
           cleanup() {
@@ -1256,7 +1257,6 @@ jobs:
 
           stdbuf -oL -eL bins/orbien-server -c orbien-server.toml > /tmp/quic-server.log 2>&1 &
           SERVER_PID=$!
-          # Wait for the TCP control port so we know the server is up
           for i in $(seq 1 40); do nc -z 127.0.0.1 49527 && break; sleep 0.25; done
           nc -z 127.0.0.1 49527 || { echo "server not up"; cat /tmp/quic-server.log; exit 1; }
 
@@ -1289,7 +1289,6 @@ jobs:
           printf 'bindAddr = "0.0.0.0"\nbindPort = 49529\nquicBindPort = 49530\n' > orbien-server.toml
           printf '[auth]\nmethod = "token"\ntoken  = "%s"\n' "$SECRET" >> orbien-server.toml
 
-          # serverPort = quicBindPort (49530) for QUIC protocol
           printf 'serverAddr = "127.0.0.1"\nserverPort = 49530\n\n[transport]\nprotocol = "quic"\n\n[auth]\ntoken = "%s"\n\n[[proxies]]\nname       = "quic-auth-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 47001\nremotePort = 46001\n' "$SECRET" > orbien.toml
 
           cleanup() {
@@ -1372,7 +1371,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # tcpMux=false on server must match client config below
           printf 'bindAddr = "0.0.0.0"\nbindPort = 59527\n\n[transport]\ntcpMux = false\n' > orbien-server.toml
 
           printf 'serverAddr = "127.0.0.1"\nserverPort = 59527\n\n[transport]\ntcpMux = false\nheartbeatInterval = 2\nheartbeatTimeout  = 6\n\n[[proxies]]\nname       = "re-echo"\ntype       = "tcp"\nlocalIP    = "127.0.0.1"\nlocalPort  = 57000\nremotePort = 56000\n' > orbien.toml
