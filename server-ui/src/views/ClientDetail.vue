@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import {computed} from 'vue'
+import {computed, ref} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
+import EmptyText from '@/components/EmptyText.vue'
+import InlineAlert from '@/components/InlineAlert.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import SectionCard from '@/components/SectionCard.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
 import TrafficSummary from '@/components/TrafficSummary.vue'
 import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
-import {ref} from 'vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useDashboardStore()
 const {t} = useLocale()
 const kicking = ref(false)
+const kickError = ref('')
 
 const runId = computed(() => route.params.runId as string)
 const client = computed(() => store.clients.find(c => c.runId === runId.value))
@@ -46,13 +49,13 @@ async function onKick() {
   if (kicking.value) return
   if (!window.confirm(t('clients.kickConfirm'))) return
   kicking.value = true
+  kickError.value = ''
   try {
     await kickClient(runId.value)
     await store.refresh()
     router.push({name: 'clients'})
   } catch {
-    // Never expose raw error internals to the user — show a generic translated message.
-    window.alert(t('clients.kickFailed'))
+    kickError.value = t('clients.kickFailed')
   } finally {
     kicking.value = false
   }
@@ -60,19 +63,27 @@ async function onKick() {
 </script>
 
 <template>
+  <!-- client not found -->
   <div v-if="!client" class="not-found">
-    <div class="not-found-inner">
-      <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-        <circle cx="32" cy="24" r="10"/>
-        <path d="M12 54c0-11.046 8.954-20 20-20s20 8.954 20 20"/>
-        <path d="M26 24h12M32 18v12" opacity="0.4"/>
-      </svg>
-      <p>{{ t('clients.notFound') }}</p>
-      <button class="back-btn" @click="router.push({name:'clients'})">← {{ t('common.back') }}</button>
-    </div>
+    <EmptyText icon="👤" :title="t('clients.notFound')">
+      <template #action>
+        <button class="back-btn" @click="router.push({name:'clients'})">
+          ← {{ t('common.back') }}
+        </button>
+      </template>
+    </EmptyText>
   </div>
 
   <div v-else class="client-detail">
+    <!-- kick error alert -->
+    <InlineAlert
+      v-if="kickError"
+      variant="error"
+      :title="kickError"
+      :closable="true"
+      @close="kickError = ''"
+    />
+
     <!-- ── Hero header ── -->
     <header class="detail-hero">
       <button class="back-icon" :aria-label="t('common.back')" @click="router.back()">
@@ -87,10 +98,7 @@ async function onKick() {
       <div class="hero-info">
         <div class="hero-title-row">
           <h1 class="hero-id">{{ client.runId }}</h1>
-          <span class="status-pill" :class="{online: isOnline}">
-            <span class="pill-dot"/>
-            {{ isOnline ? t('status.online') : t('status.offline') }}
-          </span>
+          <StatusBadge :status="isOnline ? 'running' : 'stopped'" />
         </div>
         <div class="hero-meta">
           <span v-if="client.hostname" class="meta-chip">
@@ -147,10 +155,11 @@ async function onKick() {
         <span class="proxy-count">{{ proxies.length }}</span>
       </template>
 
-      <div v-if="!proxies.length" class="empty-state">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="8" y="14" width="32" height="22" rx="4"/><path d="M16 14V10M32 14V10M8 22h32"/></svg>
-        <p>{{ t('overview.emptyProxies') }}</p>
-      </div>
+      <EmptyText
+        v-if="!proxies.length"
+        icon="⎕"
+        :title="t('overview.emptyProxies')"
+      />
 
       <div v-else class="proxy-grid">
         <div
@@ -191,12 +200,7 @@ async function onKick() {
   place-items: center;
   min-height: 20rem;
 }
-.not-found-inner {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 1rem; color: var(--muted);
-}
-.not-found-inner svg { width: 4rem; height: 4rem; opacity: 0.4; }
-.not-found-inner p { margin: 0; font-size: 0.9rem; }
+
 .back-btn {
   padding: 0.4rem 1rem; border-radius: 8px;
   border: 1px solid var(--line); background: var(--panel);
@@ -282,24 +286,6 @@ async function onKick() {
   word-break: break-all;
 }
 
-.status-pill {
-  display: inline-flex; align-items: center; gap: 0.35rem;
-  padding: 0.22rem 0.65rem;
-  border-radius: 999px; font-size: 0.73rem; font-weight: 650;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
-}
-.status-pill.online {
-  color: var(--status-ok);
-  background: var(--status-ok-soft);
-  border-color: color-mix(in srgb, var(--status-ok) 25%, transparent);
-}
-.pill-dot {
-  width: 0.34rem; height: 0.34rem;
-  border-radius: 50%; background: currentColor; flex-shrink: 0;
-}
-
 .hero-meta {
   display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem;
   align-items: center;
@@ -355,13 +341,6 @@ async function onKick() {
   padding: 0.12rem 0.48rem; border-radius: 999px;
   font-variant-numeric: tabular-nums;
 }
-
-.empty-state {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 0.75rem; padding: 2.5rem 1rem; color: var(--muted);
-}
-.empty-state svg { width: 2.5rem; height: 2.5rem; opacity: 0.4; }
-.empty-state p { margin: 0; font-size: 0.88rem; }
 
 .proxy-grid {
   display: grid;
