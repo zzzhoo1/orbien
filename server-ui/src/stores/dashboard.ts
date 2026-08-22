@@ -1,5 +1,7 @@
 import {reactive} from 'vue'
 import {fetchClients, fetchProxies, fetchSystemInfo, fetchSystemTokens, isApiError, type ApiError} from '@/api'
+import {useAuthStore} from '@/stores/auth'
+import {router} from '@/router'
 import type {ClientInfo, ProxyInfo, SystemInfo, TokenMetricItem} from '@/types/api'
 
 export type DashboardError =
@@ -32,6 +34,13 @@ export function useDashboardStore() {
             state.tokens = tokenMetrics.tokens ?? []
         } catch (e) {
             if (isApiError(e)) {
+                // 401 — session expired; force re-login
+                if (e.code === 'unauthorized') {
+                    const auth = useAuthStore()
+                    auth.setAuthenticated(false)
+                    void router.push({ name: 'login' })
+                    return
+                }
                 state.error = {code: e.code, params: e.params}
             } else {
                 state.error = {code: 'unknown'}
