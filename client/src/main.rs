@@ -3,6 +3,7 @@ mod control;
 mod plugin;
 mod proxy;
 mod run_id;
+mod sanitize;
 mod service;
 
 use anyhow::Result;

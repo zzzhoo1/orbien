@@ -1,5 +1,6 @@
 use crate::control::{Control, SessionEnd};
 use crate::run_id;
+use crate::sanitize::sanitize_for_logging;
 use anyhow::Result;
 use orbien_core::config::ClientConfig;
 use std::path::PathBuf;
@@ -31,9 +32,10 @@ impl Service {
                     run_id: rid,
                     reason,
                 }) => {
+                    let safe_reason = sanitize_for_logging(&reason);
                     tracing::error!(
                         run_id = %rid,
-                        %reason,
+                        reason = %safe_reason,
                         "kicked by server — process will exit (no reconnect)"
                     );
                     return Ok(());

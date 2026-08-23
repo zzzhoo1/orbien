@@ -1,6 +1,7 @@
 use crate::connector::{build_connector, Connector};
 use crate::proxy::ProxyManager;
 use crate::run_id;
+use crate::sanitize::sanitize_for_logging;
 use anyhow::{anyhow, Result};
 use orbien_core::auth;
 use orbien_core::config::ClientConfig;
@@ -245,7 +246,8 @@ impl Control {
 
             match msg {
                 Message::KickOut(k) => {
-                    tracing::warn!(reason = %k.reason, "kicked by server — will exit");
+                    let safe_reason = sanitize_for_logging(&k.reason);
+                    tracing::warn!(reason = %safe_reason, "kicked by server — will exit");
                     return Ok(ReaderEnd::Kicked(k.reason));
                 }
                 Message::ReqWorkConn(_) => {
