@@ -102,6 +102,12 @@ impl AccessPolicy {
         remote_port: Option<u16>,
     ) -> Result<()> {
         let Some(policy) = self.token_policies.get(token) else {
+            // If token policies are configured but this token is not found, deny access.
+            // This prevents bypass via unconfigured login.user values.
+            if !self.token_policies.is_empty() {
+                bail!("token '{token}' is not authorized for proxy registration");
+            }
+            // If no token policies are configured at all, allow (backward compatibility).
             return Ok(());
         };
 
@@ -307,9 +313,20 @@ mod tests {
     }
 
     #[test]
-    fn authorize_proxy_allows_unknown_token_without_extra_restrictions() {
+    fn authorize_proxy_allows_unknown_token_when_no_policies_configured() {
+        // When no token policies are configured, allow all tokens (backward compatibility)
         let p = base_policy();
         assert!(p.authorize_proxy("tok-x", "db", "tcp", Some(3306)).is_ok());
+    }
+
+    #[test]
+    fn authorize_proxy_denies_unknown_token_when_policies_exist() {
+        // When token policies ARE configured, unknown tokens must be denied
+        let p = policy(TokenAccessPolicy {
+            allowed_tunnels: hs_str(&["db"]),
+            ..Default::default()
+        });
+        assert!(p.authorize_proxy("tok-unknown", "db", "tcp", Some(3306)).is_err());
     }
 
     #[test]
