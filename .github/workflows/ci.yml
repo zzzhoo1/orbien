@@ -45,7 +45,8 @@ jobs:
         # Vite outputs directly to ../server/assets (see vite.config.ts)
 
       # ── Rust ───────────────────────────────────────────────────────────────
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy

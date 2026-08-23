@@ -139,7 +139,8 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
@@ -375,7 +376,8 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
