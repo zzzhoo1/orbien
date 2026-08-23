@@ -385,6 +385,7 @@ fn omit_client_mode(mode: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new_proxy_base(
     name: &str,
     proxy_type: &str,
