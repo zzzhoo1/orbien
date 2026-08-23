@@ -139,12 +139,12 @@ jobs:
           Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
           Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: cli-${{ matrix.target }}-v2
 
@@ -229,7 +229,7 @@ jobs:
           npm run build
 
       - name: Build & pack CLI on FreeBSD
-        uses: vmactions/freebsd-vm@v1
+        uses: vmactions/freebsd-vm@d0518f912576ae759075aa00fb9fe27037940271 # v1.5.4
         with:
           release: "14"
           arch: x86_64
@@ -672,7 +672,7 @@ jobs:
         run: find artifacts -type f | sort
 
       - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ needs.meta.outputs.version }}
           name: v${{ needs.meta.outputs.version }}
