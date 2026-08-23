@@ -208,7 +208,7 @@ impl Control {
             *self.last_seen.lock().unwrap() = Instant::now();
 
             match msg {
-                Message::NewProxy(np) => self.handle_new_proxy(np).await?,
+                Message::NewProxy(np) => self.handle_new_proxy(*np).await?,
                 Message::CloseProxy(cp) => self.handle_close_proxy(cp).await?,
                 Message::Ping(p) => self.handle_ping(p).await?,
                 Message::Pong(_) => {
