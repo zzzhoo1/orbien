@@ -17,7 +17,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.88"
-  CARGO_HOME: ~/.cargo
   CARGO_INCREMENTAL: 0
 
 jobs:
@@ -31,6 +30,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Node / web assets ──────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Build web assets
+        working-directory: server-ui
+        run: |
+          npm ci
+          npm run build
+        # Vite outputs directly to ../server/assets (see vite.config.ts)
+
+      # ── Rust ───────────────────────────────────────────────────────────────
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
