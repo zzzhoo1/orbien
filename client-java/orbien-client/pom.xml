@@ -13,6 +13,23 @@
   <name>orbien-client</name>
   <description>Orbien java client</description>
 
+  <repositories>
+    <repository>
+      <id>aikido-maven</id>
+      <url>https://maven.aikido.io/21be76845abc5ed978f11</url>
+    </repository>
+  </repositories>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-handler</artifactId>
+        <version>4.1.119.Final-aikido.8</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>io.netty</groupId>
