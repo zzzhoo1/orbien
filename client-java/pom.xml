@@ -74,6 +74,11 @@
     <flatten-maven-plugin.version>1.7.3</flatten-maven-plugin.version>
     <central-publishing-maven-plugin.version>0.9.0</central-publishing-maven-plugin.version>
     <skipPublishing>false</skipPublishing>
+    <org-apache-tomcat-embed.tomcat-embed-core.version>10.1.55</org-apache-tomcat-embed.tomcat-embed-core.version>
+    <org-apache-tomcat.tomcat-coyote.version>10.1.55</org-apache-tomcat.tomcat-coyote.version>
+    <org-apache-tomcat.tomcat-catalina.version>10.1.55</org-apache-tomcat.tomcat-catalina.version>
+    <org-apache-tomcat.tomcat-util.version>10.1.55</org-apache-tomcat.tomcat-util.version>
+    <org-apache-tomcat-embed.tomcat-embed-websocket.version>10.1.55</org-apache-tomcat-embed.tomcat-embed-websocket.version>
   </properties>
 
   <dependencyManagement>
@@ -114,6 +119,31 @@
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
         <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-core</artifactId>
+        <version>${org-apache-tomcat-embed.tomcat-embed-core.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat</groupId>
+        <artifactId>tomcat-coyote</artifactId>
+        <version>${org-apache-tomcat.tomcat-coyote.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat</groupId>
+        <artifactId>tomcat-catalina</artifactId>
+        <version>${org-apache-tomcat.tomcat-catalina.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat</groupId>
+        <artifactId>tomcat-util</artifactId>
+        <version>${org-apache-tomcat.tomcat-util.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-websocket</artifactId>
+        <version>${org-apache-tomcat-embed.tomcat-embed-websocket.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
