@@ -16,7 +16,7 @@ use orbien_core::transport::DynStream;
 use orbien_core::VERSION;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{ReadHalf, WriteHalf};
 use tokio::sync::Mutex;
 use tokio::time::interval;
 
@@ -394,7 +394,7 @@ fn new_proxy_base(
     transport: &orbien_core::config::ProxyTransportConfig,
     max_connections: usize,
     extra: impl FnOnce(&mut NewProxy),
-) -> NewProxy {
+) -> Box<NewProxy> {
     let mut np = NewProxy {
         proxy_name: name.into(),
         proxy_type: proxy_type.into(),
@@ -415,5 +415,5 @@ fn new_proxy_base(
         max_connections,
     };
     extra(&mut np);
-    np
+    Box::new(np)
 }
