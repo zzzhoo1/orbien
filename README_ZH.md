@@ -5,26 +5,26 @@
   基于 Rust 和 Tokio 的内网穿透
 </p>
 <div align="center">
-  <a href="https://github.com/orbien-org/orbien/stargazers">
-    <img src="https://img.shields.io/github/stars/orbien-org/orbien?style=for-the-badge&logo=github" alt="GitHub Stars"/>
+  <a href="https://github.com/zzzhoo1/orbien/stargazers">
+    <img src="https://img.shields.io/github/stars/zzzhoo1/orbien?style=for-the-badge&logo=github" alt="GitHub Stars"/>
   </a>
-  <a href="https://github.com/orbien-org/orbien/forks">
-    <img src="https://img.shields.io/github/forks/orbien-org/orbien?style=for-the-badge&logo=github" alt="GitHub Forks"/>
+  <a href="https://github.com/zzzhoo1/orbien/forks">
+    <img src="https://img.shields.io/github/forks/zzzhoo1/orbien?style=for-the-badge&logo=github" alt="GitHub Forks"/>
   </a>
-  <a href="https://github.com/orbien-org/orbien/issues">
-    <img src="https://img.shields.io/github/issues/orbien-org/orbien?style=for-the-badge&logo=github" alt="GitHub Issues"/>
+  <a href="https://github.com/zzzhoo1/orbien/issues">
+    <img src="https://img.shields.io/github/issues/zzzhoo1/orbien?style=for-the-badge&logo=github" alt="GitHub Issues"/>
   </a>
-  <a href="https://github.com/orbien-org/orbien/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/orbien-org/orbien?style=for-the-badge" alt="License"/>
+  <a href="https://github.com/zzzhoo1/orbien/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/zzzhoo1/orbien?style=for-the-badge" alt="License"/>
   </a>
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/Rust-Tokio-orange?style=for-the-badge&logo=rust&logoColor=white" alt="Rust"/>
   </a>
-  <a href="https://github.com/orbien-org/orbien/releases">
-    <img src="https://img.shields.io/badge/orbien-2.1.0-blue?style=for-the-badge" alt="orbien:2.1.0"/>
+  <a href="https://github.com/zzzhoo1/orbien/releases">
+    <img src="https://img.shields.io/github/v/release/zzzhoo1/orbien?style=for-the-badge&label=orbien" alt="Latest Release"/>
   </a>
-  <a href="https://somsubhra.github.io/github-release-stats/?username=orbien-org&repository=orbien">
-    <img src="https://img.shields.io/github/downloads/orbien-org/orbien/total?style=for-the-badge" alt="Downloads"/>
+  <a href="https://somsubhra.github.io/github-release-stats/?username=zzzhoo1&repository=orbien">
+    <img src="https://img.shields.io/github/downloads/zzzhoo1/orbien/total?style=for-the-badge" alt="Downloads"/>
   </a>
   <a href="https://discord.gg/4dgQjCS3k">
     <img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"/>
@@ -86,7 +86,7 @@ remotePort = 6050
 ./orbien -c orbien.toml
 ```
 
-如果觉得命令行CLI操作麻烦，可以使用 [Orbien-Desktop](https://github.com/orbien-org/orbien/releases) 桌面端，该桌面端基于
+如果觉得命令行CLI操作麻烦，可以使用 [Orbien-Desktop](https://github.com/zzzhoo1/orbien/releases) 桌面端，该桌面端基于
 `Tauri`框架开发，体积不到`10MB`
 
 ![desktop.gif](doc/img/desktop.gif)
