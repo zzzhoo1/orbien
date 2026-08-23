@@ -104,7 +104,6 @@ pub fn load_pem_cert_key(
         .collect::<Result<Vec<_>, _>>()
         .context("parse certificate PEM")?
         .into_iter()
-        .map(CertificateDer::from)
         .collect();
     if certs.is_empty() {
         bail!("no certificates in {cert_path}");
@@ -128,7 +127,6 @@ fn load_ca_roots(ca_path: &str) -> Result<RootCertStore> {
         .collect::<Result<Vec<_>, _>>()
         .context("parse CA PEM")?
         .into_iter()
-        .map(CertificateDer::from)
         .collect();
     if certs.is_empty() {
         bail!("no CA certificates in {ca_path}");

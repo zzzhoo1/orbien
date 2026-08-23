@@ -45,7 +45,6 @@ fn load_pem_cert_key(
         .collect::<Result<Vec<_>, _>>()
         .context("parse certificate PEM")?
         .into_iter()
-        .map(CertificateDer::from)
         .collect();
     if certs.is_empty() {
         bail!("no certificates in {crt_path}");

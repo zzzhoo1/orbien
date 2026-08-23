@@ -225,11 +225,12 @@ mod b64_bytes {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Message {
     Login(Login),
     LoginResp(LoginResp),
-    NewProxy(NewProxy),
+    NewProxy(Box<NewProxy>),
     NewProxyResp(NewProxyResp),
     CloseProxy(CloseProxy),
     ReqWorkConn(ReqWorkConn),

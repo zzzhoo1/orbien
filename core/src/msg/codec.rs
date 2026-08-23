@@ -28,6 +28,7 @@ pub enum MessageWriteError {
 const MAX_MSG_SIZE: u32 = 256 * 1024;
 
 /// Default timeout applied when using [`read_msg_timeout`].
+#[allow(dead_code)]
 pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn write_msg<W: AsyncWrite + Unpin>(
@@ -86,6 +87,7 @@ pub async fn read_msg<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Message, M
 
 /// Like [`read_msg`] but fails with [`MessageReadError::Timeout`] if the
 /// full message is not received within `timeout`.
+#[allow(dead_code)]
 pub async fn read_msg_timeout<R: AsyncRead + Unpin>(
     reader: &mut R,
     timeout: Duration,
