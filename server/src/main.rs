@@ -47,10 +47,10 @@ struct Args {
     #[arg(long = "dashboard_port", default_value_t = 0)]
     dashboard_port: u16,
 
-    #[arg(long = "dashboard_user", default_value = "admin")]
+    #[arg(long = "dashboard_user", default_value = "")]
     dashboard_user: String,
 
-    #[arg(long = "dashboard_pwd", default_value = "admin")]
+    #[arg(long = "dashboard_pwd", default_value = "")]
     dashboard_pwd: String,
 
     #[arg(short = 't', long = "token", default_value = "")]
@@ -92,7 +92,9 @@ fn load_server_config(args: &Args) -> Result<ServerConfig> {
         .filter(|p| !p.is_empty())
     {
         tracing::info!(config = %path, "loading config");
-        return ServerConfig::load(path);
+        let cfg = ServerConfig::load(path)?;
+        validate_dashboard_credentials(&cfg)?;
+        return Ok(cfg);
     }
 
     tracing::info!("using CLI flags for config");
@@ -115,5 +117,40 @@ fn load_server_config(args: &Args) -> Result<ServerConfig> {
     cfg.web_server.password = args.dashboard_pwd.clone();
     cfg.transport.tls.force = args.tls_only;
     cfg.complete();
+    validate_dashboard_credentials(&cfg)?;
     Ok(cfg)
+}
+
+fn validate_dashboard_credentials(cfg: &ServerConfig) -> Result<()> {
+    // If dashboard is enabled, require non-empty credentials
+    if cfg.web_server.port > 0 {
+        let user = cfg.web_server.user.trim();
+        let pass = cfg.web_server.password.trim();
+        
+        if user.is_empty() || pass.is_empty() {
+            anyhow::bail!(
+                "Dashboard is enabled (port {}), but credentials are not set. \
+                 Please provide --dashboard_user and --dashboard_pwd or configure \
+                 them in the config file.",
+                cfg.web_server.port
+            );
+        }
+        
+        // Reject known insecure default combinations
+        if (user == "admin" && pass == "admin") 
+            || (user == "admin" && pass == "password")
+            || (user == "root" && pass == "root")
+            || (user == "user" && pass == "user")
+            || user == pass
+        {
+            anyhow::bail!(
+                "Dashboard is enabled (port {}), but credentials are insecure. \
+                 The username and password must not be common defaults or identical. \
+                 Please set strong, unique credentials via --dashboard_user and --dashboard_pwd \
+                 or in the config file.",
+                cfg.web_server.port
+            );
+        }
+    }
+    Ok(())
 }
