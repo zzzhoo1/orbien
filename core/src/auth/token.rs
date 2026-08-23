@@ -39,8 +39,10 @@ pub fn verify_login_at(
     now: i64,
     max_skew_secs: i64,
 ) -> bool {
+    // Reject authentication when no token is configured.
+    // An empty token indicates the server has not been properly secured.
     if token.is_empty() {
-        return true;
+        return false;
     }
     if timestamp <= 0 {
         return false;
@@ -83,9 +85,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_token_still_allows() {
-        // Empty token: any privilege_key is accepted (no auth configured).
-        assert!(verify_login_at("", "whatever", 0, 0, 900));
+    fn empty_token_rejects() {
+        // Empty token: authentication must fail (no auth configured = deny all).
+        assert!(!verify_login_at(
+            "",
+            "whatever",
+            1_700_000_000,
+            1_700_000_000,
+            900
+        ));
     }
 
     #[test]
