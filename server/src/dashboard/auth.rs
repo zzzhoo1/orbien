@@ -264,14 +264,15 @@ pub async fn auth_middleware(
     }
 
     // 2. Fall back to Basic Auth (for backward compatibility)
-    if !needs_basic_auth(&state) {
-        return Ok(next.run(req).await);
-    }
-    if basic_auth_ok(&state, req.headers()) {
-        return Ok(next.run(req).await);
+    // Only allow Basic Auth fallback if credentials are explicitly configured
+    if needs_basic_auth(&state) {
+        if basic_auth_ok(&state, req.headers()) {
+            return Ok(next.run(req).await);
+        }
     }
 
-    // 3. Reject
+    // 3. Reject - authentication is required for all /api/* routes
+    // (except /api/v1/auth/* and /healthz which are handled above)
     let mut res = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     res.headers_mut().insert(
         header::WWW_AUTHENTICATE,

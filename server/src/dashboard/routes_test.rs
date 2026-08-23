@@ -3,8 +3,8 @@
 //! Strategy
 //! --------
 //! * Build the axum `Router` directly via `routes::router()` — no TCP socket.
-//! * Set `WebServerConfig { user: "", password: "" }` so `needs_basic_auth`
-//!   returns false and the auth middleware passes every request through.
+//! * Set `WebServerConfig { user: "test", password: "test" }` and provide
+//!   Basic Auth credentials so requests are authenticated.
 //! * Use `tower::ServiceExt::oneshot` to drive individual requests.
 //! * All assertions are JSON-level (serde_json), not string-matching.
 //! * `Service::new(ServerConfig::default())` is safe in CI: when cert/key
@@ -32,16 +32,15 @@ mod tests {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /// Build a minimal `DashState` backed by an in-memory `Service`.
-    /// `user` and `password` are intentionally empty so the auth middleware
-    /// treats every request as authenticated (no Basic-Auth challenge).
+    /// `user` and `password` are set to "test"/"test" so tests can use Basic Auth.
     fn make_state() -> Arc<DashState> {
         let cfg = ServerConfig::default();
         let svc = Arc::new(Service::new(cfg).expect("Service::new"));
         let web_cfg = WebServerConfig {
             addr: "127.0.0.1".into(),
             port: 0,
-            user: String::new(),
-            password: String::new(),
+            user: "test".into(),
+            password: "test".into(),
             ..Default::default()
         };
         let auth = Some(Arc::new(AuthState::session_only()));
@@ -53,7 +52,16 @@ mod tests {
     }
 
     /// Send a request through the full middleware stack and collect the body.
-    async fn call(state: Arc<DashState>, req: Request<Body>) -> (StatusCode, Value) {
+    /// Automatically adds Basic Auth header with test credentials.
+    async fn call(state: Arc<DashState>, mut req: Request<Body>) -> (StatusCode, Value) {
+        use base64::Engine;
+        // Add Basic Auth header for authentication
+        let credentials = base64::engine::general_purpose::STANDARD.encode(b"test:test");
+        req.headers_mut().insert(
+            "Authorization",
+            format!("Basic {credentials}").parse().unwrap(),
+        );
+        
         let app = routes::router(Arc::clone(&state)).layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             crate::dashboard::auth::auth_middleware,
@@ -231,9 +239,42 @@ mod tests {
             cfg: web_cfg,
             auth: Some(Arc::new(AuthState::session_only())),
         });
+        // Don't use call() helper - send request without auth header
         let req = Request::get("/api/v1/clients").body(Body::empty()).unwrap();
-        let (status, _) = call(state, req).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let app = routes::router(Arc::clone(&state)).layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            crate::dashboard::auth::auth_middleware,
+        ));
+        let resp = app.oneshot(req).await.expect("oneshot");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ── auth middleware: unauthenticated request rejected even with empty credentials ──
+
+    #[tokio::test]
+    async fn auth_middleware_rejects_when_no_credentials_configured() {
+        let cfg = ServerConfig::default();
+        let svc = Arc::new(Service::new(cfg).expect("Service::new"));
+        let web_cfg = WebServerConfig {
+            addr: "127.0.0.1".into(),
+            port: 0,
+            user: String::new(),
+            password: String::new(),
+            ..Default::default()
+        };
+        let state = Arc::new(DashState {
+            svc,
+            cfg: web_cfg,
+            auth: Some(Arc::new(AuthState::session_only())),
+        });
+        // Send request without auth - should be rejected even though credentials are empty
+        let req = Request::get("/api/v1/clients").body(Body::empty()).unwrap();
+        let app = routes::router(Arc::clone(&state)).layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            crate::dashboard::auth::auth_middleware,
+        ));
+        let resp = app.oneshot(req).await.expect("oneshot");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     // ── auth middleware: correct Basic-Auth credentials pass ──────────────────
