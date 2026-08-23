@@ -47,10 +47,10 @@ struct Args {
     #[arg(long = "dashboard_port", default_value_t = 0)]
     dashboard_port: u16,
 
-    #[arg(long = "dashboard_user", default_value = "admin")]
+    #[arg(long = "dashboard_user", default_value = "")]
     dashboard_user: String,
 
-    #[arg(long = "dashboard_pwd", default_value = "admin")]
+    #[arg(long = "dashboard_pwd", default_value = "")]
     dashboard_pwd: String,
 
     #[arg(short = 't', long = "token", default_value = "")]
@@ -92,7 +92,9 @@ fn load_server_config(args: &Args) -> Result<ServerConfig> {
         .filter(|p| !p.is_empty())
     {
         tracing::info!(config = %path, "loading config");
-        return ServerConfig::load(path);
+        let cfg = ServerConfig::load(path)?;
+        validate_dashboard_config(&cfg)?;
+        return Ok(cfg);
     }
 
     tracing::info!("using CLI flags for config");
@@ -115,5 +117,32 @@ fn load_server_config(args: &Args) -> Result<ServerConfig> {
     cfg.web_server.password = args.dashboard_pwd.clone();
     cfg.transport.tls.force = args.tls_only;
     cfg.complete();
+    validate_dashboard_config(&cfg)?;
     Ok(cfg)
+}
+
+fn validate_dashboard_config(cfg: &ServerConfig) -> Result<()> {
+    // If dashboard is enabled (port > 0), require explicit credentials
+    if cfg.web_server.port > 0 {
+        let user = cfg.web_server.user.trim();
+        let password = cfg.web_server.password.trim();
+        
+        if user.is_empty() || password.is_empty() {
+            anyhow::bail!(
+                "Dashboard is enabled (port {}), but credentials are not set. \
+                 Please provide --dashboard_user and --dashboard_pwd or configure \
+                 them in the config file to prevent unauthorized access.",
+                cfg.web_server.port
+            );
+        }
+        
+        // Warn about weak credentials
+        if user == "admin" && password == "admin" {
+            tracing::warn!(
+                "Dashboard is using default credentials (admin/admin). \
+                 This is insecure and should be changed in production environments."
+            );
+        }
+    }
+    Ok(())
 }
