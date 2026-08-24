@@ -260,3 +260,140 @@ pub fn addrs_from_start_work(
     };
     Some((src, SocketAddr::new(dst_ip, dst_port)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn parse_version_valid() {
+        assert_eq!(parse_proxy_protocol_version("").unwrap(), None);
+        assert_eq!(parse_proxy_protocol_version("v1").unwrap(), Some("v1"));
+        assert_eq!(parse_proxy_protocol_version("V2").unwrap(), Some("v2"));
+        assert!(parse_proxy_protocol_version("v3").is_err());
+    }
+
+    #[test]
+    fn build_v1_tcp4() {
+        let src: SocketAddr = "1.2.3.4:1234".parse().unwrap();
+        let dst: SocketAddr = "5.6.7.8:80".parse().unwrap();
+        let hdr = build_proxy_protocol_header(src, dst, "v1").unwrap();
+        assert_eq!(
+            String::from_utf8(hdr).unwrap(),
+            "PROXY TCP4 1.2.3.4 5.6.7.8 1234 80\r\n"
+        );
+    }
+
+    #[test]
+    fn build_v1_tcp6() {
+        let src: SocketAddr = "[::1]:443".parse().unwrap();
+        let dst: SocketAddr = "[::2]:80".parse().unwrap();
+        let hdr = build_proxy_protocol_header(src, dst, "v1").unwrap();
+        let s = String::from_utf8(hdr).unwrap();
+        assert!(s.starts_with("PROXY TCP6 ::1 ::2 443 80\r\n"));
+    }
+
+    #[test]
+    fn build_v1_mixed_family() {
+        let src: SocketAddr = "1.2.3.4:1234".parse().unwrap();
+        let dst: SocketAddr = "[::1]:80".parse().unwrap();
+        let hdr = build_proxy_protocol_header(src, dst, "v1").unwrap();
+        let s = String::from_utf8(hdr).unwrap();
+        assert_eq!(s, "PROXY TCP4 1.2.3.4 127.0.0.1 1234 80\r\n");
+    }
+
+    #[test]
+    fn build_v2_tcp4() {
+        let src: SocketAddr = "1.2.3.4:1234".parse().unwrap();
+        let dst: SocketAddr = "5.6.7.8:80".parse().unwrap();
+        let hdr = build_proxy_protocol_header(src, dst, "v2").unwrap();
+        // 16-byte header + 12-byte IPv4 block
+        assert_eq!(hdr.len(), 28);
+        assert_eq!(&hdr[0..12], &V2_SIG);
+        assert_eq!(hdr[12], 0x21); // version 2, PROXY
+        assert_eq!(hdr[13], 0x11); // AF_INET / STREAM
+        assert_eq!(u16::from_be_bytes([hdr[14], hdr[15]]), 12);
+        // Parse it back
+        match try_consume_proxy_protocol(&hdr).unwrap() {
+            PpConsume::Done(p) => {
+                assert_eq!(p.src, src);
+                assert_eq!(p.dst, dst);
+                assert_eq!(p.header_len, 28);
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_v2_tcp6() {
+        let src: SocketAddr = "[2001:db8::1]:443".parse().unwrap();
+        let dst: SocketAddr = "[2001:db8::2]:80".parse().unwrap();
+        let hdr = build_proxy_protocol_header(src, dst, "v2").unwrap();
+        assert_eq!(hdr.len(), 16 + 36);
+        assert_eq!(hdr[13], 0x21); // AF_INET6 / STREAM
+        match try_consume_proxy_protocol(&hdr).unwrap() {
+            PpConsume::Done(p) => {
+                assert_eq!(p.src, src);
+                assert_eq!(p.dst, dst);
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consume_not_proxy() {
+        assert!(matches!(
+            try_consume_proxy_protocol(b"GET / HTTP/1.1\r\n").unwrap(),
+            PpConsume::NotProxy
+        ));
+        assert!(matches!(
+            try_consume_proxy_protocol(b"").unwrap(),
+            PpConsume::Incomplete
+        ));
+    }
+
+    #[test]
+    fn consume_v1_unknown() {
+        let hdr = b"PROXY UNKNOWN\r\n";
+        match try_consume_proxy_protocol(hdr).unwrap() {
+            PpConsume::Done(p) => {
+                assert_eq!(p.src, SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
+                assert_eq!(p.header_len, hdr.len());
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consume_incomplete_v1() {
+        assert!(matches!(
+            try_consume_proxy_protocol(b"PROXY TCP4 1.2.3.4").unwrap(),
+            PpConsume::Incomplete
+        ));
+    }
+
+    #[test]
+    fn addrs_from_start_work_basic() {
+        let r = addrs_from_start_work("1.2.3.4", 1234, "5.6.7.8", 80, 8080).unwrap();
+        assert_eq!(r.0, "1.2.3.4:1234".parse::<SocketAddr>().unwrap());
+        assert_eq!(r.1, "5.6.7.8:80".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn addrs_from_start_work_empty_src() {
+        assert!(addrs_from_start_work("", 0, "", 0, 8080).is_none());
+    }
+
+    #[test]
+    fn addrs_from_start_work_fallback() {
+        let r = addrs_from_start_work("1.2.3.4", 1234, "", 0, 8080).unwrap();
+        assert_eq!(r.0, "1.2.3.4:1234".parse::<SocketAddr>().unwrap());
+        assert_eq!(r.1, "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn addrs_from_start_work_invalid() {
+        assert!(addrs_from_start_work("not-an-ip", 1, "", 0, 8080).is_none());
+    }
+}

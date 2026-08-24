@@ -340,3 +340,140 @@ impl ClientConfig {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> ClientConfig {
+        ClientConfig {
+            server_addr: "example.com".into(),
+            server_port: 9527,
+            user: "alice".into(),
+            auth: AuthConfig {
+                method: "token".into(),
+                token: "secret".into(),
+            },
+            transport: TransportConfig::default(),
+            proxies: vec![],
+            udp_packet_size: 1500,
+        }
+    }
+
+    #[test]
+    fn server_endpoint_formats() {
+        let cfg = sample();
+        assert_eq!(cfg.server_endpoint(), "example.com:9527");
+    }
+
+    #[test]
+    fn tls_server_name_falls_back_to_server_addr() {
+        let mut cfg = sample();
+        cfg.transport.tls.server_name = String::new();
+        assert_eq!(cfg.tls_server_name(), "example.com");
+    }
+
+    #[test]
+    fn tls_server_name_uses_explicit() {
+        let mut cfg = sample();
+        cfg.transport.tls.server_name = "sni.example.com".into();
+        assert_eq!(cfg.tls_server_name(), "sni.example.com");
+    }
+
+    #[test]
+    fn complete_sets_server_name() {
+        let mut cfg = sample();
+        cfg.transport.tls.server_name = String::new();
+        cfg.complete();
+        assert_eq!(cfg.transport.tls.server_name, "example.com");
+    }
+
+    #[test]
+    fn complete_repairs_negative_heartbeat_when_no_mux() {
+        let mut cfg = sample();
+        cfg.transport.tcp_mux = false;
+        cfg.transport.heartbeat_interval = -1;
+        cfg.transport.heartbeat_timeout = -1;
+        cfg.complete();
+        assert_eq!(cfg.transport.heartbeat_interval, 30);
+        assert_eq!(cfg.transport.heartbeat_timeout, 90);
+    }
+
+    #[test]
+    fn complete_keeps_heartbeat_when_mux() {
+        let mut cfg = sample();
+        cfg.transport.tcp_mux = true;
+        cfg.transport.heartbeat_interval = -1;
+        cfg.complete();
+        assert_eq!(cfg.transport.heartbeat_interval, -1);
+    }
+
+    #[test]
+    fn protocol_parses() {
+        let mut cfg = sample();
+        cfg.transport.protocol = "tcp".into();
+        assert!(cfg.protocol().is_ok());
+        cfg.transport.protocol = "quic".into();
+        assert!(cfg.protocol().is_ok());
+        cfg.transport.protocol = "websocket".into();
+        assert!(cfg.protocol().is_ok());
+        cfg.transport.protocol = "kcp".into();
+        assert!(cfg.protocol().is_ok());
+    }
+
+    #[test]
+    fn protocol_rejects_unknown() {
+        let mut cfg = sample();
+        cfg.transport.protocol = "sctp".into();
+        assert!(cfg.protocol().is_err());
+    }
+
+    #[test]
+    fn uses_yamux_only_for_muxable_protocols() {
+        let mut cfg = sample();
+        cfg.transport.tcp_mux = true;
+        cfg.transport.protocol = "tcp".into();
+        assert!(cfg.uses_yamux());
+        cfg.transport.protocol = "quic".into();
+        assert!(!cfg.uses_yamux());
+        cfg.transport.tcp_mux = false;
+        cfg.transport.protocol = "tcp".into();
+        assert!(!cfg.uses_yamux());
+    }
+
+    #[test]
+    fn load_parses_toml_with_defaults() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("orbien_test_client.toml");
+        std::fs::write(
+            &path,
+            r#"
+serverAddr = "127.0.0.1"
+serverPort = 9527
+[[proxies]]
+name = "web"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 8080
+remotePort = 80
+"#,
+        )
+        .unwrap();
+        let cfg = ClientConfig::load(&path).unwrap();
+        assert_eq!(cfg.server_addr, "127.0.0.1");
+        assert_eq!(cfg.server_port, 9527);
+        assert_eq!(cfg.proxies.len(), 1);
+        assert_eq!(cfg.proxies[0].name, "web");
+        assert_eq!(cfg.transport.protocol, "tcp"); // default
+        // No [auth] block present -> AuthConfig::default() -> method is empty string.
+        assert_eq!(cfg.auth.method, "");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_errors_on_missing_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("orbien_nonexistent_xyz.toml");
+        assert!(ClientConfig::load(&path).is_err());
+    }
+}

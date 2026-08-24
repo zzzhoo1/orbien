@@ -65,3 +65,62 @@ pub fn apply_x_forwarded_for(head: &mut Vec<u8>, client_ip: &str, proto: &str) -
     *head = lines.join("").into_bytes();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req() -> Vec<u8> {
+        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".to_vec()
+    }
+
+    #[test]
+    fn adds_xff_when_absent() {
+        let mut head = req();
+        apply_x_forwarded_for(&mut head, "1.2.3.4", "http").unwrap();
+        let text = String::from_utf8(head).unwrap();
+        assert!(text.contains("X-Forwarded-For: 1.2.3.4\r\n"));
+        assert!(text.contains("X-Forwarded-Proto: http\r\n"));
+    }
+
+    #[test]
+    fn appends_to_existing_xff() {
+        let mut head = b"GET / HTTP/1.1\r\nX-Forwarded-For: 9.9.9.9\r\nHost: x\r\n\r\n".to_vec();
+        apply_x_forwarded_for(&mut head, "1.2.3.4", "").unwrap();
+        let text = String::from_utf8(head).unwrap();
+        assert!(text.contains("X-Forwarded-For: 9.9.9.9, 1.2.3.4\r\n"));
+    }
+
+    #[test]
+    fn does_not_duplicate_proto() {
+        let mut head =
+            b"GET / HTTP/1.1\r\nX-Forwarded-Proto: https\r\n\r\n".to_vec();
+        apply_x_forwarded_for(&mut head, "1.2.3.4", "https").unwrap();
+        let text = String::from_utf8(head).unwrap();
+        assert_eq!(text.matches("X-Forwarded-Proto").count(), 1);
+        assert!(text.contains("X-Forwarded-For: 1.2.3.4\r\n"));
+    }
+
+    #[test]
+    fn empty_client_ip_adds_nothing() {
+        let mut head = req();
+        apply_x_forwarded_for(&mut head, "", "").unwrap();
+        let text = String::from_utf8(head).unwrap();
+        assert!(!text.contains("X-Forwarded"));
+    }
+
+    #[test]
+    fn supports_lf_only() {
+        let mut head = b"GET / HTTP/1.1\nHost: example.com\n\n".to_vec();
+        apply_x_forwarded_for(&mut head, "1.2.3.4", "http").unwrap();
+        let text = String::from_utf8(head).unwrap();
+        assert!(text.contains("X-Forwarded-For: 1.2.3.4\n"));
+        assert!(text.contains("X-Forwarded-Proto: http\n"));
+    }
+
+    #[test]
+    fn empty_request_errors() {
+        let mut head: Vec<u8> = vec![];
+        assert!(apply_x_forwarded_for(&mut head, "1.2.3.4", "http").is_err());
+    }
+}

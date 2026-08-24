@@ -156,3 +156,50 @@ fn apply_request_rewrites(
     *buf = lines.join("").into_bytes();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req() -> Vec<u8> {
+        b"GET / HTTP/1.1\r\nHost: original.example.com\r\n\r\n".to_vec()
+    }
+
+    #[test]
+    fn rewrites_host_header() {
+        let mut buf = req();
+        apply_request_rewrites(&mut buf, "new.example.com", &[]).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("Host: new.example.com\r\n"));
+        assert!(!text.contains("original.example.com"));
+    }
+
+    #[test]
+    fn inserts_host_when_missing() {
+        let mut buf = b"GET / HTTP/1.1\r\n\r\n".to_vec();
+        apply_request_rewrites(&mut buf, "new.example.com", &[]).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("Host: new.example.com\r\n"));
+    }
+
+    #[test]
+    fn adds_extra_headers() {
+        let mut buf = req();
+        apply_request_rewrites(&mut buf, "", &[("X-Custom".into(), "val".into())]).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("X-Custom: val\r\n"));
+    }
+
+    #[test]
+    fn no_rewrite_no_extra_is_noop() {
+        let mut buf = req();
+        apply_request_rewrites(&mut buf, "", &[]).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "GET / HTTP/1.1\r\nHost: original.example.com\r\n\r\n");
+    }
+
+    #[test]
+    fn empty_request_errors() {
+        let mut buf: Vec<u8> = vec![];
+        assert!(apply_request_rewrites(&mut buf, "x", &[]).is_err());
+    }
+}

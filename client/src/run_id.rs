@@ -29,3 +29,46 @@ pub fn save(config_path: &Path, run_id: &str) -> std::io::Result<()> {
     }
     std::fs::write(path, run_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_for_replaces_extension() {
+        let p = path_for(Path::new("/tmp/foo.toml"));
+        assert_eq!(p, PathBuf::from("/tmp/foo.toml.run_id"));
+    }
+
+    #[test]
+    fn path_for_without_extension() {
+        let p = path_for(Path::new("/tmp/foo"));
+        assert_eq!(p, PathBuf::from("/tmp/foo.run_id"));
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = std::env::temp_dir();
+        let cfg = dir.join("orbien_runid_test.toml");
+        save(&cfg, "ebe14e38ff3f4073").unwrap();
+        assert_eq!(load(&cfg), "ebe14e38ff3f4073");
+        std::fs::remove_file(path_for(&cfg)).ok();
+    }
+
+    #[test]
+    fn load_rejects_invalid() {
+        let dir = std::env::temp_dir();
+        let cfg = dir.join("orbien_runid_invalid.toml");
+        // Write a value with invalid chars (space) directly to the run_id file.
+        let p = path_for(&cfg);
+        std::fs::write(&p, "has space here").unwrap();
+        assert_eq!(load(&cfg), "");
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn load_missing_returns_empty() {
+        let cfg = Path::new("/nonexistent/dir/config.toml");
+        assert_eq!(load(cfg), "");
+    }
+}
