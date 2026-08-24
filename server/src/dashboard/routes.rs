@@ -54,6 +54,7 @@ pub fn router(state: Arc<DashState>) -> Router {
         .route("/api/v1/system/info", get(system_info))
         .route("/api/v1/system/traffic", get(system_traffic))
         .route("/api/v1/system/tokens", get(system_token_metrics))
+        .route("/metrics", get(prometheus_metrics))
         .route("/api/v1/clients", get(list_clients))
         .route("/api/v1/clients/{run_id}", get(get_client))
         .route("/api/v1/clients/{run_id}/kick", post(kick_client))
@@ -483,4 +484,66 @@ fn content_type(path: &str) -> &'static str {
 
 fn bytes_response(content_type: &'static str, body: Vec<u8>) -> Response {
     (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], body).into_response()
+}
+
+/// Prometheus text exposition endpoint (`/metrics`).
+///
+/// Exposes the same aggregate metrics surfaced by the dashboard in the
+/// standard Prometheus text format so operators can scrape the server
+/// directly (e.g. via prometheus.yml `metrics_path: /metrics`).
+async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
+    let snap = state.svc.dashboard_snapshot().await;
+
+    let mut out = String::new();
+    out.push_str("# HELP orbien_clients_online Current number of online clients.\n");
+    out.push_str("# TYPE orbien_clients_online gauge\n");
+    out.push_str(&format!("orbien_clients_online {}\n", snap.clients.len()));
+    out.push_str("# HELP orbien_clients_total Total clients seen.\n");
+    out.push_str("# TYPE orbien_clients_total gauge\n");
+    out.push_str(&format!("orbien_clients_total {}\n", snap.total_client_counts));
+    out.push_str("# HELP orbien_connections_current Current active connections.\n");
+    out.push_str("# TYPE orbien_connections_current gauge\n");
+    out.push_str(&format!("orbien_connections_current {}\n", snap.cur_conns));
+    out.push_str("# HELP orbien_traffic_in_bytes_total Total bytes received.\n");
+    out.push_str("# TYPE orbien_traffic_in_bytes_total counter\n");
+    out.push_str(&format!("orbien_traffic_in_bytes_total {}\n", snap.total_traffic_in));
+    out.push_str("# HELP orbien_traffic_out_bytes_total Total bytes sent.\n");
+    out.push_str("# TYPE orbien_traffic_out_bytes_total counter\n");
+    out.push_str(&format!("orbien_traffic_out_bytes_total {}\n", snap.total_traffic_out));
+
+    // Per-proxy gauges.
+    out.push_str("# HELP orbien_proxy_connections_current Current connections per proxy.\n");
+    out.push_str("# TYPE orbien_proxy_connections_current gauge\n");
+    for p in &snap.proxies {
+        let name = prom_escape(&p.name);
+        out.push_str(&format!(
+            "orbien_proxy_connections_current{{proxy=\"{name}\",type=\"{}\"}} {}\n",
+            prom_escape(&p.proxy_type),
+            p.cur_conns
+        ));
+    }
+
+    // Per-proxy traffic counters.
+    out.push_str("# HELP orbien_proxy_traffic_in_bytes_total Total bytes received per proxy.\n");
+    out.push_str("# TYPE orbien_proxy_traffic_in_bytes_total counter\n");
+    out.push_str("# HELP orbien_proxy_traffic_out_bytes_total Total bytes sent per proxy.\n");
+    out.push_str("# TYPE orbien_proxy_traffic_out_bytes_total counter\n");
+    for p in &snap.proxies {
+        let name = prom_escape(&p.name);
+        out.push_str(&format!(
+            "orbien_proxy_traffic_in_bytes_total{{proxy=\"{name}\"}} {}\n",
+            p.today_traffic_in
+        ));
+        out.push_str(&format!(
+            "orbien_proxy_traffic_out_bytes_total{{proxy=\"{name}\"}} {}\n",
+            p.today_traffic_out
+        ));
+    }
+
+    bytes_response("text/plain; version=0.0.4; charset=utf-8", out.into_bytes())
+}
+
+/// Escape a label value for Prometheus text format.
+fn prom_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }

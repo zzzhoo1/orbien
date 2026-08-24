@@ -264,4 +264,44 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["code"], 200);
     }
+
+    // ── GET /metrics (Prometheus) ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn prometheus_metrics_exposes_expected_series() {
+        let state = make_state();
+        let app = routes::router(Arc::clone(&state)).layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            crate::dashboard::auth::auth_middleware,
+        ));
+        let req = Request::get("/metrics").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.expect("oneshot");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ctype = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(ctype.contains("text/plain"), "expected text/plain, got {ctype}");
+        let bytes = resp
+            .into_body()
+            .collect()
+            .await
+            .expect("body collect")
+            .to_bytes();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        // Core aggregate series must be present.
+        for series in [
+            "orbien_clients_online",
+            "orbien_clients_total",
+            "orbien_connections_current",
+            "orbien_traffic_in_bytes_total",
+            "orbien_traffic_out_bytes_total",
+        ] {
+            assert!(
+                text.contains(series),
+                "missing series {series} in /metrics output"
+            );
+        }
+    }
 }
