@@ -56,3 +56,50 @@ assetsDir = "/path/to/dist"
 
 Monitor 页会展示每个 token 的活跃控制连接数，以及 `allowed_tunnels`、`allowed_protocols`、`allowed_remote_ports`。配置了策略但当前没有连接的 token 也会列出。
 
+## Prometheus 监控
+
+服务端内置 Prometheus 指标端点 `GET /metrics`，以标准文本格式暴露监控指标，可直接被 Prometheus / Grafana 抓取。
+
+```shell
+curl http://SERVER_IP:8020/metrics
+```
+
+返回示例：
+
+```text
+# HELP orbien_clients_online Current number of online clients.
+# TYPE orbien_clients_online gauge
+orbien_clients_online 3
+# HELP orbien_traffic_in_bytes_total Total bytes received.
+# TYPE orbien_traffic_in_bytes_total counter
+orbien_traffic_in_bytes_total 12345678
+# HELP orbien_proxy_connections_current Current connections per proxy.
+# TYPE orbien_proxy_connections_current gauge
+orbien_proxy_connections_current{proxy="web",type="http"} 5
+```
+
+### 指标列表
+
+| 指标 | 类型 | 说明 |
+|------|------|------|
+| `orbien_clients_online` | gauge | 当前在线客户端数 |
+| `orbien_clients_total` | gauge | 累计见过的客户端数 |
+| `orbien_connections_current` | gauge | 当前活跃连接数 |
+| `orbien_traffic_in_bytes_total` | counter | 累计接收字节数 |
+| `orbien_traffic_out_bytes_total` | counter | 累计发送字节数 |
+| `orbien_proxy_connections_current{proxy,type}` | gauge | 按代理的当前连接数 |
+| `orbien_proxy_traffic_in_bytes_total{proxy}` | counter | 按代理的累计接收字节数 |
+| `orbien_proxy_traffic_out_bytes_total{proxy}` | counter | 按代理的累计发送字节数 |
+
+### Prometheus 抓取配置
+
+```yaml
+scrape_configs:
+  - job_name: "orbien"
+    static_configs:
+      - targets: ["SERVER_IP:8020"]
+    metrics_path: /metrics
+```
+
+> 注意：`/metrics` 与 dashboard 共用同一 Web 服务端口。若配置了 Basic Auth，抓取时需提供凭据（可通过 `basic_auth` 字段或反向代理注入）。
+
