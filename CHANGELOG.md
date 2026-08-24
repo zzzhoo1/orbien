@@ -8,6 +8,7 @@
 - 为 `orbien-core` 与 `orbien-client` 补充单元测试（配置解析、限流、消息编解码、代理协议、X-Forwarded-For、run_id、HTTPS2HTTP 请求改写），工作区测试总数从 28 增至 81。
 - 新增 Prometheus 指标端点 `GET /metrics`，以标准文本格式暴露客户端数、连接数、总流量与按代理的流量/连接数，便于直接抓取监控。
 - 文档：dashboard 页新增 Prometheus 监控章节（指标列表与抓取配置）；新增《故障排查》指南。
+- 安全：dashboard Web 服务新增安全响应头中间件（HSTS、X-Frame-Options、X-Content-Type-Options、Referrer-Policy）。
 
 ## [0.1.0] - 2026-08-24
 

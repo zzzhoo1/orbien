@@ -2,6 +2,7 @@ pub(crate) mod auth;
 pub(crate) mod auth_routes;
 pub(crate) mod model;
 mod routes;
+mod security;
 #[cfg(test)]
 mod routes_test;
 
@@ -48,6 +49,7 @@ pub async fn run(svc: Arc<Service>, cfg: WebServerConfig) -> Result<()> {
 
     let app = routes::router(state.clone())
         .layer(middleware::from_fn_with_state(state, auth::auth_middleware))
+        .layer(middleware::from_fn(security::security_headers))
         .into_make_service();
 
     axum::serve(listener, app).await?;
