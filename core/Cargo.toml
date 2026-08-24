@@ -33,3 +33,10 @@ futures = { workspace = true }
 futures-util = { workspace = true }
 kcp-tokio = { workspace = true }
 yamux = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "msg_codec"
+harness = false
