@@ -193,6 +193,12 @@ pub struct WebServerConfig {
     pub webauthn_rp_id: String,
     #[serde(default, rename = "webauthnOrigin", alias = "webauthn_origin")]
     pub webauthn_origin: String,
+    /// Explicitly disable authentication for testing purposes.
+    /// When false (default), at least one of user/password or a valid session is required.
+    /// When true, all requests are allowed through without authentication.
+    /// WARNING: Only enable this in trusted environments (e.g., testing, localhost).
+    #[serde(default, rename = "disableAuth", alias = "disable_auth")]
+    pub disable_auth: bool,
 }
 
 impl WebServerConfig {

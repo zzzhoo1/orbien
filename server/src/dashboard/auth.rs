@@ -264,8 +264,20 @@ pub async fn auth_middleware(
     }
 
     // 2. Fall back to Basic Auth (for backward compatibility)
-    if !needs_basic_auth(&state) {
+    // If authentication is explicitly disabled (testing only), allow through
+    if state.cfg.disable_auth {
         return Ok(next.run(req).await);
+    }
+    
+    // Otherwise, require valid Basic Auth credentials
+    if !needs_basic_auth(&state) {
+        // No credentials configured and auth not explicitly disabled → reject
+        let mut res = (StatusCode::UNAUTHORIZED, "authentication required: configure user/password or set disableAuth=true").into_response();
+        res.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Basic realm=\"Restricted\""),
+        );
+        return Err(res);
     }
     if basic_auth_ok(&state, req.headers()) {
         return Ok(next.run(req).await);

@@ -36,6 +36,13 @@ assetsDir = "/path/to/dist"
 | `webServer.user`      | 否  |             | Basic Auth 用户名       |
 | `webServer.password`  | 否  |             | Basic Auth 密码        |
 | `webServer.assetsDir` | 否  |             | 静态资源目录；空则使用内置前端      |
+| `webServer.disableAuth` | 否  | `false`     | 禁用认证（仅用于测试）      |
+
+:::warning 安全提示
+- 必须配置 `user` 和 `password` 以保护管理界面
+- 如果两者都为空且未设置 `disableAuth=true`，所有请求将被拒绝
+- `disableAuth=true` 仅应在测试环境中使用，生产环境必须配置认证
+:::
 
 ## 命令行
 

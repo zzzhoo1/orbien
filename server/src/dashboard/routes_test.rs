@@ -3,8 +3,8 @@
 //! Strategy
 //! --------
 //! * Build the axum `Router` directly via `routes::router()` — no TCP socket.
-//! * Set `WebServerConfig { user: "", password: "" }` so `needs_basic_auth`
-//!   returns false and the auth middleware passes every request through.
+//! * Set `WebServerConfig { disable_auth: true }` so the auth middleware
+//!   passes every request through without requiring credentials.
 //! * Use `tower::ServiceExt::oneshot` to drive individual requests.
 //! * All assertions are JSON-level (serde_json), not string-matching.
 //! * `Service::new(ServerConfig::default())` is safe in CI: when cert/key
@@ -32,8 +32,8 @@ mod tests {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /// Build a minimal `DashState` backed by an in-memory `Service`.
-    /// `user` and `password` are intentionally empty so the auth middleware
-    /// treats every request as authenticated (no Basic-Auth challenge).
+    /// `disable_auth` is set to true so the auth middleware treats every
+    /// request as authenticated (no Basic-Auth challenge).
     fn make_state() -> Arc<DashState> {
         let cfg = ServerConfig::default();
         let svc = Arc::new(Service::new(cfg).expect("Service::new"));
@@ -42,6 +42,7 @@ mod tests {
             port: 0,
             user: String::new(),
             password: String::new(),
+            disable_auth: true,
             ..Default::default()
         };
         let auth = Some(Arc::new(AuthState::session_only()));
@@ -263,5 +264,29 @@ mod tests {
         let (status, json) = call(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["code"], 200);
+    }
+
+    // ── auth middleware: empty credentials without disable_auth are rejected ──
+
+    #[tokio::test]
+    async fn auth_middleware_rejects_empty_credentials_without_disable_auth() {
+        let cfg = ServerConfig::default();
+        let svc = Arc::new(Service::new(cfg).expect("Service::new"));
+        let web_cfg = WebServerConfig {
+            addr: "127.0.0.1".into(),
+            port: 0,
+            user: String::new(),
+            password: String::new(),
+            disable_auth: false, // explicitly false (default)
+            ..Default::default()
+        };
+        let state = Arc::new(DashState {
+            svc,
+            cfg: web_cfg,
+            auth: Some(Arc::new(AuthState::session_only())),
+        });
+        let req = Request::get("/api/v1/clients").body(Body::empty()).unwrap();
+        let (status, _) = call(state, req).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 }
