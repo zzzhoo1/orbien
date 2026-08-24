@@ -9,6 +9,7 @@
 - 新增 Prometheus 指标端点 `GET /metrics`，以标准文本格式暴露客户端数、连接数、总流量与按代理的流量/连接数，便于直接抓取监控。
 - 文档：dashboard 页新增 Prometheus 监控章节（指标列表与抓取配置）；新增《故障排查》指南。
 - 安全：dashboard Web 服务新增安全响应头中间件（HSTS、X-Frame-Options、X-Content-Type-Options、Referrer-Policy）。
+- 性能：为 `orbien-core` 新增 Criterion 基准测试 `cargo bench -p orbien-core`（消息编解码往返基线，login/ping/udp）。
 
 ## [0.1.0] - 2026-08-24
 
