@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # E2E - 06: Dashboard API
-# Case 1: anonymous access denied (401/403/302)
-# Case 2: authenticated access returns 200 + valid JSON
-# Case 3: proxy list endpoint returns valid JSON (or skipped if not available)
+# Config: dashboard lives under [webServer], NOT dashboardAddr/dashboardPort.
+# Auth:   POST /api/v1/auth/login -> session cookie; NOT Basic Auth.
+# Case 1: anonymous access to /api/v1/system/info -> 401
+# Case 2: login then access /api/v1/system/info -> 200 + valid JSON
+# Case 3: /api/v1/proxies -> 200 + valid JSON
 set -Eeuo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/common.sh"
@@ -11,14 +13,17 @@ SERVER_PORT=49532
 DASHBOARD_PORT=49533
 DB_USER="${DASHBOARD_USER:-admin}"
 DB_PASS="${DASHBOARD_PASSWORD:-admin}"
+COOKIE_JAR="$RUN_DIR/dashboard-cookies.txt"
 
 cat >"$RUN_DIR/server-dashboard.toml" <<EOF
-bindAddr      = "127.0.0.1"
-bindPort      = $SERVER_PORT
-dashboardAddr = "127.0.0.1"
-dashboardPort = $DASHBOARD_PORT
-dashboardUser = "$DB_USER"
-dashboardPwd  = "$DB_PASS"
+bindAddr = "127.0.0.1"
+bindPort = $SERVER_PORT
+
+[webServer]
+addr     = "127.0.0.1"
+port     = $DASHBOARD_PORT
+user     = "$DB_USER"
+password = "$DB_PASS"
 EOF
 
 start_bg "$LOG_DIR/server-dashboard.log" \
@@ -28,7 +33,7 @@ wait_tcp 127.0.0.1 $DASHBOARD_PORT
 
 base="http://127.0.0.1:$DASHBOARD_PORT"
 
-# --- Case 1: anonymous denied ---
+# --- Case 1: anonymous access must be denied ---
 anon_status="$(curl -sS -o /dev/null -w '%{http_code}' \
   "$base/api/v1/system/info" || true)"
 case "$anon_status" in
@@ -36,23 +41,46 @@ case "$anon_status" in
   *) echo "FAIL: anonymous access returned $anon_status"; exit 1 ;;
 esac
 
-# --- Case 2: authenticated access ---
-auth_status="$(curl -sS -u "$DB_USER:$DB_PASS" \
+# --- Case 2: login then access system/info ---
+login_status="$(curl -sS \
+  -c "$COOKIE_JAR" \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$DB_USER\",\"password\":\"$DB_PASS\"}" \
+  -o "$RUN_DIR/dashboard-login.json" \
+  -w '%{http_code}' \
+  "$base/api/v1/auth/login" || true)"
+if [[ "$login_status" != "200" ]]; then
+  echo "FAIL: login returned $login_status"
+  cat "$RUN_DIR/dashboard-login.json" >&2 || true
+  exit 1
+fi
+echo "Login PASS (status=$login_status)"
+
+info_status="$(curl -sS \
+  -b "$COOKIE_JAR" \
   -o "$RUN_DIR/dashboard-info.json" \
   -w '%{http_code}' \
   "$base/api/v1/system/info" || true)"
-if [[ "$auth_status" != "200" ]]; then
-  echo "FAIL: authenticated /api/v1/system/info returned $auth_status"; exit 1
+if [[ "$info_status" != "200" ]]; then
+  echo "FAIL: /api/v1/system/info returned $info_status after login"
+  cat "$RUN_DIR/dashboard-info.json" >&2 || true
+  exit 1
 fi
 jq empty "$RUN_DIR/dashboard-info.json"
 echo "Case 2 PASS: authenticated access OK"
 
-# --- Case 3: proxy list ---
-curl -fsS -u "$DB_USER:$DB_PASS" \
-  "$base/api/v1/proxy/tcp" \
-  -o "$RUN_DIR/dashboard-proxies.json" 2>/dev/null && \
-  jq empty "$RUN_DIR/dashboard-proxies.json" && \
-  echo "Case 3 PASS: proxy list valid JSON" || \
-  echo "Case 3 SKIP: proxy list endpoint not available"
+# --- Case 3: proxy list returns valid JSON ---
+proxy_status="$(curl -sS \
+  -b "$COOKIE_JAR" \
+  -o "$RUN_DIR/dashboard-proxies.json" \
+  -w '%{http_code}' \
+  "$base/api/v1/proxies" || true)"
+if [[ "$proxy_status" == "200" ]]; then
+  jq empty "$RUN_DIR/dashboard-proxies.json"
+  echo "Case 3 PASS: proxy list valid JSON"
+else
+  echo "Case 3 SKIP: /api/v1/proxies returned $proxy_status"
+fi
 
 echo "=== DASHBOARD E2E PASS ==="
