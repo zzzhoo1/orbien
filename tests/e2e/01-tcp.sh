@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# E2E - 01: TCP tunnel
+set -Eeuo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/common.sh"
+
+SERVER_PORT=49527
+CLIENT_ECHO_LOCAL=49600
+CLIENT_ECHO_REMOTE=49601
+
+cat >"$RUN_DIR/server-tcp.toml" <<EOF
+bindAddr = "127.0.0.1"
+bindPort = $SERVER_PORT
+EOF
+
+cat >"$RUN_DIR/client-tcp.toml" <<EOF
+serverAddr = "127.0.0.1"
+serverPort = $SERVER_PORT
+
+[[proxies]]
+name       = "tcp-e2e"
+type       = "tcp"
+localIp    = "127.0.0.1"
+localPort  = $CLIENT_ECHO_LOCAL
+remotePort = $CLIENT_ECHO_REMOTE
+EOF
+
+start_bg "$LOG_DIR/server-tcp.log" \
+  "$BIN_DIR/orbien-server" -c "$RUN_DIR/server-tcp.toml"
+wait_tcp 127.0.0.1 $SERVER_PORT
+
+start_bg "$LOG_DIR/tcp-upstream.log" \
+  python3 "$script_dir/tcp_echo.py" 127.0.0.1 $CLIENT_ECHO_LOCAL
+wait_tcp 127.0.0.1 $CLIENT_ECHO_LOCAL
+
+start_bg "$LOG_DIR/client-tcp.log" \
+  "$BIN_DIR/orbien" -c "$RUN_DIR/client-tcp.toml"
+
+# Wait for tunnel remote port to open
+wait_tcp 127.0.0.1 $CLIENT_ECHO_REMOTE 30
+
+python3 "$script_dir/tcp_check.py" 127.0.0.1 $CLIENT_ECHO_REMOTE
+echo "=== TCP E2E PASS ==="
