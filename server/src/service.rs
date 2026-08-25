@@ -563,7 +563,7 @@ impl Service {
         let mut proxy_type_count: BTreeMap<String, usize> = BTreeMap::new();
         let mut online_ids = std::collections::HashSet::new();
 
-        for (_, ctrl) in controls.iter() {
+        for ctrl in controls.values() {
             let proxy_count = ctrl.proxy_count().await;
             online_ids.insert(ctrl.run_id.clone());
             let mut cur_conns = 0usize;

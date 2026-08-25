@@ -75,6 +75,7 @@ async fn redirect_legacy_static(Path(path): Path<String>) -> Redirect {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::result_large_err)] // axum middleware requires the exact `Response` error type
 pub async fn basic_auth(
     state: axum::extract::State<Arc<DashState>>,
     req: Request<Body>,

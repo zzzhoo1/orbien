@@ -237,6 +237,7 @@ fn random_token() -> String {
 
 /// Checks for a valid session cookie **or** falls back to HTTP Basic Auth.
 /// The `/api/v1/auth/*` routes and `/healthz` are always public.
+#[allow(clippy::result_large_err)] // axum middleware requires the exact `Response` error type
 pub async fn auth_middleware(
     State(state): State<Arc<DashState>>,
     req: Request<Body>,
