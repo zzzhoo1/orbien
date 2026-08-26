@@ -1,5 +1,6 @@
 use crate::control::{Control, SessionEnd};
 use crate::handle::ClientStatus;
+use crate::sanitize::sanitize_for_logging;
 use crate::session_id;
 use anyhow::Result;
 use orbien_core::config::ClientConfig;
@@ -75,12 +76,13 @@ impl Service {
                     session_id: rid,
                     reason,
                 }) => {
+                    let safe_reason = sanitize_for_logging(&reason);
                     tracing::warn!(
                         session_id = %rid,
-                        %reason,
+                        reason = %safe_reason,
                         "kicked by server — stopping (no reconnect)"
                     );
-                    on_log(format!("WARN  kicked by server: {reason}"));
+                    on_log(format!("WARN  kicked by server: {safe_reason}"));
                     return Ok(());
                 }
                 Ok(SessionEnd::Disconnected { session_id: rid }) => {

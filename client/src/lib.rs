@@ -2,6 +2,7 @@ mod connector;
 mod control;
 mod handle;
 mod plugin;
+mod sanitize;
 mod service;
 mod session_id;
 mod tunnel;

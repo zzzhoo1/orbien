@@ -292,6 +292,11 @@ pub fn extract_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
     None
 }
 
+/// Determine whether cookies should carry the `Secure` flag.
+///
+/// Uses the **rightmost** (last) value of `X-Forwarded-Proto` so that a
+/// client-injected leftmost `"http"` entry cannot suppress the flag when
+/// the actual proxy hop is HTTPS.
 pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
     if let Some(proto) = headers
         .get("x-forwarded-proto")
@@ -299,7 +304,7 @@ pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
     {
         return proto
             .split(',')
-            .next()
+            .last()
             .unwrap_or("")
             .trim()
             .eq_ignore_ascii_case("https");
@@ -387,13 +392,104 @@ fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
     credentials_match(&state.cfg.user, &state.cfg.password, u, p)
 }
 
+/// Extract a client identifier for rate-limiting.
+///
+/// Uses the **rightmost** (last) IP in `X-Forwarded-For` — the most recent
+/// proxy hop — so an attacker cannot bypass rate limits by prepending
+/// arbitrary IPs to the left side of the chain.
 pub fn client_key(headers: &axum::http::HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
+        .and_then(|v| v.split(',').last())
         .map(str::trim)
         .filter(|v| v.parse::<IpAddr>().is_ok())
         .unwrap_or("direct")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn client_key_no_header() {
+        let headers = HeaderMap::new();
+        assert_eq!(client_key(&headers), "direct");
+    }
+
+    #[test]
+    fn client_key_single_ip() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "192.168.1.1".parse().unwrap());
+        assert_eq!(client_key(&h), "192.168.1.1");
+    }
+
+    #[test]
+    fn client_key_multi_hop_uses_rightmost() {
+        let mut h = HeaderMap::new();
+        // Attacker prepends "1.2.3.4"; proxy appends "203.0.113.5".
+        h.insert("x-forwarded-for", "1.2.3.4, 203.0.113.5".parse().unwrap());
+        assert_eq!(client_key(&h), "203.0.113.5");
+    }
+
+    #[test]
+    fn client_key_attacker_cannot_bypass_rate_limit() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "10.0.0.1, 203.0.113.5".parse().unwrap());
+        assert_eq!(client_key(&h), "203.0.113.5");
+        h.insert("x-forwarded-for", "10.0.0.2, 203.0.113.5".parse().unwrap());
+        assert_eq!(client_key(&h), "203.0.113.5");
+    }
+
+    #[test]
+    fn client_key_rightmost_invalid_falls_back() {
+        // Rightmost is invalid → filter rejects it → falls back to "direct".
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "203.0.113.5, invalid".parse().unwrap());
+        assert_eq!(client_key(&h), "direct");
+    }
+
+    #[test]
+    fn client_key_all_invalid() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "bad, also-bad".parse().unwrap());
+        assert_eq!(client_key(&h), "direct");
+    }
+
+    #[test]
+    fn client_key_trims_spaces() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "1.2.3.4 ,  203.0.113.5  ".parse().unwrap());
+        assert_eq!(client_key(&h), "203.0.113.5");
+    }
+
+    #[test]
+    fn cookie_secure_no_header_http() {
+        let h = HeaderMap::new();
+        assert!(!cookie_secure(&h, "http://example.com"));
+    }
+
+    #[test]
+    fn cookie_secure_no_header_https() {
+        let h = HeaderMap::new();
+        assert!(cookie_secure(&h, "https://example.com"));
+    }
+
+    #[test]
+    fn cookie_secure_uses_rightmost_proto() {
+        let mut h = HeaderMap::new();
+        // Client sends "http"; trusted proxy appends "https".
+        h.insert("x-forwarded-proto", "http, https".parse().unwrap());
+        assert!(cookie_secure(&h, "http://example.com"));
+    }
+
+    #[test]
+    fn cookie_secure_attacker_cannot_downgrade() {
+        let mut h = HeaderMap::new();
+        // Attacker injects "http" at leftmost; proxy appends "https".
+        h.insert("x-forwarded-proto", "http, https".parse().unwrap());
+        assert!(cookie_secure(&h, "http://example.com"));
+    }
 }

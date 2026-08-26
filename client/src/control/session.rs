@@ -1,4 +1,5 @@
 use crate::connector::{build_connector, Connector};
+use crate::sanitize::sanitize_for_logging;
 use crate::session_id;
 use crate::tunnel::TunnelManager;
 use anyhow::{anyhow, Result};
@@ -84,9 +85,6 @@ impl Control {
 
         msg::write_msg(&mut stream, &Message::Login(login)).await?;
 
-        // Explicit match so an EOF here (e.g. server rejects due to TLS/auth
-        // mismatch and closes the connection) produces an actionable message
-        // instead of a raw rustls "peer closed connection without close_notify".
         let resp = match msg::read_msg(&mut stream).await {
             Ok(Message::LoginResp(r)) => r,
             Ok(other) => {
@@ -195,33 +193,16 @@ impl Control {
             }
             let msg = match p.protocol.as_str() {
                 "tcp" => Message::NewTunnel(new_tunnel_base(
-                    &p.name,
-                    "tcp",
-                    p.remote_port as i32,
-                    &local_ip,
-                    local_port,
-                    &p.transport,
-                    p.max_connections,
-                    |_| {},
+                    &p.name, "tcp", p.remote_port as i32,
+                    &local_ip, local_port, &p.transport, p.max_connections, |_| {},
                 )),
                 "udp" => Message::NewTunnel(new_tunnel_base(
-                    &p.name,
-                    "udp",
-                    p.remote_port as i32,
-                    &local_ip,
-                    local_port,
-                    &p.transport,
-                    p.max_connections,
-                    |_| {},
+                    &p.name, "udp", p.remote_port as i32,
+                    &local_ip, local_port, &p.transport, p.max_connections, |_| {},
                 )),
                 "http" => Message::NewTunnel(new_tunnel_base(
-                    &p.name,
-                    "http",
-                    0,
-                    &local_ip,
-                    local_port,
-                    &p.transport,
-                    p.max_connections,
+                    &p.name, "http", 0, &local_ip, local_port,
+                    &p.transport, p.max_connections,
                     |np| {
                         np.domains = p.domains.clone();
                         np.locations = p.locations.clone();
@@ -232,16 +213,9 @@ impl Control {
                     },
                 )),
                 "https" => Message::NewTunnel(new_tunnel_base(
-                    &p.name,
-                    "https",
-                    0,
-                    &local_ip,
-                    local_port,
-                    &p.transport,
-                    p.max_connections,
-                    |np| {
-                        np.domains = p.domains.clone();
-                    },
+                    &p.name, "https", 0, &local_ip, local_port,
+                    &p.transport, p.max_connections,
+                    |np| { np.domains = p.domains.clone(); },
                 )),
                 other => {
                     tracing::warn!(name = %p.name, protocol = %other, "skip unsupported tunnel protocol");
@@ -252,28 +226,20 @@ impl Control {
             msg::write_msg(&mut *writer, &msg).await?;
             match p.protocol.as_str() {
                 "tcp" => tracing::info!(
-                    name = %p.name,
-                    service = %p.service,
-                    remote_port = p.remote_port,
-                    "sent NewTunnel"
+                    name = %p.name, service = %p.service,
+                    remote_port = p.remote_port, "sent NewTunnel"
                 ),
                 "udp" => tracing::info!(
-                    name = %p.name,
-                    service = %p.service,
-                    remote_port = p.remote_port,
-                    "sent NewTunnel udp"
+                    name = %p.name, service = %p.service,
+                    remote_port = p.remote_port, "sent NewTunnel udp"
                 ),
                 "http" => tracing::info!(
-                    name = %p.name,
-                    service = %p.service,
-                    domains = ?p.domains,
-                    "sent NewTunnel http"
+                    name = %p.name, service = %p.service,
+                    domains = ?p.domains, "sent NewTunnel http"
                 ),
                 "https" => tracing::info!(
-                    name = %p.name,
-                    service = %p.service,
-                    domains = ?p.domains,
-                    "sent NewTunnel https"
+                    name = %p.name, service = %p.service,
+                    domains = ?p.domains, "sent NewTunnel https"
                 ),
                 _ => {}
             }
@@ -297,9 +263,6 @@ impl Control {
                 } => {
                     match msg {
                         Ok(m) => m,
-                        // EOF without TLS close_notify: treat as clean disconnect.
-                        // Per rustls docs, this is safe when the application protocol
-                        // (our framed msgpack) already provides message-length framing.
                         Err(e) if is_unexpected_eof(&e) => {
                             tracing::debug!(
                                 "control stream closed (unexpected EOF treated as clean disconnect)"
@@ -313,7 +276,8 @@ impl Control {
 
             match msg {
                 Message::KickOut(k) => {
-                    tracing::warn!(reason = %k.reason, "kicked by server — will exit");
+                    let safe_reason = sanitize_for_logging(&k.reason);
+                    tracing::warn!(reason = %safe_reason, "kicked by server — will exit");
                     return Ok(ReaderEnd::Kicked(k.reason));
                 }
                 Message::ReqDataConn(_) => {
@@ -477,9 +441,6 @@ enum ReaderEnd {
     Kicked(String),
 }
 
-/// Returns true if the error represents an EOF without TLS close_notify.
-/// Per rustls documentation, this can be safely treated as a clean shutdown
-/// when the application protocol uses length-framed messages (as we do).
 fn is_unexpected_eof(e: &MessageReadError) -> bool {
     use std::io::ErrorKind;
     match e {
@@ -507,7 +468,6 @@ fn hostname() -> String {
             return s;
         }
     }
-
     ["HOSTNAME", "COMPUTERNAME", "HOST"]
         .into_iter()
         .find_map(|k| std::env::var(k).ok())
