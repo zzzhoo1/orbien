@@ -1,10 +1,13 @@
 <div align="center">
   <img src="docs/static/img/logo.png" alt="Logo" width="180" height="180" style="border-radius:24px;margin-bottom:20px;"/>
 </div>
-<p align="center" style="font-size:18px;color:#555;margin-top:-10px;margin-bottom:24px;">
-  ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/zzzhoo1/orbien?utm_source=oss&utm_medium=github&utm_campaign=zzzhoo1%2Forbien&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
-  NAT traversal built with Rust and Tokio
-</p>
+<div align="center">
+
+[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/zzzhoo1/orbien?utm_source=oss&utm_medium=github&utm_campaign=zzzhoo1%2Forbien&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
+
+NAT traversal built with Rust and Tokio
+
+</div>
 <div align="center">
   <a href="https://github.com/zzzhoo1/orbien/stargazers">
     <img src="https://img.shields.io/github/stars/zzzhoo1/orbien?style=for-the-badge&logo=github" alt="GitHub Stars"/>
@@ -33,7 +36,7 @@
 </div>
 
 <div align="center">
-  <a href="https://trendshift.io/repositories/128255?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-128255" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/128255/daily?language=Rust" alt="orbien-org%2Forbien | Trendshift" width="250" height="55"/></a>
+  <a href="https://trendshift.io/repositories/128255?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-128255" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/128255/daily?language=Rust" alt="orbien-org%2Forbien | Trendshift" width="250" height="55"/></a>
 </div>
 
 <div align="center">
@@ -50,7 +53,7 @@ A lightweight, high-performance, and secure intranet penetration tool with a bin
 ## Features
 
 - **High performance**: high performance, packet-loss resilient, high throughput, no GC pauses, and low memory usage
-- **Tunnel protocols**: TCP, UDP, HTTP, HTTPS,SOCKS5 and more
+- **Tunnel protocols**: TCP, UDP, HTTP, HTTPS, SOCKS5 and more
 - **Transport protocols**: TCP, KCP, WebSocket, QUIC, with TCP multiplexing support
 - **Security**: Token-based tunnel authentication, TLS and mTLS encryption; HTTPS supports transparent forwarding and client-side TLS termination
 - **Cross-platform**: Windows, Linux, macOS, FreeBSD, and more
@@ -58,7 +61,7 @@ A lightweight, high-performance, and secure intranet penetration tool with a bin
 
 ## Quick Start
 
-[Download](https://github.com/orbien-org/orbien/tags) the binary archive for your platform and extract it.
+[Download](https://github.com/zzzhoo1/orbien/releases) the binary archive for your platform and extract it.
 
 ### Server
 
@@ -94,12 +97,11 @@ If you prefer not to use the CLI, try the [Orbien-Desktop](https://github.com/zz
 
 ## Benchmark
 
-
 | Env | Details |
 |-----|---------|
 | Platform | macOS 26.2 · Darwin 25.2.0 · arm64 |
 | Hardware | Apple M2 (8 cores) · 16 GB |
-| Details | [benchmarks](https://github.com/orbien-org/benchmarks) |
+| Details | [benchmarks](https://github.com/zzzhoo1/benchmarks) |
 
 To rule out various sources of interference, these benchmarks were run on local loopback. Compared with `frp`, Orbien's clearest advantage is lower and steadier memory usage under high concurrency.
 
@@ -113,9 +115,9 @@ To rule out various sources of interference, these benchmarks were run on local 
 
 ## License
 
-- [Apache License 2.0](https://github.com/orbien-org/orbien/blob/main/LICENSE)
+- [Apache License 2.0](https://github.com/zzzhoo1/orbien/blob/main/LICENSE)
 
 ## Contact
 
-- Issues: [issues](https://github.com/orbien-org/orbien/issues)
+- Issues: [issues](https://github.com/zzzhoo1/orbien/issues)
 - Community: [discord](https://discord.com/invite/4dgQjCS3k)

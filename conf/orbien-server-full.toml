@@ -10,9 +10,23 @@ rootDomain = "example.com"
 proxyAddr = "0.0.0.0"
 udpPacketSize = 1500
 
+# Deny inbound connections from these source CIDRs (blocklist).
+# denySrcCidrs = ["10.0.0.0/8", "192.168.0.0/16"]
+
+# Trust PROXY protocol headers only from these upstream CIDRs.
+# proxyProtocolTrustedCidrs = ["10.0.0.1/32"]
+
 [auth]
 type = "token"
 token = "YOUR_TOKEN"
+
+# Optional: restrict what each token is allowed to do.
+# If token_policies is non-empty, any token NOT listed here is denied.
+# [[auth.token_policies]]
+# token = "client-token-A"
+# allowed_tunnels    = ["ssh", "web"]   # leave empty = no restriction
+# allowed_protocols  = ["tcp", "http"]  # leave empty = no restriction
+# allowed_remote_ports = [9000, 9001]   # leave empty = no restriction
 
 [transport]
 tcpMux = true
@@ -34,6 +48,7 @@ trustedCaFile = "./certs/ca.crt"
 [dashboard]
 addr = "0.0.0.0"
 port = 8020
+# REQUIRED when port > 0: set explicit credentials (no built-in defaults).
 user = "admin"
-password = "123456"
+password = "CHANGE_ME"
 staticDir = ""

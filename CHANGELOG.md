@@ -4,12 +4,30 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-26
+
 ### Added
 - 为 `orbien-core` 与 `orbien-client` 补充单元测试（配置解析、限流、消息编解码、代理协议、X-Forwarded-For、run_id、HTTPS2HTTP 请求改写），工作区测试总数从 28 增至 81。
-- 新增 Prometheus 指标端点 `GET /metrics`，以标准文本格式暴露客户端数、连接数、总流量与按代理的流量/连接数，便于直接抓取监控。
-- 文档：dashboard 页新增 Prometheus 监控章节（指标列表与抓取配置）；新增《故障排查》指南。
+- 新增 Prometheus 指标端点 `GET /metrics`，以标准文本格式暴露客户端数、连接数、总流量与按代理的流量/连接数。
 - 安全：dashboard Web 服务新增安全响应头中间件（HSTS、X-Frame-Options、X-Content-Type-Options、Referrer-Policy）。
-- 性能：为 `orbien-core` 新增 Criterion 基准测试 `cargo bench -p orbien-core`（消息编解码往返基线，login/ping/udp）。
+- 性能：为 `orbien-core` 新增 Criterion 基准测试 `cargo bench -p orbien-core`。
+- 文档：dashboard 页新增 Prometheus 监控章节；新增《故障排查》指南。
+
+### Security
+- **路径穿越防护**（PR #7）：`load_pem_cert_key()` 现在拒绝 `certFile` / `keyFile` 路径中包含 `..` 的配置，防止通过精心构造的 TLS 配置路径读取任意文件。
+- **Proxy 授权 fail-closed**（PR #14）：`authorize_proxy()` 在 `token_policies` 非空时，未列入策略的 token 将被拒绝，不再沿用旧的 fail-open 行为；新增测试覆盖此路径。
+- **X-Forwarded-For / X-Forwarded-Proto 取最右值**（PR #18）：`client_key()` 和 `cookie_secure()` 改为取 header 链最右端可信值，防止攻击者通过在左侧注入伪造 IP 绕过限流或降级 Secure cookie。
+- **日志注入防护**（PR #19）：新增 `client/src/sanitize.rs`，对来自服务端的不可信字符串（KickOut reason 等）在写入日志前清除 `
+`/``、ANSI CSI 转义序列及其他控制字符，防止终端日志注入。
+- **移除硬编码默认 dashboard 凭据**：服务端启动时强制校验 `dashboard.user` 和 `dashboard.password` 均非空（`dashboard.port > 0` 时），不再有内置默认值。
+- **GitHub Actions SHA 固定**（PR #15/#26）：`ci.yml` 和 `release.yml` 中所有第三方 Action 引用替换为不可变 commit SHA，防止供应链攻击。
+- **依赖升级**（PR #24）：`rand 0.8 → 0.10.2`，`tokio-tungstenite 0.26 → 0.30.0`，修复上游安全问题；同步适配 `rand 0.10` API（`RngExt` / `rand::rng`）。
+- **Java 客户端依赖升级**：jackson-databind、jackson-core、spring-core、netty-handler、tomcat 系列（14 个 CVE）均通过 Aikido 修复至安全版本。
+
+### Changed
+- CI `RUST_VERSION` 从 1.88 升至 1.92，与 Slint 1.17.1 MSRV 及 `release.yml` 对齐。
+- Cargo 缓存 key 升至 `v2`，强制刷新旧工具链缓存。
+- CI Linux job 补充 Slint/winit 所需系统依赖（fontconfig、X11、Wayland dev 库）。
 
 ## [0.1.0] - 2026-08-24
 
@@ -56,7 +74,8 @@
 - Orbien v2 核心代码提交
 - README 与文档
 
-[Unreleased]: https://github.com/zzzhoo1/orbien/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zzzhoo1/orbien/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zzzhoo1/orbien/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zzzhoo1/orbien/compare/v0.0.4...v0.1.0
 [0.0.4]: https://github.com/zzzhoo1/orbien/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/zzzhoo1/orbien/releases/tag/v0.0.3
