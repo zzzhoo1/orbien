@@ -635,7 +635,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .init();
 
     let ui = AppWindow::new()?;
-    let _ = ui.global::<Tr>().set_locale_index(ui.get_locale_index());
+    ui.global::<Tr>().set_locale_index(ui.get_locale_index());
     let default_path = config_bridge::default_config_path();
     ui.set_config_file_path(config_bridge::path_display(&default_path).into());
 

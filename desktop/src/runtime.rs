@@ -59,6 +59,6 @@ pub fn stop_async(on_done: impl FnOnce() + Send + 'static) {
     let h = handle();
     runtime().spawn(async move {
         h.stop().await;
-        let _ = slint::invoke_from_event_loop(move || on_done());
+        let _ = slint::invoke_from_event_loop(on_done);
     });
 }

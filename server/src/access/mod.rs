@@ -1,3 +1,8 @@
+// Some access-policy helpers (CIDR checks, proxy-protocol visitors, token
+// connection accounting) are wiring points not yet referenced by every build
+// path; keep them without tripping `-D warnings`.
+#![allow(dead_code)]
+
 use anyhow::{bail, Result};
 use orbien_core::net::{try_consume_proxy_protocol, PpConsume, PROXY_PROTOCOL_MAX_HEADER};
 use orbien_core::tls::PrefixedStream;

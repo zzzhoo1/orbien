@@ -18,6 +18,7 @@ use super::DashState;
 use crate::service::Service;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::middleware;
 use http_body_util::BodyExt;
 use orbien_core::config::{DashboardConfig, ServerConfig};
 use serde_json::Value;
@@ -53,7 +54,11 @@ mod tests {
     }
 
     async fn call(state: Arc<DashState>, req: Request<Body>) -> (StatusCode, Value) {
-        let router = routes::router(state);
+        // Mirror the production wiring in `dashboard::run`: the auth middleware
+        // is attached via `.layer(...)` on top of `routes::router()`. Without it
+        // the auth-rejection tests can never observe a 401.
+        let router = routes::router(state.clone())
+            .layer(middleware::from_fn_with_state(state, crate::dashboard::auth::auth_middleware));
         let resp = router.oneshot(req).await.expect("oneshot");
         let status = resp.status();
         let bytes = resp

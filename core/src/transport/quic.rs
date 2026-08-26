@@ -96,6 +96,7 @@ pub struct QuicSession {
 }
 
 impl QuicSession {
+    #[allow(clippy::too_many_arguments)] // 8 config params; kept flat for direct callers
     pub async fn dial(
         server_addr: SocketAddr,
         server_name: &str,

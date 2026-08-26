@@ -48,6 +48,7 @@ pub struct Control {
 }
 
 impl Control {
+    #[allow(clippy::too_many_arguments)] // Control::new wires many subsystem handles
     pub fn new(
         session_id: String,
         stream: DynStream,

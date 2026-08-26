@@ -96,12 +96,8 @@ fn match_location<'a>(
     route_user: &str,
 ) -> Option<&'a HttpRoute> {
     let list = map.get(host)?.get(route_user)?;
-    for route in list {
-        if path.starts_with(&route.location) {
-            return Some(route);
-        }
-    }
-    None
+    list.iter()
+        .find(|route| path.starts_with(&route.location))
 }
 
 pub fn normalize_host(host: &str) -> String {

@@ -304,7 +304,7 @@ pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
     {
         return proto
             .split(',')
-            .last()
+            .next_back()
             .unwrap_or("")
             .trim()
             .eq_ignore_ascii_case("https");
@@ -401,7 +401,7 @@ pub fn client_key(headers: &axum::http::HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').last())
+        .and_then(|v| v.split(',').next_back())
         .map(str::trim)
         .filter(|v| v.parse::<IpAddr>().is_ok())
         .unwrap_or("direct")

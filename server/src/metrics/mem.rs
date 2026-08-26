@@ -194,6 +194,7 @@ impl MemMetrics {
         }
     }
 
+    #[allow(dead_code)] // reserved accounting API; wired by future proxy paths
     pub fn inc_token_conn(&self, token: &str) {
         let token = token.trim();
         if token.is_empty() {
@@ -204,6 +205,7 @@ impl MemMetrics {
         g.token_conns.entry(token.to_string()).or_default().inc(1);
     }
 
+    #[allow(dead_code)] // reserved accounting API; wired by future proxy paths
     pub fn dec_token_conn(&self, token: &str) {
         let token = token.trim();
         if token.is_empty() {
@@ -297,7 +299,7 @@ impl ServerMetrics for MemMetrics {
         let mut g = self.state.lock().expect("metrics lock");
         g.tunnel_type_counts
             .entry(tunnel_type.to_string())
-            .or_insert_with(Counter::new)
+            .or_default()
             .inc(1);
 
         let now_unix = Local::now().timestamp();

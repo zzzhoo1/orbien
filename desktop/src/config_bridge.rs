@@ -1,3 +1,7 @@
+// Slint UI bridge: these builder functions intentionally take many config
+// fields and build config structs via Default + field assignment.
+#![allow(clippy::too_many_arguments, clippy::field_reassign_with_default)]
+
 use anyhow::{anyhow, Context, Result};
 use orbien_client::ClientConfig;
 use orbien_core::config::{
@@ -291,7 +295,7 @@ fn bandwidth_display(v: f64) -> String {
 }
 
 fn split_csv(raw: &str) -> Vec<String> {
-    raw.split(|c: char| c == ',' || c == ';' || c == '\n')
+    raw.split(['\n', ',', ';'])
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
