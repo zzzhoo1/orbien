@@ -12,6 +12,12 @@ mkdir -p "$RUN_DIR" "$LOG_DIR"
 SERVER_LOG="$LOG_DIR/server.log"
 CLIENT_LOG="$LOG_DIR/client.log"
 
+# Shared auth token for tunnel E2E scripts. The default auth type is
+# "token" and an unconfigured server rejects every client (see
+# core/src/auth/token.rs), so these scripts must configure a token on both
+# the server and the client. Override via env if needed.
+E2E_TOKEN="${E2E_TOKEN:-e2e-accept-token}"
+
 pids=()
 
 cleanup() {

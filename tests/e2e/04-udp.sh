@@ -13,11 +13,19 @@ UDP_REMOTE=49901
 cat >"$RUN_DIR/server-udp.toml" <<EOF
 listen        = "127.0.0.1:$SERVER_PORT"
 udpPacketSize = 8192
+
+[auth]
+type  = "token"
+token = "$E2E_TOKEN"
 EOF
 
 cat >"$RUN_DIR/client-udp.toml" <<EOF
 server        = "127.0.0.1:$SERVER_PORT"
 udpPacketSize = 8192
+
+[auth]
+type  = "token"
+token = "$E2E_TOKEN"
 
 [[tunnels]]
 name       = "udp-e2e"

@@ -21,10 +21,18 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 cat >"$RUN_DIR/server-https.toml" <<EOF
 listen       = "127.0.0.1:$SERVER_PORT"
 httpsGwPort  = $VHOST_PORT
+
+[auth]
+type  = "token"
+token = "$E2E_TOKEN"
 EOF
 
 cat >"$RUN_DIR/client-https.toml" <<EOF
 server = "127.0.0.1:$SERVER_PORT"
+
+[auth]
+type  = "token"
+token = "$E2E_TOKEN"
 
 [[tunnels]]
 name     = "https-e2e"

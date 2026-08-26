@@ -10,10 +10,18 @@ CLIENT_ECHO_REMOTE=49601
 
 cat >"$RUN_DIR/server-tcp.toml" <<EOF
 listen = "127.0.0.1:$SERVER_PORT"
+
+[auth]
+type  = "token"
+token = "$E2E_TOKEN"
 EOF
 
 cat >"$RUN_DIR/client-tcp.toml" <<EOF
 server = "127.0.0.1:$SERVER_PORT"
+
+[auth]
+type  = "token"
+token = "$E2E_TOKEN"
 
 [[tunnels]]
 name        = "tcp-e2e"
