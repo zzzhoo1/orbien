@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   pull_request:
 
+env:
+  DOCKER_SMOKE_TOKEN: docker-ci-smoke-token-2026
+
 jobs:
   docker-build-smoke:
     name: Docker – build & smoke test
@@ -44,14 +47,20 @@ jobs:
 
           mkdir -p /tmp/orbien-ci
 
-          # Server config — use printf to avoid heredoc/YAML indentation conflict
+          # Server config — auth token required; empty token rejects all clients
           printf '%s\n' \
             'listen = "0.0.0.0:9527"' \
+            '' \
+            '[auth]' \
+            "token = \"${DOCKER_SMOKE_TOKEN}\"" \
             > /tmp/orbien-ci/srv.toml
 
-          # Client config
+          # Client config — must carry matching token
           printf '%s\n' \
             'server = "127.0.0.1:9527"' \
+            '' \
+            '[auth]' \
+            "token = \"${DOCKER_SMOKE_TOKEN}\"" \
             '' \
             '[[tunnels]]' \
             'name       = "echo"' \
