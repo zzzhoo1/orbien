@@ -10,19 +10,12 @@ import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
 import signalIcon from '@/assets/icon/signal.svg?raw'
 
-// 临时：简单的内联 toast。后续可抽到全局消息组件。
-const toast = ref<{ type: 'info' | 'error'; message: string } | null>(null)
-let toastTimer: number | null = null
-
-function showToast(type: 'info' | 'error', message: string, duration = 3000) {
-  toast.value = {type, message}
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer)
+// 全局 toast：由 DefaultLayout 提供 window.__orbienToast
+// 这里声明类型以便 TypeScript 识别。
+declare global {
+  interface Window {
+    __orbienToast?: (type: 'info' | 'error', text: string, duration?: number) => void
   }
-  toastTimer = window.setTimeout(() => {
-    toast.value = null
-    toastTimer = null
-  }, duration)
 }
 
 type StatusFilter = 'all' | 'online' | 'offline'
@@ -101,10 +94,10 @@ async function onKick(sessionId: string, evt: Event) {
   try {
     await kickClient(sessionId)
     await store.refresh()
-    showToast('info', t('clients.kickSuccess'))
+    window.__orbienToast?.('info', t('clients.kickSuccess'))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    showToast('error', t('clients.kickFailed', {msg}))
+    window.__orbienToast?.('error', t('clients.kickFailed', {msg}))
   } finally {
     kicking.value = null
   }
@@ -113,16 +106,6 @@ async function onKick(sessionId: string, evt: Event) {
 
 <template>
   <section class="client-list">
-    <div
-        v-if="toast"
-        class="toast"
-        :class="toast.type"
-        role="status"
-        aria-live="polite"
-    >
-      {{ toast.message }}
-    </div>
-
     <div class="list-toolbar" role="group" :aria-label="t('clients.filter')">
       <button
           v-for="key in FILTERS"
@@ -216,24 +199,6 @@ async function onKick(sessionId: string, evt: Event) {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-}
-
-.toast {
-  align-self: flex-start;
-  padding: 0.5rem 0.9rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.8rem;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
-  color: var(--accent-text);
-  box-shadow: var(--shadow);
-}
-
-.toast.error {
-  background: color-mix(in srgb, var(--danger, #ef4444) 16%, transparent);
-  border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
-  color: #fed7d7;
 }
 
 .list-toolbar {
