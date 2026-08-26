@@ -1,0 +1,396 @@
+import { Button, ScrollView, Switch } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { IconSetting } from "../icons.slint";
+import { Tr } from "../i18n.slint";
+import { FormField, FormPathField, FormCombo, FormRow } from "tunnel_parts/fields.slint";
+
+component SwitchRow inherits Rectangle {
+    in property <string> label;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+    height: 36px;
+    background: transparent;
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 12px;
+
+        Text {
+            text: root.label;
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: left;
+            horizontal-stretch: 1;
+        }
+        Switch {
+            checked <=> root.checked;
+            enabled: root.enabled;
+            vertical-stretch: 0;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+component SectionTitle inherits Text {
+    color: Theme.text;
+    font-size: 15px;
+    font-weight: 700;
+    vertical-stretch: 0;
+    horizontal-alignment: left;
+}
+
+component SubSectionTitle inherits Text {
+    color: Theme.text;
+    font-size: 14px;
+    font-weight: 700;
+    vertical-stretch: 0;
+    horizontal-alignment: left;
+}
+
+component Panel inherits Rectangle {
+    background: Theme.panel;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.line;
+    drop-shadow-blur: 14px;
+    drop-shadow-color: #1e3a5f0f;
+    drop-shadow-offset-y: 4px;
+    vertical-stretch: 0;
+    width: 100%;
+
+    VerticalLayout {
+        padding: 18px;
+        spacing: 12px;
+        alignment: stretch;
+        vertical-stretch: 0;
+        @children
+    }
+}
+
+export component ConfigPage inherits Rectangle {
+    in-out property <string> server-addr: "127.0.0.1";
+    in-out property <string> server-port: "9527";
+    in-out property <string> token: "";
+    in-out property <string> user: "";
+    in-out property <int> protocol-index: 0;
+    in-out property <string> pool-count: "1";
+    in-out property <bool> tcp-mux: true;
+    in-out property <bool> tls-enable: true;
+    in-out property <bool> show-advanced: false;
+    in-out property <string> mux-keepalive: "30";
+    in-out property <string> heartbeat-interval: "";
+    in-out property <string> heartbeat-timeout: "";
+    in-out property <string> udp-packet-size: "1500";
+    in-out property <string> tls-server-name: "";
+    in-out property <string> tls-ca: "";
+    in-out property <string> tls-cert: "";
+    in-out property <string> tls-key: "";
+    in-out property <string> quic-keepalive: "10";
+    in-out property <string> quic-idle: "30";
+    in-out property <string> quic-streams: "100000";
+    in-out property <string> config-file-path: "";
+    callback save-clicked;
+    callback reset-clicked;
+    callback pick-file(string);
+
+    private property <bool> is-quic: root.protocol-index == 2;
+    private property <bool> is-kcp: root.protocol-index == 3;
+    private property <bool> mux-applicable: !root.is-quic;
+    private property <bool> mux-active: root.mux-applicable && root.tcp-mux;
+    private property <bool> tls-toggle-applicable: !root.is-quic;
+    private property <bool> show-tls-identity: root.is-quic || root.tls-enable;
+    private property <string> port-placeholder:
+        root.is-quic ? Tr.config-server-port-quic-hint
+        : root.is-kcp ? Tr.config-server-port-kcp-hint
+        : "9527";
+    private property <string> hb-interval-placeholder:
+        root.mux-active ? Tr.config-empty-off : "30";
+    private property <string> hb-timeout-placeholder:
+        root.mux-active ? Tr.config-empty-off : "90";
+
+    changed protocol-index => {
+        if root.is-quic {
+            root.tcp-mux = false;
+            root.tls-enable = true;
+            root.server-port = "9528";
+        } else if root.is-kcp {
+            root.server-port = "9529";
+        } else {
+            root.server-port = "9527";
+        }
+    }
+
+    background: transparent;
+    min-height: Theme.page-min-height;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 16px;
+        alignment: stretch;
+
+        HorizontalLayout {
+            height: 38px;
+            vertical-stretch: 0;
+            spacing: 10px;
+
+            Rectangle {
+                width: 22px;
+                height: 38px;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+                background: transparent;
+                IconSetting {
+                    y: (parent.height - self.height) / 2;
+                    size: 22px;
+                    tint: Theme.accent;
+                }
+            }
+            Text {
+                text: Tr.config-title;
+                color: Theme.accent;
+                font-size: 22px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: Tr.config-reset;
+                height: 32px;
+                vertical-stretch: 0;
+                clicked => { root.reset-clicked(); }
+            }
+            Button {
+                text: Tr.save;
+                primary: true;
+                height: 32px;
+                vertical-stretch: 0;
+                clicked => { root.save-clicked(); }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                spacing: 14px;
+                padding-right: 4px;
+                alignment: stretch;
+                vertical-stretch: 0;
+
+                Panel {
+                    SectionTitle { text: Tr.config-server; }
+                    FormRow {
+                        FormField {
+                            label: Tr.config-server-addr;
+                            value <=> root.server-addr;
+                            placeholder: "127.0.0.1";
+                        }
+                        FormField {
+                            label: Tr.config-server-port;
+                            value <=> root.server-port;
+                            placeholder: root.port-placeholder;
+                        }
+                    }
+                    FormRow {
+                        FormField {
+                            label: Tr.config-token;
+                            value <=> root.token;
+                            placeholder: Tr.optional;
+                        }
+                        FormField {
+                            label: Tr.config-user;
+                            value <=> root.user;
+                            placeholder: Tr.optional;
+                        }
+                    }
+                }
+
+                Panel {
+                    SectionTitle { text: Tr.config-transport; }
+                    FormRow {
+                        FormCombo {
+                            label: Tr.config-protocol;
+                            model: ["tcp", "websocket", "quic", "kcp"];
+                            current-index <=> root.protocol-index;
+                        }
+                        FormField {
+                            label: Tr.config-pool;
+                            value <=> root.pool-count;
+                            placeholder: "1";
+                        }
+                    }
+                    if root.mux-applicable: SwitchRow {
+                        label: Tr.config-tcp-mux;
+                        checked <=> root.tcp-mux;
+                    }
+                    if root.tls-toggle-applicable: SwitchRow {
+                        label: Tr.config-tls-enable;
+                        checked <=> root.tls-enable;
+                    }
+                }
+
+                Panel {
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        vertical-stretch: 0;
+                        height: 24px;
+                        clicked => { root.show-advanced = !root.show-advanced; }
+                        Text {
+                            text: root.show-advanced ? Tr.hide-advanced : Tr.show-advanced;
+                            color: Theme.accent;
+                            font-size: 13px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-alignment: left;
+                        }
+                    }
+
+                    if root.show-advanced: VerticalLayout {
+                        spacing: 12px;
+                        vertical-stretch: 0;
+                        alignment: stretch;
+
+                        SubSectionTitle { text: Tr.config-general; }
+
+                        if root.mux-active: FormRow {
+                            FormField {
+                                label: Tr.config-mux-keepalive;
+                                value <=> root.mux-keepalive;
+                                placeholder: "30";
+                            }
+                            FormField {
+                                label: Tr.config-udp-size;
+                                value <=> root.udp-packet-size;
+                                placeholder: "1500";
+                            }
+                        }
+                        if !root.mux-active: FormRow {
+                            FormField {
+                                label: Tr.config-udp-size;
+                                value <=> root.udp-packet-size;
+                                placeholder: "1500";
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 0;
+                                height: 60px;
+                                background: transparent;
+                            }
+                        }
+
+                        FormRow {
+                            FormField {
+                                label: Tr.config-hb-interval;
+                                value <=> root.heartbeat-interval;
+                                placeholder: root.hb-interval-placeholder;
+                            }
+                            FormField {
+                                label: Tr.config-hb-timeout;
+                                value <=> root.heartbeat-timeout;
+                                placeholder: root.hb-timeout-placeholder;
+                            }
+                        }
+
+                        if root.show-tls-identity: VerticalLayout {
+                            spacing: 12px;
+                            vertical-stretch: 0;
+                            alignment: stretch;
+
+                            SubSectionTitle {
+                                text: root.is-quic ? Tr.config-quic-tls : Tr.config-tls;
+                            }
+                            FormRow {
+                                FormField {
+                                    label: Tr.config-tls-sni;
+                                    value <=> root.tls-server-name;
+                                    placeholder: Tr.config-tls-sni-hint;
+                                }
+                                FormPathField {
+                                    label: Tr.config-tls-ca;
+                                    value <=> root.tls-ca;
+                                    placeholder: Tr.config-tls-ca-hint;
+                                    browse-clicked => {
+                                        root.pick-file("tls-ca");
+                                    }
+                                }
+                            }
+                            FormRow {
+                                FormPathField {
+                                    label: Tr.config-tls-cert;
+                                    value <=> root.tls-cert;
+                                    placeholder: Tr.config-tls-cert-hint;
+                                    browse-clicked => {
+                                        root.pick-file("tls-cert");
+                                    }
+                                }
+                                FormPathField {
+                                    label: Tr.config-tls-key;
+                                    value <=> root.tls-key;
+                                    placeholder: Tr.config-tls-key-hint;
+                                    browse-clicked => {
+                                        root.pick-file("tls-key");
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.is-quic: VerticalLayout {
+                            spacing: 12px;
+                            vertical-stretch: 0;
+                            alignment: stretch;
+
+                            SubSectionTitle { text: Tr.config-quic; }
+                            FormRow {
+                                FormField {
+                                    label: Tr.config-quic-keepalive;
+                                    value <=> root.quic-keepalive;
+                                    placeholder: "10";
+                                }
+                                FormField {
+                                    label: Tr.config-quic-idle;
+                                    value <=> root.quic-idle;
+                                    placeholder: "30";
+                                }
+                            }
+                            FormRow {
+                                FormField {
+                                    label: Tr.config-quic-streams;
+                                    value <=> root.quic-streams;
+                                    placeholder: "100000";
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    vertical-stretch: 0;
+                                    height: 60px;
+                                    background: transparent;
+                                }
+                            }
+                        }
+
+                        FormPathField {
+                            label: Tr.config-file-path;
+                            value <=> root.config-file-path;
+                            placeholder: Tr.config-file-path-placeholder;
+                            browse-clicked => {
+                                root.pick-file("config-file");
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 0px;
+                    background: transparent;
+                }
+            }
+        }
+    }
+}

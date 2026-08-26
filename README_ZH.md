@@ -2,7 +2,7 @@
   <img src="docs/static/img/logo.png" alt="Logo" width="180" height="180" style="border-radius:24px;margin-bottom:20px;"/>
 </div>
 <p align="center" style="font-size:18px;color:#555;margin-top:-10px;margin-bottom:24px;">
-  基于 Rust 和 Tokio 的内网穿透
+  基于 Rust 和 Tokio 实现的内网穿透
 </p>
 <div align="center">
   <a href="https://github.com/zzzhoo1/orbien/stargazers">
@@ -32,6 +32,10 @@
 </div>
 
 <div align="center">
+  <a href="https://trendshift.io/repositories/128255?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-128255" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/128255/daily?language=Rust" alt="orbien-org%2Forbien | Trendshift" width="250" height="55"/></a>
+</div>
+
+<div align="center">
   <a href="README.md"><strong>English</strong></a> &nbsp;|&nbsp;
   <a href="README_ZH.md"><strong>简体中文</strong></a>
   &nbsp;|&nbsp;
@@ -44,23 +48,22 @@
 
 ## 功能特性
 
-- **高性能**：全链路零拷贝转发，低延迟、高吞吐、无GC停顿、内存占用低
-- **代理协议**：支持 TCP、UDP、HTTP、HTTPS等多种协议代理
+- **高性能**：高性能，抗丢包、高吞吐、无GC停顿、内存占用低
+- **隧道协议**：支持 TCP、UDP、HTTP、HTTPS、SOCKS5 等多种协议隧道
 - **传输协议**：支持 TCP、KCP、WebSocket、QUIC，支持TCP多路复用
 - **安全加密**：支持 Token 隧道鉴权以及Tls和mTLS加密传输；HTTPS采用透明转发和客户端TLS终止
 - **多平台支持**：支持 Windows、Linux、macOS、freeBSD 等多平台
-- **运维管理**：提供轻量Web管理界面和跨平台桌面客户端，便于配置和监控
+- **运维管理**：提供轻量Web管理界面和跨平台原生桌面客户端，便于配置和监控
 
 ## 快速开始
 
-[下载](download.mdx)对应平台的二进制压缩包解压
+[下载](https://github.com/orbien-org/orbien/tags)对应平台的二进制压缩包解压
 
 ### 服务端
 
 ```toml
 # orbien-server.toml
-bindAddr = "0.0.0.0"
-bindPort = 9527
+listen = "0.0.0.0:9527"
 ```
 
 ```shell
@@ -71,15 +74,13 @@ bindPort = 9527
 
 ```toml
 # orbien.toml
-serverAddr = "127.0.0.1"
-serverPort = 9527
+server = "127.0.0.1:9527"
 
-[[proxies]]
-name = "mysql"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 3306
-remotePort = 6050
+[[tunnels]]
+name = "ssh"
+protocol = "tcp"
+service = "127.0.0.1:22"
+remotePort = 9000
 ```
 
 ```shell
@@ -89,15 +90,34 @@ remotePort = 6050
 如果觉得命令行CLI操作麻烦，可以使用 [Orbien-Desktop](https://github.com/zzzhoo1/orbien/releases) 桌面端，该桌面端基于
 `Tauri`框架开发，体积不到`10MB`
 
-![desktop.gif](doc/img/desktop.gif)
+![desktop_zh.gif](doc/img/desktop_zh.gif)
 
-# 性能测试
+## 性能测试
 
-下图是基于本地回环进行的测试结果，可以发现`Orbien`的内存占用非常低且稳定。
+| 环境 | 说明                                                     |
+|----|--------------------------------------------------------|
+| 平台 | macOS 26.2· Darwin 25.2.0 · arm64                      |
+| 硬件 | Apple M2（8 核）· 16 GB                                   |
+| 详细 | [benchmarks](https://github.com/orbien-org/benchmarks) |
 
-![mem.png](doc/img/mem.png)
+为了排除各种干扰因素，本测试是在本地回环下进行，相较于`frp`，`Orbien`比较明显的优势是在高并发条件下内存占用更低、更加平稳。
 
-# 致谢
+![mem-graph.png](doc/img/bench/mem-graph.png)
+
+![tcp-bitrate.png](doc/img/bench/tcp-bitrate.png)
+
+![udp-bitrate.png](doc/img/bench/udp-bitrate.png)
+
+![http-throughput.png](doc/img/bench/http-throughput.png)
 
 本项目参考了[frp](https://github.com/fatedier/frp)
 的架构思路，桌面客户端UI布局借鉴[frpc-desktop](https://github.com/luckjiawei/frpc-desktop)的交互，感谢开源社区的贡献。
+
+## 许可证
+
+- [Apache License 2.0](https://github.com/orbien-org/orbien/blob/main/LICENSE)
+
+## 联系
+
+- 问题反馈：[issues](https://github.com/orbien-org/orbien/issues)
+- 交流群：[discord](https://discord.com/invite/4dgQjCS3k)

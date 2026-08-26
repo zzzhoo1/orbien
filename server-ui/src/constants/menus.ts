@@ -1,12 +1,12 @@
 export interface NavItem {
-    name: 'monitor' | 'proxies' | 'clients'
+    name: 'monitor' | 'tunnels' | 'clients'
     path: string
-    labelKey: 'monitor' | 'proxies' | 'clients'
-    icon: 'monitor' | 'proxies' | 'clients'
+    labelKey: 'monitor' | 'tunnels' | 'clients'
+    icon: 'monitor' | 'tunnels' | 'clients'
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
     {name: 'monitor', path: '/', labelKey: 'monitor', icon: 'monitor'},
-    {name: 'proxies', path: '/proxies', labelKey: 'proxies', icon: 'proxies'},
+    {name: 'tunnels', path: '/tunnels', labelKey: 'tunnels', icon: 'tunnels'},
     {name: 'clients', path: '/clients', labelKey: 'clients', icon: 'clients'},
 ]

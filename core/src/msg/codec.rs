@@ -39,12 +39,12 @@ pub async fn write_msg<W: AsyncWrite + Unpin>(
     let body = match msg {
         Message::Login(m) => serde_json::to_vec(m)?,
         Message::LoginResp(m) => serde_json::to_vec(m)?,
-        Message::NewProxy(m) => serde_json::to_vec(m)?,
-        Message::NewProxyResp(m) => serde_json::to_vec(m)?,
-        Message::CloseProxy(m) => serde_json::to_vec(m)?,
-        Message::ReqWorkConn(m) => serde_json::to_vec(m)?,
-        Message::NewWorkConn(m) => serde_json::to_vec(m)?,
-        Message::StartWorkConn(m) => serde_json::to_vec(m)?,
+        Message::NewTunnel(m) => serde_json::to_vec(m)?,
+        Message::NewTunnelResp(m) => serde_json::to_vec(m)?,
+        Message::CloseTunnel(m) => serde_json::to_vec(m)?,
+        Message::ReqDataConn(m) => serde_json::to_vec(m)?,
+        Message::NewDataConn(m) => serde_json::to_vec(m)?,
+        Message::StartDataConn(m) => serde_json::to_vec(m)?,
         Message::Ping(m) => serde_json::to_vec(m)?,
         Message::Pong(m) => serde_json::to_vec(m)?,
         Message::UdpPacket(m) => serde_json::to_vec(m)?,
@@ -70,12 +70,12 @@ pub async fn read_msg<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Message, M
     let msg = match type_byte {
         TYPE_LOGIN => Message::Login(serde_json::from_slice(&buf)?),
         TYPE_LOGIN_RESP => Message::LoginResp(serde_json::from_slice(&buf)?),
-        TYPE_NEW_PROXY => Message::NewProxy(serde_json::from_slice(&buf)?),
-        TYPE_NEW_PROXY_RESP => Message::NewProxyResp(serde_json::from_slice(&buf)?),
-        TYPE_CLOSE_PROXY => Message::CloseProxy(serde_json::from_slice(&buf)?),
-        TYPE_REQ_WORK_CONN => Message::ReqWorkConn(serde_json::from_slice(&buf)?),
-        TYPE_NEW_WORK_CONN => Message::NewWorkConn(serde_json::from_slice(&buf)?),
-        TYPE_START_WORK_CONN => Message::StartWorkConn(serde_json::from_slice(&buf)?),
+        TYPE_NEW_TUNNEL => Message::NewTunnel(serde_json::from_slice(&buf)?),
+        TYPE_NEW_TUNNEL_RESP => Message::NewTunnelResp(serde_json::from_slice(&buf)?),
+        TYPE_CLOSE_TUNNEL => Message::CloseTunnel(serde_json::from_slice(&buf)?),
+        TYPE_REQ_DATA_CONN => Message::ReqDataConn(serde_json::from_slice(&buf)?),
+        TYPE_NEW_DATA_CONN => Message::NewDataConn(serde_json::from_slice(&buf)?),
+        TYPE_START_DATA_CONN => Message::StartDataConn(serde_json::from_slice(&buf)?),
         TYPE_PING => Message::Ping(serde_json::from_slice(&buf)?),
         TYPE_PONG => Message::Pong(serde_json::from_slice(&buf)?),
         TYPE_UDP_PACKET => Message::UdpPacket(serde_json::from_slice(&buf)?),
@@ -117,12 +117,12 @@ mod tests {
         let body = match msg {
             Message::Login(m) => serde_json::to_vec(m).unwrap(),
             Message::LoginResp(m) => serde_json::to_vec(m).unwrap(),
-            Message::NewProxy(m) => serde_json::to_vec(m).unwrap(),
-            Message::NewProxyResp(m) => serde_json::to_vec(m).unwrap(),
-            Message::CloseProxy(m) => serde_json::to_vec(m).unwrap(),
-            Message::ReqWorkConn(m) => serde_json::to_vec(m).unwrap(),
-            Message::NewWorkConn(m) => serde_json::to_vec(m).unwrap(),
-            Message::StartWorkConn(m) => serde_json::to_vec(m).unwrap(),
+            Message::NewTunnel(m) => serde_json::to_vec(m).unwrap(),
+            Message::NewTunnelResp(m) => serde_json::to_vec(m).unwrap(),
+            Message::CloseTunnel(m) => serde_json::to_vec(m).unwrap(),
+            Message::ReqDataConn(m) => serde_json::to_vec(m).unwrap(),
+            Message::NewDataConn(m) => serde_json::to_vec(m).unwrap(),
+            Message::StartDataConn(m) => serde_json::to_vec(m).unwrap(),
             Message::Ping(m) => serde_json::to_vec(m).unwrap(),
             Message::Pong(m) => serde_json::to_vec(m).unwrap(),
             Message::UdpPacket(m) => serde_json::to_vec(m).unwrap(),
@@ -139,35 +139,34 @@ mod tests {
             os: "linux".into(),
             arch: "x86_64".into(),
             user: "alice".into(),
-            privilege_key: "abc123".into(),
+            auth_digest: "abc123".into(),
             timestamp: 1_700_000_000,
-            run_id: "run-1".into(),
+            session_id: "session-1".into(),
             pool_count: 4,
         }))
         .await;
     }
 
     #[tokio::test]
-    async fn new_proxy_roundtrip() {
-        roundtrip(Message::NewProxy(Box::new(NewProxy {
-            proxy_name: "mysql".into(),
-            proxy_type: "tcp".into(),
+    async fn new_tunnel_roundtrip() {
+        roundtrip(Message::NewTunnel(NewTunnel {
+            tunnel_name: "mysql".into(),
+            protocol: "tcp".into(),
             remote_port: 6050,
             local_ip: "127.0.0.1".into(),
             local_port: 3306,
-            custom_domains: vec!["a.example.com".into()],
-            subdomain: "db".into(),
+            domains: vec!["a.example.com".into()],
             locations: vec![],
-            http_user: "".into(),
-            http_pwd: "".into(),
+            basic_auth_user: "".into(),
+            basic_auth_password: "".into(),
             host_header_rewrite: "".into(),
             headers: Default::default(),
             response_headers: Default::default(),
             route_by_http_user: "".into(),
-            bandwidth_limit: "10MB".into(),
-            bandwidth_limit_mode: "client".into(),
+            bandwidth: 0.0,
+            bandwidth_limit_side: "client".into(),
             max_connections: 100,
-        })))
+        }))
         .await;
     }
 
@@ -184,7 +183,7 @@ mod tests {
     #[tokio::test]
     async fn ping_pong_roundtrip() {
         roundtrip(Message::Ping(Ping {
-            privilege_key: "key".into(),
+            auth_digest: "key".into(),
             timestamp: 123,
         }))
         .await;

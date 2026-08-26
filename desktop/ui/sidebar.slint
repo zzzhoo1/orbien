@@ -1,0 +1,252 @@
+import { Theme } from "theme.slint";
+import {
+    IconRocket,
+    IconCloud,
+    IconSetting,
+    IconLog,
+    IconAbout,
+} from "icons.slint";
+import { Tr } from "i18n.slint";
+import { AppMeta } from "version.slint";
+
+export enum AppPage {
+    launch,
+    tunnel,
+    config,
+    logger,
+    about,
+}
+
+component NavButton inherits Rectangle {
+    in property <bool> active;
+    callback clicked;
+
+    width: 44px;
+    height: 44px;
+    border-radius: Theme.radius;
+    background: root.active ? Theme.accent-soft : transparent;
+
+    @children
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    states [
+        hover when ta.has-hover && !root.active: {
+            background: Theme.accent-soft;
+        }
+    ]
+}
+
+export component Sidebar inherits Rectangle {
+    in-out property <AppPage> page: AppPage.launch;
+    in property <string> cpu-usage: "—";
+    in property <string> mem-usage: "—";
+
+    width: Theme.sidebar-width;
+    background: Theme.chrome;
+
+    private property <length> logo-size: 34px;
+    private property <length> nav-size: 44px;
+    private property <length> brand-top: 14px;
+    private property <length> brand-gap: 6px;
+    private property <length> title-h: 16px;
+    private property <length> nav-top: root.brand-top + root.logo-size + root.brand-gap + root.title-h + 18px;
+    private property <length> nav-gap: 8px;
+    private property <length> version-h: 14px;
+    private property <length> metric-label-h: 12px;
+    private property <length> metric-value-h: 14px;
+    private property <length> metric-block-h: root.metric-label-h + root.metric-value-h + 2px;
+    private property <length> footer-gap: 8px;
+    private property <length> metric-gap: 6px;
+    private property <length> footer-pad: 12px;
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        height: 100%;
+        background: Theme.line;
+    }
+
+    Image {
+        x: (parent.width - root.logo-size) / 2;
+        y: root.brand-top;
+        width: root.logo-size;
+        height: root.logo-size;
+        source: @image-url("../assets/logo.png");
+        image-fit: contain;
+    }
+
+    HorizontalLayout {
+        x: 0;
+        y: root.brand-top + root.logo-size + root.brand-gap;
+        width: parent.width;
+        height: root.title-h;
+        spacing: 0;
+        alignment: center;
+
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 0;
+        }
+
+        Text {
+            text: "Orb";
+            color: Theme.accent;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+
+        Text {
+            text: "ien";
+            color: Theme.text;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 0;
+        }
+    }
+
+    NavButton {
+        x: (parent.width - root.nav-size) / 2;
+        y: root.nav-top;
+        active: root.page == AppPage.launch;
+        clicked => { root.page = AppPage.launch; }
+        IconRocket {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            size: 22px;
+            tint: root.page == AppPage.launch ? Theme.accent : Theme.nav-idle;
+        }
+    }
+
+    NavButton {
+        x: (parent.width - root.nav-size) / 2;
+        y: root.nav-top + (root.nav-size + root.nav-gap) * 1;
+        active: root.page == AppPage.tunnel;
+        clicked => { root.page = AppPage.tunnel; }
+        IconCloud {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            size: 22px;
+            tint: root.page == AppPage.tunnel ? Theme.accent : Theme.nav-idle;
+        }
+    }
+
+    NavButton {
+        x: (parent.width - root.nav-size) / 2;
+        y: root.nav-top + (root.nav-size + root.nav-gap) * 2;
+        active: root.page == AppPage.config;
+        clicked => { root.page = AppPage.config; }
+        IconSetting {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            size: 22px;
+            tint: root.page == AppPage.config ? Theme.accent : Theme.nav-idle;
+        }
+    }
+
+    NavButton {
+        x: (parent.width - root.nav-size) / 2;
+        y: root.nav-top + (root.nav-size + root.nav-gap) * 3;
+        active: root.page == AppPage.logger;
+        clicked => { root.page = AppPage.logger; }
+        IconLog {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            size: 22px;
+            tint: root.page == AppPage.logger ? Theme.accent : Theme.nav-idle;
+        }
+    }
+
+    NavButton {
+        x: (parent.width - root.nav-size) / 2;
+        y: root.nav-top + (root.nav-size + root.nav-gap) * 4;
+        active: root.page == AppPage.about;
+        clicked => { root.page = AppPage.about; }
+        IconAbout {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            size: 22px;
+            tint: root.page == AppPage.about ? Theme.accent : Theme.nav-idle;
+        }
+    }
+
+    Text {
+        x: 0;
+        y: parent.height - root.footer-pad - root.version-h - root.footer-gap
+            - root.metric-block-h - root.metric-gap - root.metric-block-h;
+        width: parent.width;
+        height: root.metric-label-h;
+        text: Tr.sidebar-cpu;
+        color: Theme.muted;
+        font-size: 10px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: 0;
+        y: parent.height - root.footer-pad - root.version-h - root.footer-gap
+            - root.metric-block-h - root.metric-gap - root.metric-block-h
+            + root.metric-label-h + 2px;
+        width: parent.width;
+        height: root.metric-value-h;
+        text: root.cpu-usage;
+        color: Theme.muted;
+        font-size: 11px;
+        font-weight: 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: 0;
+        y: parent.height - root.footer-pad - root.version-h - root.footer-gap
+            - root.metric-block-h;
+        width: parent.width;
+        height: root.metric-label-h;
+        text: Tr.sidebar-mem;
+        color: Theme.muted;
+        font-size: 10px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: 0;
+        y: parent.height - root.footer-pad - root.version-h - root.footer-gap
+            - root.metric-block-h + root.metric-label-h + 2px;
+        width: parent.width;
+        height: root.metric-value-h;
+        text: root.mem-usage;
+        color: Theme.muted;
+        font-size: 11px;
+        font-weight: 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: 0;
+        y: parent.height - root.footer-pad - root.version-h;
+        width: parent.width;
+        height: root.version-h;
+        text: AppMeta.version;
+        color: Theme.accent;
+        font-size: 11px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

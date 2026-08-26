@@ -29,7 +29,17 @@ const config: Config = {
 
   i18n: {
     defaultLocale: 'zh-Hans',
-    locales: ['zh-Hans'],
+    locales: ['zh-Hans', 'en'],
+    localeConfigs: {
+      'zh-Hans': {
+        label: '中文',
+        htmlLang: 'zh-CN',
+      },
+      en: {
+        label: 'English',
+        htmlLang: 'en',
+      },
+    },
   },
 
   presets: [
@@ -61,6 +71,16 @@ const config: Config = {
         src: 'img/logo.png',
       },
       items: [
+        {
+          type: 'docSidebar',
+          sidebarId: 'docsSidebar',
+          position: 'left',
+          label: '文档',
+        },
+        {
+          type: 'localeDropdown',
+          position: 'right',
+        },
         {
           href: 'https://github.com/orbien-org/orbien',
           label: 'GitHub',

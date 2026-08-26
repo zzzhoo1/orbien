@@ -9,12 +9,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub const ALPN_ORBIEN: &[u8] = b"orbien";
-pub const CUSTOM_TLS_HEAD_BYTE: u8 = 0x17;
 pub const TLS_HANDSHAKE_TYPE: u8 = 0x16;
+
 pub struct GeneratedCert {
     pub certs: Vec<CertificateDer<'static>>,
     pub key: PrivatePkcs8KeyDer<'static>,
@@ -94,11 +94,11 @@ pub fn install_ring_provider() -> Result<()> {
 }
 
 pub fn load_pem_cert_key(
-    cert_path: &str,
-    key_path: &str,
+    cert_file: &str,
+    key_file: &str,
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let mut cert_reader = BufReader::new(
-        File::open(Path::new(cert_path)).with_context(|| format!("open certFile {cert_path}"))?,
+        File::open(Path::new(cert_file)).with_context(|| format!("open certFile {cert_file}"))?,
     );
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
         .collect::<Result<Vec<_>, _>>()
@@ -106,15 +106,15 @@ pub fn load_pem_cert_key(
         .into_iter()
         .collect();
     if certs.is_empty() {
-        bail!("no certificates in {cert_path}");
+        bail!("no certificates in {cert_file}");
     }
 
     let mut key_reader = BufReader::new(
-        File::open(Path::new(key_path)).with_context(|| format!("open keyFile {key_path}"))?,
+        File::open(Path::new(key_file)).with_context(|| format!("open keyFile {key_file}"))?,
     );
     let key = rustls_pemfile::private_key(&mut key_reader)
         .context("parse private key PEM")?
-        .ok_or_else(|| anyhow::anyhow!("no private key in {key_path}"))?;
+        .ok_or_else(|| anyhow::anyhow!("no private key in {key_file}"))?;
 
     Ok((certs, key))
 }
@@ -141,20 +141,20 @@ fn load_ca_roots(ca_path: &str) -> Result<RootCertStore> {
 }
 
 pub fn new_server_tls_config(
-    cert_path: &str,
-    key_path: &str,
+    cert_file: &str,
+    key_file: &str,
     ca_path: &str,
 ) -> Result<Arc<ServerConfig>> {
     install_ring_provider()?;
 
-    let (certs, key) = if cert_path.trim().is_empty() || key_path.trim().is_empty() {
+    let (certs, key) = if cert_file.trim().is_empty() || key_file.trim().is_empty() {
         tracing::info!(
             "transport.tls: no certFile/keyFile — generating ephemeral self-signed cert"
         );
         let gen = generate_self_signed_cert("orbien-server")?;
         (gen.certs, PrivateKeyDer::Pkcs8(gen.key))
     } else {
-        load_pem_cert_key(cert_path, key_path)?
+        load_pem_cert_key(cert_file, key_file)?
     };
 
     let builder = if ca_path.trim().is_empty() {
@@ -175,8 +175,8 @@ pub fn new_server_tls_config(
 }
 
 pub fn new_client_tls_config(
-    cert_path: &str,
-    key_path: &str,
+    cert_file: &str,
+    key_file: &str,
     ca_path: &str,
 ) -> Result<Arc<ClientConfig>> {
     install_ring_provider()?;
@@ -193,8 +193,8 @@ pub fn new_client_tls_config(
         ClientConfig::builder().with_webpki_verifier(verifier)
     };
 
-    let cfg = if !cert_path.trim().is_empty() && !key_path.trim().is_empty() {
-        let (certs, key) = load_pem_cert_key(cert_path, key_path)?;
+    let cfg = if !cert_file.trim().is_empty() && !key_file.trim().is_empty() {
+        let (certs, key) = load_pem_cert_key(cert_file, key_file)?;
         builder
             .with_client_auth_cert(certs, key)
             .context("load client certificate")?
@@ -206,11 +206,11 @@ pub fn new_client_tls_config(
 }
 
 pub fn server_crypto_from_tls_files(
-    cert_path: &str,
-    key_path: &str,
+    cert_file: &str,
+    key_file: &str,
     ca_path: &str,
 ) -> Result<quinn::crypto::rustls::QuicServerConfig> {
-    let mut cfg = (*new_server_tls_config(cert_path, key_path, ca_path)?).clone();
+    let mut cfg = (*new_server_tls_config(cert_file, key_file, ca_path)?).clone();
     cfg.alpn_protocols = vec![ALPN_ORBIEN.to_vec()];
 
     quinn::crypto::rustls::QuicServerConfig::try_from(cfg)
@@ -218,11 +218,11 @@ pub fn server_crypto_from_tls_files(
 }
 
 pub fn client_crypto_from_tls_files(
-    cert_path: &str,
-    key_path: &str,
+    cert_file: &str,
+    key_file: &str,
     ca_path: &str,
 ) -> Result<quinn::crypto::rustls::QuicClientConfig> {
-    let mut cfg = (*new_client_tls_config(cert_path, key_path, ca_path)?).clone();
+    let mut cfg = (*new_client_tls_config(cert_file, key_file, ca_path)?).clone();
     cfg.alpn_protocols = vec![ALPN_ORBIEN.to_vec()];
     quinn::crypto::rustls::QuicClientConfig::try_from(cfg)
         .map_err(|e| anyhow::anyhow!("QuicClientConfig: {e}"))
@@ -247,16 +247,11 @@ pub fn client_crypto_insecure() -> Result<quinn::crypto::rustls::QuicClientConfi
 }
 
 pub async fn client_enable_tls(
-    mut stream: DynStream,
+    stream: DynStream,
     tls_cfg: Arc<ClientConfig>,
     server_name: &str,
-    write_custom_first_byte: bool,
 ) -> Result<DynStream> {
-    if write_custom_first_byte {
-        stream.write_all(&[CUSTOM_TLS_HEAD_BYTE]).await?;
-        stream.flush().await?;
-    }
-    let name = ServerName::try_from(server_name.to_string())
+    let name = ServerName::try_from(server_name.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid tls serverName {server_name}: {e}"))?;
     let connector = TlsConnector::from(tls_cfg);
     let tls = connector
@@ -278,14 +273,6 @@ pub async fn check_and_enable_tls(
         .context("peek TLS first byte")?;
 
     match first[0] {
-        CUSTOM_TLS_HEAD_BYTE => {
-            let acceptor = TlsAcceptor::from(tls_cfg);
-            let tls = acceptor
-                .accept(stream)
-                .await
-                .context("server TLS handshake (custom head byte)")?;
-            Ok(boxed_stream(tls))
-        }
         TLS_HANDSHAKE_TYPE => {
             let stream = PrefixedByteStream {
                 prefix: Some(first[0]),
@@ -300,7 +287,7 @@ pub async fn check_and_enable_tls(
         }
         _ if force => {
             bail!(
-                "transport.tls.force=true but first byte is 0x{:02x} (expected TLS 0x16 or custom head 0x17)",
+                "transport.tls.force=true but first byte is 0x{:02x} (expected TLS handshake 0x16)",
                 first[0]
             );
         }

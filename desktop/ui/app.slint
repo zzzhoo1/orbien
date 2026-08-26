@@ -1,0 +1,304 @@
+import { Theme } from "theme.slint";
+import { Sidebar, AppPage } from "sidebar.slint";
+import { LaunchPage } from "pages/launch.slint";
+import { TunnelPage, TunnelRow } from "pages/tunnel.slint";
+import { ConfigPage } from "pages/config.slint";
+import { LoggerPage, LogLine } from "pages/logger.slint";
+import { AboutPage } from "pages/about_page.slint";
+import { AboutDialog } from "pages/about.slint";
+import { ToastHost } from "toast.slint";
+import { Tr } from "i18n.slint";
+import { AppMeta } from "version.slint";
+
+export { AppPage, TunnelRow, LogLine, Tr, AboutDialog, AppMeta }
+export component AppWindow inherits Window {
+    title: "Orbien Desktop";
+    icon: @image-url("../assets/app-icons/128x128.png");
+    preferred-width: 960px;
+    preferred-height: 640px;
+    min-width: 800px;
+    min-height: 600px;
+    background: Theme.chrome;
+    MenuBar {
+        Menu {
+            title: Tr.menu-preferences;
+            Menu {
+                title: Tr.menu-language;
+                MenuItem {
+                    title: (root.locale-index == 0 ? "✓  " : "    ") + Tr.menu-lang-zh;
+                    activated => {
+                        if root.locale-index == 0 {
+                            return;
+                        }
+                        root.locale-index = 0;
+                        Tr.locale-index = 0;
+                        root.locale-changed(0);
+                    }
+                }
+
+                MenuItem {
+                    title: (root.locale-index == 1 ? "✓  " : "    ") + Tr.menu-lang-en;
+                    activated => {
+                        if root.locale-index == 1 {
+                            return;
+                        }
+                        root.locale-index = 1;
+                        Tr.locale-index = 1;
+                        root.locale-changed(1);
+                    }
+                }
+            }
+        }
+
+        Menu {
+            title: Tr.menu-help;
+            MenuItem {
+                title: Tr.menu-about;
+                activated => { root.show-about(); }
+            }
+        }
+    }
+
+    // navigation
+    in-out property <AppPage> page: AppPage.launch;
+    in-out property <int> locale-index: 0;
+    in-out property <string> sidebar-cpu: "—";
+    in-out property <string> sidebar-mem: "—";
+
+    // launch
+    in-out property <bool> running: false;
+    in-out property <string> running-label: "—";
+    in-out property <bool> busy: false;
+
+    in-out property <[TunnelRow]> tunnels;
+    in-out property <bool> tunnel-editor-open: false;
+    in-out property <int> tunnel-editing-index: -1;
+    in-out property <string> tunnel-edit-name: "";
+    in-out property <string> tunnel-edit-local-ip: "127.0.0.1";
+    in-out property <string> tunnel-edit-local-port: "8080";
+    in-out property <string> tunnel-edit-remote-port: "9000";
+    in-out property <string> tunnel-edit-domains: "";
+    in-out property <string> tunnel-edit-locations: "";
+    in-out property <string> tunnel-edit-basic-auth-user: "";
+    in-out property <string> tunnel-edit-basic-auth-password: "";
+    in-out property <string> tunnel-edit-host-header-rewrite: "";
+    in-out property <string> tunnel-edit-route-by-http-user: "";
+    in-out property <string> tunnel-edit-bandwidth-limit: "";
+    in-out property <int> tunnel-edit-bandwidth-side-index: 0;
+    in-out property <int> tunnel-edit-proxy-protocol-index: 0;
+    in-out property <bool> tunnel-edit-plugin-tls-term: false;
+    in-out property <string> tunnel-edit-plugin-local-addr: "127.0.0.1:80";
+    in-out property <string> tunnel-edit-plugin-cert-file: "";
+    in-out property <string> tunnel-edit-plugin-key-file: "";
+    in-out property <string> tunnel-edit-plugin-host-rewrite: "";
+    in-out property <string> tunnel-edit-plugin-username: "";
+    in-out property <string> tunnel-edit-plugin-password: "";
+    in-out property <int> tunnel-edit-type-index: 0;
+    in-out property <bool> tunnel-show-advanced: false;
+
+    // config
+    in-out property <string> server-addr: "127.0.0.1";
+    in-out property <string> server-port: "9527";
+    in-out property <string> token: "";
+    in-out property <string> user: "";
+    in-out property <int> protocol-index: 0;
+    in-out property <string> pool-count: "1";
+    in-out property <bool> tcp-mux: true;
+    in-out property <bool> tls-enable: true;
+    in-out property <bool> config-show-advanced: false;
+    in-out property <string> config-mux-keepalive: "30";
+    in-out property <string> config-heartbeat-interval: "";
+    in-out property <string> config-heartbeat-timeout: "";
+    in-out property <string> config-udp-packet-size: "1500";
+    in-out property <string> config-tls-server-name: "";
+    in-out property <string> config-tls-ca: "";
+    in-out property <string> config-tls-cert: "";
+    in-out property <string> config-tls-key: "";
+    in-out property <string> config-quic-keepalive: "10";
+    in-out property <string> config-quic-idle: "30";
+    in-out property <string> config-quic-streams: "100000";
+    in-out property <string> config-file-path: "";
+
+    // Global toast
+    in-out property <bool> toast-visible: false;
+    in-out property <string> toast-text: "";
+    /// 0 = success, 1 = error
+    in-out property <int> toast-kind: 0;
+    in-out property <int> toast-token: 0;
+
+    // logger
+    in-out property <string> log-query: "";
+    in-out property <bool> log-auto-scroll: false;
+    in-out property <[LogLine]> log-lines;
+    in-out property <int> log-scroll-gen: 0;
+
+    callback locale-changed(int);
+    callback show-about();
+    callback open-url(string);
+    callback toggle-client();
+    callback open-logger();
+    callback page-changed(AppPage);
+    callback tunnel-add();
+    callback tunnel-save();
+    callback tunnel-cancel();
+    callback tunnel-edit(int);
+    callback tunnel-delete(int);
+    callback tunnel-copy-remote(string);
+    callback config-save();
+    callback config-reset();
+    callback pick-file(string);
+    callback logs-clear();
+    callback log-query-edited(string);
+
+    changed locale-index => {
+        Tr.locale-index = root.locale-index;
+    }
+
+    changed page => {
+        root.page-changed(root.page);
+    }
+
+    HorizontalLayout {
+        spacing: 0;
+
+        Sidebar {
+            page <=> root.page;
+            cpu-usage: root.sidebar-cpu;
+            mem-usage: root.sidebar-mem;
+        }
+
+        Rectangle {
+            background: Theme.bg;
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            min-height: Theme.page-min-height + Theme.page-pad * 2;
+            clip: true;
+
+            private property <length> content-x: Theme.page-pad;
+            private property <length> content-y: Theme.page-pad;
+            private property <length> content-w: self.width - Theme.page-pad * 2;
+            private property <length> content-h: self.height - Theme.page-pad * 2;
+
+            LaunchPage {
+                x: parent.content-x;
+                y: parent.content-y;
+                width: parent.content-w;
+                height: parent.content-h;
+                visible: root.page == AppPage.launch;
+                running <=> root.running;
+                running-label: root.running-label;
+                busy: root.busy;
+                toggle-clicked => { root.toggle-client(); }
+                view-log-clicked => { root.open-logger(); }
+            }
+
+            TunnelPage {
+                x: parent.content-x;
+                y: parent.content-y;
+                width: parent.content-w;
+                height: parent.content-h;
+                visible: root.page == AppPage.tunnel;
+                tunnels: root.tunnels;
+                editing-index: root.tunnel-editing-index;
+                editor-open <=> root.tunnel-editor-open;
+                edit-name <=> root.tunnel-edit-name;
+                edit-local-ip <=> root.tunnel-edit-local-ip;
+                edit-local-port <=> root.tunnel-edit-local-port;
+                edit-remote-port <=> root.tunnel-edit-remote-port;
+                edit-domains <=> root.tunnel-edit-domains;
+                edit-locations <=> root.tunnel-edit-locations;
+                edit-basic-auth-user <=> root.tunnel-edit-basic-auth-user;
+                edit-basic-auth-password <=> root.tunnel-edit-basic-auth-password;
+                edit-host-header-rewrite <=> root.tunnel-edit-host-header-rewrite;
+                edit-route-by-http-user <=> root.tunnel-edit-route-by-http-user;
+                edit-bandwidth-limit <=> root.tunnel-edit-bandwidth-limit;
+                edit-bandwidth-side-index <=> root.tunnel-edit-bandwidth-side-index;
+                edit-proxy-protocol-index <=> root.tunnel-edit-proxy-protocol-index;
+                edit-plugin-tls-term <=> root.tunnel-edit-plugin-tls-term;
+                edit-plugin-local-addr <=> root.tunnel-edit-plugin-local-addr;
+                edit-plugin-cert-file <=> root.tunnel-edit-plugin-cert-file;
+                edit-plugin-key-file <=> root.tunnel-edit-plugin-key-file;
+                edit-plugin-host-rewrite <=> root.tunnel-edit-plugin-host-rewrite;
+                edit-plugin-username <=> root.tunnel-edit-plugin-username;
+                edit-plugin-password <=> root.tunnel-edit-plugin-password;
+                edit-type-index <=> root.tunnel-edit-type-index;
+                show-advanced <=> root.tunnel-show-advanced;
+                add-clicked => { root.tunnel-add(); }
+                save-clicked => { root.tunnel-save(); }
+                cancel-clicked => { root.tunnel-cancel(); }
+                edit-row(i) => { root.tunnel-edit(i); }
+                delete-row(i) => { root.tunnel-delete(i); }
+                copy-remote(text) => { root.tunnel-copy-remote(text); }
+                pick-file(target) => { root.pick-file(target); }
+            }
+
+            ConfigPage {
+                x: parent.content-x;
+                y: parent.content-y;
+                width: parent.content-w;
+                height: parent.content-h;
+                visible: root.page == AppPage.config;
+                server-addr <=> root.server-addr;
+                server-port <=> root.server-port;
+                token <=> root.token;
+                user <=> root.user;
+                protocol-index <=> root.protocol-index;
+                pool-count <=> root.pool-count;
+                tcp-mux <=> root.tcp-mux;
+                tls-enable <=> root.tls-enable;
+                show-advanced <=> root.config-show-advanced;
+                mux-keepalive <=> root.config-mux-keepalive;
+                heartbeat-interval <=> root.config-heartbeat-interval;
+                heartbeat-timeout <=> root.config-heartbeat-timeout;
+                udp-packet-size <=> root.config-udp-packet-size;
+                tls-server-name <=> root.config-tls-server-name;
+                tls-ca <=> root.config-tls-ca;
+                tls-cert <=> root.config-tls-cert;
+                tls-key <=> root.config-tls-key;
+                quic-keepalive <=> root.config-quic-keepalive;
+                quic-idle <=> root.config-quic-idle;
+                quic-streams <=> root.config-quic-streams;
+                config-file-path <=> root.config-file-path;
+                save-clicked => { root.config-save(); }
+                reset-clicked => { root.config-reset(); }
+                pick-file(target) => { root.pick-file(target); }
+            }
+
+            if root.page == AppPage.logger: LoggerPage {
+                x: parent.content-x;
+                y: parent.content-y;
+                width: parent.content-w;
+                height: parent.content-h;
+                query <=> root.log-query;
+                auto-scroll <=> root.log-auto-scroll;
+                lines: root.log-lines;
+                scroll-gen: root.log-scroll-gen;
+                clear-clicked => { root.logs-clear(); }
+                query-edited(q) => { root.log-query-edited(q); }
+            }
+
+            AboutPage {
+                x: parent.content-x;
+                y: parent.content-y;
+                width: parent.content-w;
+                height: parent.content-h;
+                visible: root.page == AppPage.about;
+                open-github => { root.open-url("https://github.com/orbien-org/orbien"); }
+                open-docs => { root.open-url("https://orbien-org.github.io/orbien/"); }
+                open-feedback => { root.open-url("https://github.com/orbien-org/orbien/issues"); }
+                open-slint-about => { root.show-about(); }
+            }
+        }
+    }
+
+    toast := ToastHost {
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 28px;
+        width: min(420px, root.width - 48px);
+        visible: root.toast-visible;
+        visible-toast <=> root.toast-visible;
+        text <=> root.toast-text;
+        kind <=> root.toast-kind;
+        token <=> root.toast-token;
+    }
+}

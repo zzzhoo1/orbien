@@ -1,52 +1,43 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    #[serde(
-        default = "default_bind_addr",
-        rename = "bindAddr",
-        alias = "bind_addr"
-    )]
-    pub bind_addr: String,
+    #[serde(default = "default_listen")]
+    pub listen: String,
 
-    #[serde(
-        default = "default_bind_port",
-        rename = "bindPort",
-        alias = "bind_port"
-    )]
-    pub bind_port: u16,
+    #[serde(default, rename = "quicPort", alias = "quic_port")]
+    pub quic_port: u16,
 
-    #[serde(default, rename = "quicBindPort", alias = "quic_bind_port")]
-    pub quic_bind_port: u16,
+    #[serde(default, rename = "kcpPort", alias = "kcp_port")]
+    pub kcp_port: u16,
 
-    #[serde(default, rename = "kcpBindPort", alias = "kcp_bind_port")]
-    pub kcp_bind_port: u16,
+    #[serde(default, rename = "httpGwPort", alias = "http_gw_port")]
+    pub http_gw_port: u16,
 
-    #[serde(default, rename = "vhostHTTPPort", alias = "vhost_http_port")]
-    pub vhost_http_port: u16,
+    #[serde(default, rename = "httpsGwPort", alias = "https_gw_port")]
+    pub https_gw_port: u16,
 
-    #[serde(default, rename = "vhostHTTPSPort", alias = "vhost_https_port")]
-    pub vhost_https_port: u16,
+    #[serde(default, rename = "rootDomain", alias = "root_domain")]
+    pub root_domain: String,
 
-    #[serde(default, rename = "subDomainHost", alias = "sub_domain_host")]
-    pub sub_domain_host: String,
     #[serde(default)]
     pub auth: AuthConfig,
 
     #[serde(
-        default = "default_bind_addr",
-        rename = "proxyBindAddr",
-        alias = "proxy_bind_addr"
+        default = "default_proxy_addr",
+        rename = "proxyAddr",
+        alias = "proxy_addr"
     )]
-    pub proxy_bind_addr: String,
+    pub proxy_addr: String,
+
     #[serde(default)]
     pub transport: ServerTransportConfig,
 
-    #[serde(default, rename = "webServer", alias = "web_server")]
-    pub web_server: WebServerConfig,
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
 
     #[serde(
         default = "default_udp_packet_size",
@@ -131,8 +122,8 @@ pub struct TokenPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
-    #[serde(default = "default_auth_method")]
-    pub method: String,
+    #[serde(default = "default_auth_type", rename = "type", alias = "auth_type")]
+    pub auth_type: String,
     #[serde(default)]
     pub token: String,
     #[serde(default)]
@@ -146,13 +137,13 @@ pub struct ServerTransportConfig {
 
     #[serde(
         default = "default_tcp_mux_keepalive",
-        rename = "tcpMuxKeepaliveInterval",
-        alias = "tcp_mux_keepalive_interval"
+        rename = "muxKeepaliveSecs",
+        alias = "mux_keepalive_secs"
     )]
-    pub tcp_mux_keepalive_interval: i64,
+    pub mux_keepalive_secs: i64,
 
-    #[serde(default, rename = "maxPoolCount", alias = "max_pool_count")]
-    pub max_pool_count: i64,
+    #[serde(default, rename = "maxConnPool", alias = "max_conn_pool")]
+    pub max_conn_pool: i64,
 
     #[serde(default, rename = "heartbeatTimeout", alias = "heartbeat_timeout")]
     pub heartbeat_timeout: i64,
@@ -167,8 +158,8 @@ impl Default for ServerTransportConfig {
     fn default() -> Self {
         Self {
             tcp_mux: default_tcp_mux(),
-            tcp_mux_keepalive_interval: default_tcp_mux_keepalive(),
-            max_pool_count: 0,
+            mux_keepalive_secs: default_tcp_mux_keepalive(),
+            max_conn_pool: 0,
             heartbeat_timeout: 0,
             quic: QuicOptions::default(),
             tls: ServerTlsConfig::default(),
@@ -178,7 +169,7 @@ impl Default for ServerTransportConfig {
 
 /// Dashboard web server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WebServerConfig {
+pub struct DashboardConfig {
     #[serde(default)]
     pub addr: String,
     #[serde(default)]
@@ -187,15 +178,16 @@ pub struct WebServerConfig {
     pub user: String,
     #[serde(default)]
     pub password: String,
-    #[serde(default, rename = "assetsDir", alias = "assets_dir")]
-    pub assets_dir: String,
     #[serde(default, rename = "webauthnRpId", alias = "webauthn_rp_id")]
     pub webauthn_rp_id: String,
     #[serde(default, rename = "webauthnOrigin", alias = "webauthn_origin")]
     pub webauthn_origin: String,
+
+    #[serde(default, rename = "staticDir", alias = "static_dir")]
+    pub static_dir: String,
 }
 
-impl WebServerConfig {
+impl DashboardConfig {
     pub fn complete(&mut self) {
         if self.addr.trim().is_empty() {
             self.addr = "127.0.0.1".into();
@@ -206,6 +198,20 @@ impl WebServerConfig {
     }
     pub fn webauthn_enabled(&self) -> bool {
         !self.webauthn_rp_id.trim().is_empty() && !self.webauthn_origin.trim().is_empty()
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.enabled() {
+            return Ok(());
+        }
+        let user = self.user.trim();
+        let pass = self.password.trim();
+        if user.is_empty() || pass.is_empty() {
+            anyhow::bail!(
+                "dashboard.user and dashboard.password are required when dashboard.port > 0"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -269,13 +275,22 @@ impl QuicOptions {
     }
 }
 
-fn default_bind_addr() -> String {
+fn default_listen() -> String {
+    format!("{}:{}", default_listen_host(), default_listen_port())
+}
+
+fn default_listen_host() -> String {
     "0.0.0.0".into()
 }
-fn default_bind_port() -> u16 {
+fn default_listen_port() -> u16 {
     9527
 }
-fn default_auth_method() -> String {
+
+fn default_proxy_addr() -> String {
+    default_listen_host()
+}
+
+fn default_auth_type() -> String {
     "token".into()
 }
 fn default_quic_keepalive() -> u64 {
@@ -294,20 +309,69 @@ fn default_proxy_protocol_timeout() -> u64 {
     5
 }
 
+pub fn parse_host_port(raw: &str, default_port: u16) -> anyhow::Result<(String, u16)> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok((default_listen_host(), default_port));
+    }
+
+    if let Some(rest) = s.strip_prefix('[') {
+        let (host, after) = rest
+            .split_once(']')
+            .ok_or_else(|| anyhow!("invalid listen address '{raw}': missing ']'"))?;
+        if host.is_empty() {
+            return Err(anyhow!("invalid listen address '{raw}': empty IPv6 host"));
+        }
+        let host = format!("[{host}]");
+        if after.is_empty() {
+            return Ok((host, default_port));
+        }
+        let port_str = after
+            .strip_prefix(':')
+            .ok_or_else(|| anyhow!("invalid listen address '{raw}': expected ':' after ']'"))?;
+        if port_str.is_empty() {
+            return Ok((host, default_port));
+        }
+        let port: u16 = port_str
+            .parse()
+            .with_context(|| format!("invalid listen port in '{raw}'"))?;
+        if port == 0 {
+            return Ok((host, default_port));
+        }
+        return Ok((host, port));
+    }
+
+    if let Some((host, port_str)) = s.rsplit_once(':') {
+        if !host.is_empty() && !host.contains(':') {
+            if port_str.is_empty() {
+                return Ok((host.to_string(), default_port));
+            }
+            let port: u16 = port_str
+                .parse()
+                .with_context(|| format!("invalid listen port in '{raw}'"))?;
+            if port == 0 {
+                return Ok((host.to_string(), default_port));
+            }
+            return Ok((host.to_string(), port));
+        }
+    }
+
+    Ok((s.to_string(), default_port))
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            bind_addr: default_bind_addr(),
-            bind_port: default_bind_port(),
-            quic_bind_port: 0,
-            kcp_bind_port: 0,
-            vhost_http_port: 0,
-            vhost_https_port: 0,
-            sub_domain_host: String::new(),
+            listen: default_listen(),
+            quic_port: 0,
+            kcp_port: 0,
+            http_gw_port: 0,
+            https_gw_port: 0,
+            root_domain: String::new(),
             auth: AuthConfig::default(),
-            proxy_bind_addr: default_bind_addr(),
+            proxy_addr: default_proxy_addr(),
             transport: ServerTransportConfig::default(),
-            web_server: WebServerConfig::default(),
+            dashboard: DashboardConfig::default(),
             udp_packet_size: default_udp_packet_size(),
             proxy_protocol: false,
             proxy_protocol_trusted_cidrs: Vec::new(),
@@ -325,12 +389,14 @@ impl Default for ServerConfig {
 impl ServerConfig {
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let raw = super::read_toml_file(path)?;
-        let mut cfg: Self = toml::from_str(&raw)
+        let file = super::read_toml_file(path)?;
+        let expanded = super::expand_env_placeholders(&file)?;
+        let mut cfg: Self = toml::from_str(&expanded)
             .with_context(|| format!("failed to parse config file '{}'", path.display()))?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         cfg.resolve_paths(base);
         cfg.complete();
+        cfg.validate()?;
         Ok(cfg)
     }
 
@@ -339,9 +405,9 @@ impl ServerConfig {
         tls.cert_file = super::resolve_maybe_relative(base, &tls.cert_file);
         tls.key_file = super::resolve_maybe_relative(base, &tls.key_file);
         tls.trusted_ca_file = super::resolve_maybe_relative(base, &tls.trusted_ca_file);
-        if !self.web_server.assets_dir.trim().is_empty() {
-            self.web_server.assets_dir =
-                super::resolve_maybe_relative(base, &self.web_server.assets_dir);
+        if !self.dashboard.static_dir.trim().is_empty() {
+            self.dashboard.static_dir =
+                super::resolve_maybe_relative(base, &self.dashboard.static_dir);
         }
     }
 
@@ -351,25 +417,35 @@ impl ServerConfig {
         cfg
     }
 
+    pub fn listen_host(&self) -> anyhow::Result<String> {
+        Ok(parse_host_port(&self.listen, default_listen_port())?.0)
+    }
+
+    pub fn listen_port(&self) -> anyhow::Result<u16> {
+        Ok(parse_host_port(&self.listen, default_listen_port())?.1)
+    }
+
     pub fn complete(&mut self) {
-        if self.bind_addr.trim().is_empty() {
-            self.bind_addr = default_bind_addr();
+        match parse_host_port(&self.listen, default_listen_port()) {
+            Ok((host, port)) => {
+                self.listen = format!("{host}:{port}");
+            }
+            Err(_) => {
+                self.listen = default_listen();
+            }
         }
-        if self.bind_port == 0 {
-            self.bind_port = default_bind_port();
+        if self.proxy_addr.trim().is_empty() {
+            self.proxy_addr = self.listen_host().unwrap_or_else(|_| default_listen_host());
         }
-        if self.proxy_bind_addr.trim().is_empty() {
-            self.proxy_bind_addr = self.bind_addr.clone();
-        }
-        if self.auth.method.trim().is_empty() {
-            self.auth.method = default_auth_method();
+        if self.auth.auth_type.trim().is_empty() {
+            self.auth.auth_type = default_auth_type();
         }
         if self.udp_packet_size == 0 {
             self.udp_packet_size = default_udp_packet_size();
         }
-        self.web_server.complete();
-        if self.transport.max_pool_count == 0 {
-            self.transport.max_pool_count = 5;
+        self.dashboard.complete();
+        if self.transport.max_conn_pool == 0 {
+            self.transport.max_conn_pool = 5;
         }
         if self.transport.heartbeat_timeout == 0 {
             self.transport.heartbeat_timeout = if self.transport.tcp_mux { -1 } else { 90 };
@@ -392,17 +468,83 @@ impl ServerConfig {
         }
     }
 
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let (listen_host, listen_port) = parse_host_port(&self.listen, default_listen_port())
+            .with_context(|| format!("invalid listen '{}'", self.listen))?;
+
+        if self.quic_enabled() && self.kcp_enabled() && self.quic_port == self.kcp_port {
+            anyhow::bail!(
+                "quicPort and kcpPort both use UDP and must differ (got {})",
+                self.quic_port
+            );
+        }
+
+        if self.http_gw_enabled()
+            && tcp_listen_conflicts(
+                &listen_host,
+                listen_port,
+                &self.proxy_addr,
+                self.http_gw_port,
+            )
+        {
+            anyhow::bail!(
+                "httpGwPort ({}) must not share a TCP listen with listen ({}) \
+                 on overlapping addresses (listen host={}, proxyAddr={}). \
+                 HTTP gateway and the control/WebSocket listener are separate sockets; \
+                 put HTTP on 80 (or another free port), keep control on listen.",
+                self.http_gw_port,
+                self.listen,
+                listen_host,
+                self.proxy_addr
+            );
+        }
+
+        if self.https_gw_enabled()
+            && tcp_listen_conflicts(
+                &listen_host,
+                listen_port,
+                &self.proxy_addr,
+                self.https_gw_port,
+            )
+        {
+            anyhow::bail!(
+                "httpsGwPort ({}) must not share a TCP listen with listen ({}) \
+                 on overlapping addresses (listen host={}, proxyAddr={}). \
+                 HTTPS visitors and control TLS both start with 0x16; Orbien does not \
+                 mux them on one port. Use 443 (or another free port) for HTTPS gateway.",
+                self.https_gw_port,
+                self.listen,
+                listen_host,
+                self.proxy_addr
+            );
+        }
+
+        if self.http_gw_enabled()
+            && self.https_gw_enabled()
+            && self.http_gw_port == self.https_gw_port
+        {
+            anyhow::bail!(
+                "httpGwPort and httpsGwPort must differ (both set to {})",
+                self.http_gw_port
+            );
+        }
+
+        self.dashboard.validate()?;
+
+        Ok(())
+    }
+
     pub fn quic_enabled(&self) -> bool {
-        self.quic_bind_port != 0
+        self.quic_port != 0
     }
     pub fn kcp_enabled(&self) -> bool {
-        self.kcp_bind_port != 0
+        self.kcp_port != 0
     }
-    pub fn vhost_http_enabled(&self) -> bool {
-        self.vhost_http_port != 0
+    pub fn http_gw_enabled(&self) -> bool {
+        self.http_gw_port != 0
     }
-    pub fn vhost_https_enabled(&self) -> bool {
-        self.vhost_https_port != 0
+    pub fn https_gw_enabled(&self) -> bool {
+        self.https_gw_port != 0
     }
 
     /// Effective UDP work-conn read deadline.
@@ -424,4 +566,27 @@ impl ServerConfig {
     pub fn ctrl_heartbeat_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.ctrl_heartbeat_timeout_secs.max(1))
     }
+}
+
+fn tcp_listen_conflicts(addr_a: &str, port_a: u16, addr_b: &str, port_b: u16) -> bool {
+    if port_a == 0 || port_b == 0 || port_a != port_b {
+        return false;
+    }
+    listen_addrs_overlap(addr_a, addr_b)
+}
+
+fn listen_addrs_overlap(a: &str, b: &str) -> bool {
+    let a = a.trim();
+    let b = b.trim();
+    if a.is_empty() || b.is_empty() {
+        return true;
+    }
+    if is_unspecified_bind(a) || is_unspecified_bind(b) {
+        return true;
+    }
+    a.eq_ignore_ascii_case(b)
+}
+
+fn is_unspecified_bind(addr: &str) -> bool {
+    matches!(addr, "0.0.0.0" | "::" | "[::]")
 }

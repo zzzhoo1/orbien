@@ -7,8 +7,11 @@ import TabItem from '@theme/TabItem';
 
 # Spring Boot 集成
 
-**Orbien**提供了一个轻量的Java客户端用于内嵌到`Spring Boot`应用中运行，仅支持TCP/HTTP/HTTPS协议代理，传输层只支持TCP传输协议，
-目前不支持**TCP**多路复用，因此对于服务端**开启多路复用**模式时，该Starter将不可用。
+**Orbien** 提供可内嵌到 Spring Boot 的 Java 客户端，当前能力：
+
+- 隧道协议：仅 **TCP**、**HTTP**
+- 传输层：仅 **TCP**
+- **不支持 TCP 多路复用**：`orbien.tcp-mux` 必须为 `false`，服务端也需 `[transport].tcpMux = false`（服务端默认开启多路复用，与 Java 客户端联调时需显式关闭）
 
 <Tabs>
     <TabItem value="Maven" label="Maven" default>
@@ -16,32 +19,45 @@ import TabItem from '@theme/TabItem';
         <dependency>
             <groupId>io.github.lxien</groupId>
             <artifactId>orbien-spring-boot-starter</artifactId>
-            <version>2.1.0</version>
+            <version>3.2.0</version>
         </dependency>
         ```
     </TabItem>
     <TabItem value="Gradle" label="Gradle">
         ```groovy
-        implementation("io.github.lxien:orbien-spring-boot-starter:2.1.0")
+        implementation("io.github.lxien:orbien-spring-boot-starter:3.2.0")
         ```
     </TabItem>
 </Tabs>
 
+## 最小配置
+
+`local-port` / `name` 可省略：未填时分别使用 Spring Boot Web 端口与 `spring.application.name`（或 `orbien-{protocol}`）。
 
 ```yaml
 # application.yml
 orbien:
   enabled: true
   server-addr: 127.0.0.1
-  token: YOUR_TOKEN # 可选
-  proxy:
-    type: http
-    custom-domains:
+  # token: YOUR_TOKEN # 可选
+  tunnel:
+    protocol: http
+    domains:
       - web.domain.com
-
 ```
 
-完整参考：
+服务端需关闭多路复用，例如：
+
+```toml
+# orbien-server.toml
+listen = "0.0.0.0:9527"
+httpGwPort = 80
+
+[transport]
+tcpMux = false # 关闭 TCP 多路复用
+```
+
+## 完整参考
 
 ```yaml
 # application.yml
@@ -50,19 +66,18 @@ orbien:
   server-addr: 127.0.0.1
   server-port: 9527
   token: YOUR_TOKEN
-  tcp-mux: false # 需与服务端一致（Java 客户端暂不支持多路复用）
-  pool-count: 1
+  tcp-mux: false # 必须为 false，且与服务端一致
+  pool-count: 1 # 登录时预申请的数据连接池大小
   heartbeat-interval-secs: 30
-  user: spring-boot-demo
-  # run-id: ""              # 可选；为空则从 run-id-file 恢复，或自动生成
-  # run-id-file: ""         # 可选；为空则使用用户目录下的默认路径
-  proxy:
-    name: web-demo
-    type: http
+  user: spring-boot-demo # 可选，展示在 Dashboard
+  # session-id: ""              # 可选；为空则从 session-id-file 恢复，或自动生成
+  # session-id-file: ""         # 可选；为空则使用用户目录下的默认路径
+  tunnel:
+    name: web-demo # 可选
+    protocol: http # tcp | http
     local-ip: 127.0.0.1
-    # local-port: 18080
-    custom-domains:
+    # local-port: 8080         # 可选；未填则使用 Spring Boot 监听端口
+    # remote-port: 9000         # 仅 protocol=tcp 时需要
+    domains: # protocol=http 时必填
       - web.domain.com
-    # subdomain: web       # 可选，与 custom-domains 二选一
-
 ```

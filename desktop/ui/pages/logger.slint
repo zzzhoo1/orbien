@@ -1,0 +1,351 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { IconLog } from "../icons.slint";
+import { Tr } from "../i18n.slint";
+
+export struct LogLine {
+    level: int,
+    tag: string,
+    body: string,
+    text: string,
+    pre: string,
+    mid: string,
+    post: string,
+    has-hit: bool,
+}
+
+component ConsoleSearch inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder: "";
+    private property <bool> focused: input.has-focus;
+
+    height: 34px;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    border-radius: 6px;
+    background: #ffffff12;
+    border-width: 1px;
+    border-color: root.focused ? #ffffff44 : #ffffff22;
+    forward-focus: input;
+    clip: true;
+
+    if root.text == "": Text {
+        x: 12px;
+        y: 0;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: root.placeholder;
+        color: #94a3b8;
+        font-size: 13px;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+        overflow: elide;
+    }
+
+    input := TextInput {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text <=> root.text;
+        color: #f1f5f9;
+        font-size: 13px;
+        single-line: true;
+        vertical-alignment: center;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: white;
+    }
+}
+
+component ConsoleCheck inherits TouchArea {
+    in property <string> label;
+    in-out property <bool> checked;
+    mouse-cursor: pointer;
+    vertical-stretch: 0;
+    horizontal-stretch: 0;
+    height: 34px;
+
+    clicked => { root.checked = !root.checked; }
+
+    HorizontalLayout {
+        spacing: 8px;
+        padding-left: 2px;
+        padding-right: 4px;
+
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3px;
+            border-width: root.checked ? 0px : 1px;
+            border-color: #94a3b8;
+            background: root.checked ? Theme.accent : transparent;
+            horizontal-stretch: 0;
+            vertical-stretch: 0;
+
+            if root.checked: Text {
+                width: 100%;
+                height: 100%;
+                text: "✓";
+                color: white;
+                font-size: 11px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: #f8fafc;
+            font-size: 13px;
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+component LogRow inherits Rectangle {
+    in property <LogLine> line;
+    in property <bool> searching: false;
+    height: 20px;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+    background: root.line.has-hit ? #fbbf2418 : transparent;
+    opacity: root.searching && !root.line.has-hit ? 0.38 : 1.0;
+
+    private property <color> tag-color:
+        root.line.level == 3 ? #f87171
+        : root.line.level == 2 ? #fbbf24
+        : root.line.level == 1 ? #60a5fa
+        : root.line.level == 4 ? #a78bfa
+        : Theme.console-line;
+
+    private property <color> body-color:
+        root.line.level == 3 ? #fca5a5
+        : root.line.level == 2 ? #fde68a
+        : Theme.console-line;
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0;
+        padding-left: 12px;
+        padding-right: 12px;
+
+        if root.line.has-hit: HorizontalLayout {
+            spacing: 0;
+            vertical-stretch: 0;
+            Text {
+                text: root.line.pre;
+                color: root.body-color;
+                font-size: 12px;
+                font-family: "Menlo, Monaco, Consolas, monospace";
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 0;
+            }
+
+            Rectangle {
+                background: #fbbf2433;
+                border-radius: 2px;
+                vertical-stretch: 0;
+                horizontal-stretch: 0;
+                HorizontalLayout {
+                    padding-left: 2px;
+                    padding-right: 2px;
+                    Text {
+                        text: root.line.mid;
+                        color: #fef3c7;
+                        font-size: 12px;
+                        font-weight: 700;
+                        font-family: "Menlo, Monaco, Consolas, monospace";
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Text {
+                text: root.line.post;
+                color: root.body-color;
+                font-size: 12px;
+                font-family: "Menlo, Monaco, Consolas, monospace";
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+
+        if !root.line.has-hit: Text {
+            width: 100%;
+            height: 100%;
+            text: root.line.text;
+            color: root.line.level == 0 ? root.body-color : root.tag-color;
+            font-size: 12px;
+            font-family: "Menlo, Monaco, Consolas, monospace";
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+export component LoggerPage inherits Rectangle {
+    in-out property <string> query: "";
+    in-out property <bool> auto-scroll: false;
+    in property <[LogLine]> lines: [];
+    in property <int> scroll-gen: 0;
+    callback clear-clicked;
+    callback query-edited(string);
+
+    background: transparent;
+    min-height: Theme.page-min-height;
+
+    changed query => {
+        root.query-edited(root.query);
+    }
+
+    changed scroll-gen => {
+        root.scroll-to-end-if-needed();
+    }
+
+    changed auto-scroll => {
+        if root.auto-scroll {
+            root.scroll-to-end-if-needed();
+        }
+    }
+
+    function stick-bottom-y() -> length {
+        return min(0px, log-list.height - log-list.viewport-height);
+    }
+
+    function scroll-to-end-if-needed() {
+        if !root.auto-scroll || root.lines.length == 0 {
+            return;
+        }
+        let y = root.stick-bottom-y();
+        if log-list.viewport-y != y {
+            log-list.viewport-y = y;
+        }
+    }
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 12px;
+        alignment: stretch;
+
+        HorizontalLayout {
+            height: 38px;
+            spacing: 10px;
+            vertical-stretch: 0;
+
+            Rectangle {
+                width: 22px;
+                height: 38px;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+                background: transparent;
+                IconLog {
+                    y: (parent.height - self.height) / 2;
+                    size: 22px;
+                    tint: Theme.accent;
+                }
+            }
+
+            Text {
+                text: Tr.logger-title;
+                color: Theme.accent;
+                font-size: 22px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                horizontal-stretch: 1;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Theme.console-bg;
+            border-radius: Theme.radius;
+            clip: true;
+            cache-rendering-hint: true;
+
+            VerticalLayout {
+                spacing: 0;
+
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 12px;
+                    vertical-stretch: 0;
+
+                    ConsoleSearch {
+                        text <=> root.query;
+                        placeholder: Tr.logger-search;
+                    }
+
+                    ConsoleCheck {
+                        label: Tr.logger-auto-scroll;
+                        checked <=> root.auto-scroll;
+                    }
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        vertical-stretch: 0;
+                        horizontal-stretch: 0;
+                        height: 34px;
+                        clicked => { root.clear-clicked(); }
+
+                        Rectangle {
+                            border-radius: 6px;
+                            background: parent.has-hover ? #ffffff24 : #ffffff14;
+                            border-width: 1px;
+                            border-color: #ffffff2e;
+
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                Text {
+                                    text: Tr.clear;
+                                    color: #f8fafc;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #ffffff14;
+                    vertical-stretch: 0;
+                }
+
+                if root.lines.length == 0: Rectangle {
+                    vertical-stretch: 1;
+                    background: transparent;
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: Tr.logger-empty;
+                        color: Theme.muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                log-list := ListView {
+                    vertical-stretch: 1;
+                    visible: root.lines.length > 0;
+                    for line in root.lines: LogRow {
+                        line: line;
+                        searching: root.query != "";
+                    }
+                }
+            }
+        }
+    }
+}

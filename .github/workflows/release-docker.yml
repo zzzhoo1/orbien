@@ -19,13 +19,17 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - id: ver
+      - name: Resolve version
+        id: ver
         env:
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             V="$INPUT_VERSION"
           else
             V="${GITHUB_REF_NAME#v}"
@@ -34,14 +38,23 @@ jobs:
             echo "version is empty" >&2
             exit 1
           fi
+          CARGO_V="$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
+          if [ "$CARGO_V" != "$V" ]; then
+            echo "version mismatch: release=$V workspace=$CARGO_V" >&2
+            echo "update [workspace.package] version in Cargo.toml before tagging/releasing" >&2
+            exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "Release version: $V"
+          echo "Release version: $V (matches Cargo workspace)"
 
-      - uses: docker/setup-qemu-action@v3
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -80,7 +93,7 @@ jobs:
           tags: ${{ steps.img.outputs.server_tags }}
           labels: |
             org.opencontainers.image.title=orbien-server
-            org.opencontainers.image.description=Orbien server (intranet penetration / reverse proxy)
+            org.opencontainers.image.description=Orbien server (intranet penetration / reverse tunnel)
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.ver.outputs.version }}
           cache-from: type=gha,scope=orbien-server
@@ -96,7 +109,7 @@ jobs:
           tags: ${{ steps.img.outputs.client_tags }}
           labels: |
             org.opencontainers.image.title=orbien
-            org.opencontainers.image.description=Orbien client (intranet penetration / reverse proxy)
+            org.opencontainers.image.description=Orbien client (intranet penetration / reverse tunnel)
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.ver.outputs.version }}
           cache-from: type=gha,scope=orbien-client

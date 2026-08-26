@@ -34,11 +34,11 @@ public final class MsgCodec {
                 switch (type) {
                     case MsgType.LOGIN -> MAPPER.readValue(body, Login.class);
                     case MsgType.LOGIN_RESP -> MAPPER.readValue(body, LoginResp.class);
-                    case MsgType.NEW_PROXY -> MAPPER.readValue(body, NewProxy.class);
-                    case MsgType.NEW_PROXY_RESP -> MAPPER.readValue(body, NewProxyResp.class);
-                    case MsgType.NEW_WORK_CONN -> MAPPER.readValue(body, NewWorkConn.class);
-                    case MsgType.REQ_WORK_CONN -> MAPPER.readValue(body, ReqWorkConn.class);
-                    case MsgType.START_WORK_CONN -> MAPPER.readValue(body, StartWorkConn.class);
+                    case MsgType.NEW_TUNNEL -> MAPPER.readValue(body, NewTunnel.class);
+                    case MsgType.NEW_TUNNEL_RESP -> MAPPER.readValue(body, NewTunnelResp.class);
+                    case MsgType.NEW_DATA_CONN -> MAPPER.readValue(body, NewDataConn.class);
+                    case MsgType.REQ_DATA_CONN -> MAPPER.readValue(body, ReqDataConn.class);
+                    case MsgType.START_DATA_CONN -> MAPPER.readValue(body, StartDataConn.class);
                     case MsgType.PING -> MAPPER.readValue(body, Ping.class);
                     case MsgType.PONG -> MAPPER.readValue(body, Pong.class);
                     case MsgType.KICK_OUT -> MAPPER.readValue(body, KickOut.class);

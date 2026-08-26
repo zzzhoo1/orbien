@@ -20,7 +20,6 @@ struct TlsDialOpts {
     enable: bool,
     cfg: Arc<RustlsClientConfig>,
     server_name: String,
-    write_custom_head: bool,
 }
 
 impl TlsDialOpts {
@@ -32,7 +31,6 @@ impl TlsDialOpts {
             enable: tls.enable,
             cfg: rustls_cfg,
             server_name: cfg.tls_server_name().to_string(),
-            write_custom_head: !tls.disable_custom_tls_first_byte,
         })
     }
 
@@ -40,13 +38,7 @@ impl TlsDialOpts {
         if !self.enable {
             return Ok(stream);
         }
-        client_enable_tls(
-            stream,
-            Arc::clone(&self.cfg),
-            &self.server_name,
-            self.write_custom_head,
-        )
-        .await
+        client_enable_tls(stream, Arc::clone(&self.cfg), &self.server_name).await
     }
 }
 
@@ -123,9 +115,10 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
             let t = &cfg.transport.tls;
             let session = QuicSession::dial(
                 addr,
-                cfg.tls_server_name(),
+                &cfg.tls_server_name(),
                 cfg.transport.quic.keepalive(),
                 cfg.transport.quic.idle_timeout(),
+                cfg.transport.quic.max_incoming_streams,
                 &t.cert_file,
                 &t.key_file,
                 &t.trusted_ca_file,
@@ -141,6 +134,7 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
 
 async fn dial_tcp_tls(cfg: &ClientConfig, tls: &TlsDialOpts) -> Result<DynStream> {
     let stream = TcpStream::connect(cfg.server_endpoint()).await?;
+    orbien_core::net::enable_nodelay(&stream);
     tls.maybe_wrap(boxed_stream(stream)).await
 }
 
@@ -243,6 +237,7 @@ struct TcpConnector {
 impl Connector for TcpConnector {
     async fn open(&self) -> Result<DynStream> {
         let stream = TcpStream::connect(&self.endpoint).await?;
+        orbien_core::net::enable_nodelay(&stream);
         self.tls.maybe_wrap(boxed_stream(stream)).await
     }
 }

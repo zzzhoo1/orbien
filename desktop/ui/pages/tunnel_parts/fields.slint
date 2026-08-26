@@ -1,0 +1,122 @@
+import { LineEdit, ComboBox, Button } from "std-widgets.slint";
+import { Theme } from "../../theme.slint";
+import { Tr } from "../../i18n.slint";
+
+export component FormField inherits Rectangle {
+    in property <string> label;
+    in-out property <string> value;
+    in property <string> placeholder: "";
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+    height: 60px;
+
+    Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 18px;
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    LineEdit {
+        x: 0;
+        y: 24px;
+        width: parent.width;
+        height: 36px;
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+    }
+}
+
+export component FormPathField inherits Rectangle {
+    in property <string> label;
+    in-out property <string> value;
+    in property <string> placeholder: "";
+    callback browse-clicked;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+    height: 60px;
+
+    Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 18px;
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    HorizontalLayout {
+        x: 0;
+        y: 24px;
+        width: parent.width;
+        height: 36px;
+        spacing: 8px;
+        LineEdit {
+            horizontal-stretch: 1;
+            height: 36px;
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+        }
+
+        Button {
+            text: Tr.browse;
+            horizontal-stretch: 0;
+            min-width: 72px;
+            height: 36px;
+            clicked => {
+                root.browse-clicked();
+            }
+        }
+    }
+}
+
+export component FormCombo inherits Rectangle {
+    in property <string> label;
+    in property <[string]> model;
+    in-out property <int> current-index: 0;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+    height: 60px;
+
+    Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 18px;
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    ComboBox {
+        x: 0;
+        y: 24px;
+        width: parent.width;
+        height: 36px;
+        model: root.model;
+        current-index <=> root.current-index;
+    }
+}
+
+export component FormRow inherits HorizontalLayout {
+    spacing: 16px;
+    vertical-stretch: 0;
+    height: 60px;
+    @children
+}

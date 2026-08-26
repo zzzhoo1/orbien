@@ -2,6 +2,8 @@
 import {computed} from 'vue'
 import {formatFileSize} from '@/utils/format'
 import {useLocale} from '@/composables/useLocale'
+import arrowUpIcon from '@/assets/icon/arrow-up.svg?raw'
+import arrowDownIcon from '@/assets/icon/arrow-down.svg?raw'
 
 const props = withDefaults(
     defineProps<{
@@ -31,16 +33,12 @@ const outbound = computed(() => Number(props.trafficOut ?? 0) || 0)
       :title="`${t('traffic.out')}: ${formatFileSize(outbound)} · ${t('traffic.in')}: ${formatFileSize(inbound)}`"
   >
     <div class="row out">
-      <svg class="arrow" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 12.5V3.5M4.5 7 8 3.5 11.5 7"/>
-      </svg>
+      <span class="arrow" aria-hidden="true" v-html="arrowUpIcon"/>
       <span class="val">{{ formatFileSize(outbound) }}</span>
     </div>
     <span v-if="layout === 'inline'" class="sep" aria-hidden="true">/</span>
     <div class="row in">
-      <svg class="arrow" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/>
-      </svg>
+      <span class="arrow" aria-hidden="true" v-html="arrowDownIcon"/>
       <span class="val">{{ formatFileSize(inbound) }}</span>
     </div>
   </div>
@@ -74,7 +72,7 @@ const outbound = computed(() => Number(props.trafficOut ?? 0) || 0)
 
 .traffic-io.chip {
   padding: 0.28rem 0.55rem;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--muted) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
 }
@@ -98,14 +96,21 @@ const outbound = computed(() => Number(props.trafficOut ?? 0) || 0)
 }
 
 .arrow {
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 0.72rem;
+  height: 0.72rem;
   flex-shrink: 0;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  color: inherit;
+}
+
+.arrow :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+  stroke: none;
 }
 
 .row.out {

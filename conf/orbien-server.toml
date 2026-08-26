@@ -1,0 +1,13 @@
+listen = "0.0.0.0:9527"
+
+# httpGwPort = 80
+# httpsGwPort = 443
+# rootDomain = "example.com"
+
+#auth.token = "YOUR_TOKEN"
+
+#[dashboard]
+#addr = "0.0.0.0"
+#port = 8020
+#user = "admin"
+#password = "123456"

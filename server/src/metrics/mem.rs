@@ -27,22 +27,22 @@ impl TrafficWindow {
 pub struct ServerSnapshot {
     pub total_traffic_in: u64,
     pub total_traffic_out: u64,
-    pub cur_conns: usize,
+    pub active_connections: usize,
     pub client_counts: usize,
     pub total_client_counts: usize,
-    pub proxy_type_counts: HashMap<String, usize>,
+    pub tunnel_type_counts: HashMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct ProxySnapshot {
+pub struct TunnelSnapshot {
     pub name: String,
-    pub proxy_type: String,
+    pub tunnel_type: String,
     pub user: String,
-    pub client_id: String,
+    pub session_id: String,
     pub today_traffic_in: u64,
     pub today_traffic_out: u64,
-    pub cur_conns: usize,
+    pub active_connections: usize,
     pub last_start_at: Option<i64>,
     pub last_close_at: Option<i64>,
 }
@@ -55,7 +55,7 @@ pub struct TrafficPoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProxyTrafficHistory {
+pub struct TunnelTrafficHistory {
     pub name: String,
     pub unit: &'static str,
     pub granularity: &'static str,
@@ -68,30 +68,30 @@ pub struct TokenConnSnapshot {
     pub active_conns: usize,
 }
 
-struct ProxyStats {
-    proxy_type: String,
+struct TunnelStats {
+    tunnel_type: String,
     user: String,
-    client_id: String,
+    session_id: String,
     traffic_in: DateCounter,
     traffic_out: DateCounter,
     traffic_in_hourly: HourCounter,
     traffic_out_hourly: HourCounter,
-    cur_conns: Counter,
+    active_connections: Counter,
     last_start_unix: Option<i64>,
     last_close_unix: Option<i64>,
 }
 
-impl ProxyStats {
-    fn new(proxy_type: &str, user: &str, client_id: &str) -> Self {
+impl TunnelStats {
+    fn new(tunnel_type: &str, user: &str, session_id: &str) -> Self {
         Self {
-            proxy_type: proxy_type.to_string(),
+            tunnel_type: tunnel_type.to_string(),
             user: user.to_string(),
-            client_id: client_id.to_string(),
+            session_id: session_id.to_string(),
             traffic_in: DateCounter::new(RESERVE_DAYS),
             traffic_out: DateCounter::new(RESERVE_DAYS),
             traffic_in_hourly: HourCounter::new(RESERVE_HOURS),
             traffic_out_hourly: HourCounter::new(RESERVE_HOURS),
-            cur_conns: Counter::new(),
+            active_connections: Counter::new(),
             last_start_unix: None,
             last_close_unix: None,
         }
@@ -103,12 +103,12 @@ struct State {
     total_traffic_out: DateCounter,
     total_traffic_in_hourly: HourCounter,
     total_traffic_out_hourly: HourCounter,
-    cur_conns: Counter,
+    active_connections: Counter,
     client_counts: Counter,
     token_conns: HashMap<String, Counter>,
     seen_clients: HashSet<String>,
-    proxy_type_counts: HashMap<String, Counter>,
-    proxies: HashMap<String, ProxyStats>,
+    tunnel_type_counts: HashMap<String, Counter>,
+    tunnels: HashMap<String, TunnelStats>,
 }
 
 pub struct MemMetrics {
@@ -123,43 +123,47 @@ impl MemMetrics {
                 total_traffic_out: DateCounter::new(RESERVE_DAYS),
                 total_traffic_in_hourly: HourCounter::new(RESERVE_HOURS),
                 total_traffic_out_hourly: HourCounter::new(RESERVE_HOURS),
-                cur_conns: Counter::new(),
+                active_connections: Counter::new(),
                 client_counts: Counter::new(),
                 token_conns: HashMap::new(),
                 seen_clients: HashSet::new(),
-                proxy_type_counts: HashMap::new(),
-                proxies: HashMap::new(),
+                tunnel_type_counts: HashMap::new(),
+                tunnels: HashMap::new(),
             }),
         })
     }
 
     pub fn server_snapshot(&self) -> ServerSnapshot {
         let g = self.state.lock().expect("metrics lock");
-        let mut proxy_type_counts = HashMap::new();
-        for (k, v) in &g.proxy_type_counts {
+        let mut tunnel_type_counts = HashMap::new();
+        for (k, v) in &g.tunnel_type_counts {
             let n = v.count().max(0) as usize;
             if n > 0 {
-                proxy_type_counts.insert(k.clone(), n);
+                tunnel_type_counts.insert(k.clone(), n);
             }
         }
         ServerSnapshot {
             total_traffic_in: g.total_traffic_in.today_count().max(0) as u64,
             total_traffic_out: g.total_traffic_out.today_count().max(0) as u64,
-            cur_conns: g.cur_conns.count().max(0) as usize,
+            active_connections: g.active_connections.count().max(0) as usize,
             client_counts: g.client_counts.count().max(0) as usize,
             total_client_counts: g.seen_clients.len(),
-            proxy_type_counts,
+            tunnel_type_counts,
         }
     }
 
-    pub fn proxy_snapshot(&self, name: &str) -> Option<ProxySnapshot> {
+    pub fn tunnel_snapshot(&self, name: &str) -> Option<TunnelSnapshot> {
         let g = self.state.lock().expect("metrics lock");
-        g.proxies.get(name).map(|p| to_proxy_snapshot(name, p))
+        g.tunnels.get(name).map(|p| to_tunnel_snapshot(name, p))
     }
 
-    pub fn proxy_traffic(&self, name: &str, window: TrafficWindow) -> Option<ProxyTrafficHistory> {
+    pub fn tunnel_traffic(
+        &self,
+        name: &str,
+        window: TrafficWindow,
+    ) -> Option<TunnelTrafficHistory> {
         let g = self.state.lock().expect("metrics lock");
-        let p = g.proxies.get(name)?;
+        let p = g.tunnels.get(name)?;
         Some(match window {
             TrafficWindow::Days7 => {
                 let inbound = p.traffic_in.last_days(RESERVE_DAYS);
@@ -174,7 +178,7 @@ impl MemMetrics {
         })
     }
 
-    pub fn server_traffic(&self, window: TrafficWindow) -> ProxyTrafficHistory {
+    pub fn server_traffic(&self, window: TrafficWindow) -> TunnelTrafficHistory {
         let g = self.state.lock().expect("metrics lock");
         match window {
             TrafficWindow::Days7 => {
@@ -238,15 +242,15 @@ impl MemMetrics {
     pub fn track_connection(
         self: &Arc<Self>,
         name: impl Into<String>,
-        proxy_type: impl Into<String>,
+        tunnel_type: impl Into<String>,
     ) -> ConnGuard {
         let name = name.into();
-        let proxy_type = proxy_type.into();
-        self.open_connection(&name, &proxy_type);
+        let tunnel_type = tunnel_type.into();
+        self.open_connection(&name, &tunnel_type);
         ConnGuard {
             metrics: Arc::clone(self),
             name,
-            proxy_type,
+            tunnel_type,
         }
     }
 }
@@ -254,20 +258,20 @@ impl MemMetrics {
 pub struct ConnGuard {
     metrics: Arc<MemMetrics>,
     name: String,
-    proxy_type: String,
+    tunnel_type: String,
 }
 
 impl Drop for ConnGuard {
     fn drop(&mut self) {
-        self.metrics.close_connection(&self.name, &self.proxy_type);
+        self.metrics.close_connection(&self.name, &self.tunnel_type);
     }
 }
 
 impl ServerMetrics for MemMetrics {
-    fn new_client(&self, run_id: &str) {
+    fn new_client(&self, session_id: &str) {
         let mut g = self.state.lock().expect("metrics lock");
-        if !run_id.is_empty() {
-            g.seen_clients.insert(run_id.to_string());
+        if !session_id.is_empty() {
+            g.seen_clients.insert(session_id.to_string());
             const MAX_SEEN: usize = 256;
             if g.seen_clients.len() > MAX_SEEN {
                 let overflow = g.seen_clients.len() - MAX_SEEN;
@@ -289,56 +293,55 @@ impl ServerMetrics for MemMetrics {
             .dec(1);
     }
 
-    fn new_proxy(&self, name: &str, proxy_type: &str, user: &str, client_id: &str) {
+    fn new_tunnel(&self, name: &str, tunnel_type: &str, user: &str, session_id: &str) {
         let mut g = self.state.lock().expect("metrics lock");
-        // fix: unwrap_or_default replaces or_insert_with(Counter::new)
-        g.proxy_type_counts
-            .entry(proxy_type.to_string())
-            .or_default()
+        g.tunnel_type_counts
+            .entry(tunnel_type.to_string())
+            .or_insert_with(Counter::new)
             .inc(1);
 
         let now_unix = Local::now().timestamp();
         let entry = g
-            .proxies
+            .tunnels
             .entry(name.to_string())
-            .or_insert_with(|| ProxyStats::new(proxy_type, user, client_id));
+            .or_insert_with(|| TunnelStats::new(tunnel_type, user, session_id));
 
-        if entry.proxy_type != proxy_type {
-            *entry = ProxyStats::new(proxy_type, user, client_id);
+        if entry.tunnel_type != tunnel_type {
+            *entry = TunnelStats::new(tunnel_type, user, session_id);
         } else {
             entry.user = user.to_string();
-            entry.client_id = client_id.to_string();
+            entry.session_id = session_id.to_string();
         }
         entry.last_start_unix = Some(now_unix);
     }
 
-    fn close_proxy(&self, name: &str, proxy_type: &str) {
+    fn close_tunnel(&self, name: &str, tunnel_type: &str) {
         let mut g = self.state.lock().expect("metrics lock");
-        if let Some(counter) = g.proxy_type_counts.get(proxy_type) {
+        if let Some(counter) = g.tunnel_type_counts.get(tunnel_type) {
             counter.dec(1);
         }
-        if let Some(entry) = g.proxies.get_mut(name) {
+        if let Some(entry) = g.tunnels.get_mut(name) {
             entry.last_close_unix = Some(Local::now().timestamp());
         }
     }
 
-    fn open_connection(&self, name: &str, _proxy_type: &str) {
+    fn open_connection(&self, name: &str, _tunnel_type: &str) {
         let mut g = self.state.lock().expect("metrics lock");
-        g.cur_conns.inc(1);
-        if let Some(p) = g.proxies.get_mut(name) {
-            p.cur_conns.inc(1);
+        g.active_connections.inc(1);
+        if let Some(p) = g.tunnels.get_mut(name) {
+            p.active_connections.inc(1);
         }
     }
 
-    fn close_connection(&self, name: &str, _proxy_type: &str) {
+    fn close_connection(&self, name: &str, _tunnel_type: &str) {
         let mut g = self.state.lock().expect("metrics lock");
-        g.cur_conns.dec(1);
-        if let Some(p) = g.proxies.get_mut(name) {
-            p.cur_conns.dec(1);
+        g.active_connections.dec(1);
+        if let Some(p) = g.tunnels.get_mut(name) {
+            p.active_connections.dec(1);
         }
     }
 
-    fn add_traffic_in(&self, name: &str, _proxy_type: &str, bytes: u64) {
+    fn add_traffic_in(&self, name: &str, _tunnel_type: &str, bytes: u64) {
         if bytes == 0 {
             return;
         }
@@ -346,13 +349,13 @@ impl ServerMetrics for MemMetrics {
         let mut g = self.state.lock().expect("metrics lock");
         g.total_traffic_in.inc(delta);
         g.total_traffic_in_hourly.inc(delta);
-        if let Some(p) = g.proxies.get_mut(name) {
+        if let Some(p) = g.tunnels.get_mut(name) {
             p.traffic_in.inc(delta);
             p.traffic_in_hourly.inc(delta);
         }
     }
 
-    fn add_traffic_out(&self, name: &str, _proxy_type: &str, bytes: u64) {
+    fn add_traffic_out(&self, name: &str, _tunnel_type: &str, bytes: u64) {
         if bytes == 0 {
             return;
         }
@@ -360,28 +363,28 @@ impl ServerMetrics for MemMetrics {
         let mut g = self.state.lock().expect("metrics lock");
         g.total_traffic_out.inc(delta);
         g.total_traffic_out_hourly.inc(delta);
-        if let Some(p) = g.proxies.get_mut(name) {
+        if let Some(p) = g.tunnels.get_mut(name) {
             p.traffic_out.inc(delta);
             p.traffic_out_hourly.inc(delta);
         }
     }
 }
 
-fn to_proxy_snapshot(name: &str, p: &ProxyStats) -> ProxySnapshot {
-    ProxySnapshot {
+fn to_tunnel_snapshot(name: &str, p: &TunnelStats) -> TunnelSnapshot {
+    TunnelSnapshot {
         name: name.to_string(),
-        proxy_type: p.proxy_type.clone(),
+        tunnel_type: p.tunnel_type.clone(),
         user: p.user.clone(),
-        client_id: p.client_id.clone(),
+        session_id: p.session_id.clone(),
         today_traffic_in: p.traffic_in.today_count().max(0) as u64,
         today_traffic_out: p.traffic_out.today_count().max(0) as u64,
-        cur_conns: p.cur_conns.count().max(0) as usize,
+        active_connections: p.active_connections.count().max(0) as usize,
         last_start_at: p.last_start_unix,
         last_close_at: p.last_close_unix,
     }
 }
 
-fn build_daily_history(name: &str, inbound: &[i64], outbound: &[i64]) -> ProxyTrafficHistory {
+fn build_daily_history(name: &str, inbound: &[i64], outbound: &[i64]) -> TunnelTrafficHistory {
     let today = Local::now().date_naive();
     let n = RESERVE_DAYS.min(inbound.len()).min(outbound.len());
     let mut history = Vec::with_capacity(n);
@@ -395,7 +398,7 @@ fn build_daily_history(name: &str, inbound: &[i64], outbound: &[i64]) -> ProxyTr
             traffic_out: outbound[age].max(0) as u64,
         });
     }
-    ProxyTrafficHistory {
+    TunnelTrafficHistory {
         name: name.to_string(),
         unit: "bytes",
         granularity: "day",
@@ -403,7 +406,7 @@ fn build_daily_history(name: &str, inbound: &[i64], outbound: &[i64]) -> ProxyTr
     }
 }
 
-fn build_hourly_history(name: &str, inbound: &[i64], outbound: &[i64]) -> ProxyTrafficHistory {
+fn build_hourly_history(name: &str, inbound: &[i64], outbound: &[i64]) -> TunnelTrafficHistory {
     let now_hour = Local::now()
         .with_minute(0)
         .and_then(|t| t.with_second(0))
@@ -419,7 +422,7 @@ fn build_hourly_history(name: &str, inbound: &[i64], outbound: &[i64]) -> ProxyT
             traffic_out: outbound[age].max(0) as u64,
         });
     }
-    ProxyTrafficHistory {
+    TunnelTrafficHistory {
         name: name.to_string(),
         unit: "bytes",
         granularity: "hour",

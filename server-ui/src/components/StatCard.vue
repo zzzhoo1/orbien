@@ -5,11 +5,10 @@ import type {AppIconName} from '@/components/AppIcon.vue'
 withDefaults(
     defineProps<{
       label: string
-      hint?: string
       icon?: AppIconName
       tone?: IconTone
     }>(),
-    {hint: '', tone: 'blue'},
+    {tone: 'blue'},
 )
 </script>
 
@@ -23,9 +22,6 @@ withDefaults(
         </div>
       </div>
       <IconBadge v-if="icon" :name="icon" :tone="tone" class="stat-icon"/>
-    </div>
-    <div v-if="hint || $slots.hint" class="stat-hint">
-      <slot name="hint">{{ hint }}</slot>
     </div>
   </div>
 </template>
@@ -60,11 +56,5 @@ withDefaults(
 
 .stat-icon {
   margin-top: 0.05rem;
-}
-
-.stat-hint {
-  margin-top: 0.45rem;
-  color: var(--muted);
-  font-size: 0.78rem;
 }
 </style>

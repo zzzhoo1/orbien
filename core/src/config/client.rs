@@ -1,22 +1,24 @@
-use super::server::QuicOptions;
-use anyhow::Context;
+use super::server::{parse_host_port, QuicOptions};
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
-    #[serde(rename = "serverAddr", alias = "server_addr")]
-    pub server_addr: String,
-    #[serde(rename = "serverPort", alias = "server_port")]
-    pub server_port: u16,
+    #[serde(default = "default_server")]
+    pub server: String,
+
     #[serde(default)]
     pub user: String,
+
     #[serde(default)]
     pub auth: AuthConfig,
+
     #[serde(default)]
     pub transport: TransportConfig,
+
     #[serde(default)]
-    pub proxies: Vec<ProxyConfig>,
+    pub tunnels: Vec<TunnelConfig>,
 
     #[serde(
         default = "default_udp_packet_size",
@@ -28,8 +30,8 @@ pub struct ClientConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
-    #[serde(default = "default_auth_method")]
-    pub method: String,
+    #[serde(default = "default_auth_type", rename = "type", alias = "auth_type")]
+    pub auth_type: String,
     #[serde(default)]
     pub token: String,
 }
@@ -50,11 +52,11 @@ pub struct TransportConfig {
     pub tcp_mux: bool,
 
     #[serde(
-        default = "default_tcp_mux_keepalive",
-        rename = "tcpMuxKeepaliveInterval",
-        alias = "tcp_mux_keepalive_interval"
+        default = "default_mux_keepalive_secs",
+        rename = "muxKeepaliveSecs",
+        alias = "mux_keepalive_secs"
     )]
-    pub tcp_mux_keepalive_interval: i64,
+    pub mux_keepalive_secs: i64,
 
     #[serde(
         default = "default_heartbeat_interval",
@@ -92,7 +94,7 @@ impl Default for TransportConfig {
             protocol: default_protocol(),
             pool_count: default_pool_count(),
             tcp_mux: default_tcp_mux(),
-            tcp_mux_keepalive_interval: default_tcp_mux_keepalive(),
+            mux_keepalive_secs: default_mux_keepalive_secs(),
             heartbeat_interval: default_heartbeat_interval(),
             heartbeat_timeout: default_heartbeat_timeout(),
             quic: QuicOptions::default(),
@@ -112,16 +114,8 @@ pub struct ClientTlsConfig {
     pub key_file: String,
     #[serde(default, rename = "trustedCaFile", alias = "trusted_ca_file")]
     pub trusted_ca_file: String,
-
     #[serde(default, rename = "serverName", alias = "server_name")]
     pub server_name: String,
-
-    #[serde(
-        default = "default_disable_custom_tls_first_byte",
-        rename = "disableCustomTLSFirstByte",
-        alias = "disable_custom_tls_first_byte"
-    )]
-    pub disable_custom_tls_first_byte: bool,
 }
 
 impl Default for ClientTlsConfig {
@@ -132,7 +126,6 @@ impl Default for ClientTlsConfig {
             key_file: String::new(),
             trusted_ca_file: String::new(),
             server_name: String::new(),
-            disable_custom_tls_first_byte: default_disable_custom_tls_first_byte(),
         }
     }
 }
@@ -141,43 +134,36 @@ fn default_tls_enable() -> bool {
     true
 }
 
-fn default_disable_custom_tls_first_byte() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyConfig {
+pub struct TunnelConfig {
     pub name: String,
-    #[serde(rename = "type", alias = "proxy_type")]
-    pub proxy_type: String,
-    #[serde(default = "default_local_ip", rename = "localIP", alias = "local_ip")]
-    pub local_ip: String,
 
-    #[serde(default, rename = "localPort", alias = "local_port")]
-    pub local_port: u16,
+    pub protocol: String,
+
+    #[serde(default)]
+    pub service: String,
 
     #[serde(default, rename = "remotePort", alias = "remote_port")]
     pub remote_port: u16,
 
-    #[serde(default, rename = "customDomains", alias = "custom_domains")]
-    pub custom_domains: Vec<String>,
-
     #[serde(default)]
-    pub subdomain: String,
+    pub domains: Vec<String>,
 
     #[serde(default)]
     pub locations: Vec<String>,
-    #[serde(default, rename = "httpUser", alias = "http_user")]
-    pub http_user: String,
-    #[serde(default, rename = "httpPassword", alias = "http_password")]
-    pub http_password: String,
+
+    #[serde(default, rename = "basicAuthUser", alias = "basic_auth_user")]
+    pub basic_auth_user: String,
+    #[serde(default, rename = "basicAuthPassword", alias = "basic_auth_password")]
+    pub basic_auth_password: String,
+
     #[serde(default, rename = "hostHeaderRewrite", alias = "host_header_rewrite")]
     pub host_header_rewrite: String,
     #[serde(default, rename = "routeByHTTPUser", alias = "route_by_http_user")]
     pub route_by_http_user: String,
 
     #[serde(default)]
-    pub transport: ProxyTransportConfig,
+    pub transport: TunnelTransportConfig,
 
     #[serde(default)]
     pub plugin: Option<PluginConfig>,
@@ -194,17 +180,23 @@ pub struct PluginConfig {
     #[serde(rename = "type", alias = "plugin_type")]
     pub plugin_type: String,
 
-    #[serde(default, rename = "localAddr", alias = "local_addr")]
-    pub local_addr: String,
-    #[serde(default, rename = "crtPath", alias = "crt_path")]
-    pub crt_path: String,
-    #[serde(default, rename = "keyPath", alias = "key_path")]
-    pub key_path: String,
+    #[serde(default)]
+    pub service: String,
+
+    #[serde(default, rename = "certFile", alias = "cert_file")]
+    pub cert_file: String,
+    #[serde(default, rename = "keyFile", alias = "key_file")]
+    pub key_file: String,
     #[serde(default, rename = "hostHeaderRewrite", alias = "host_header_rewrite")]
     pub host_header_rewrite: String,
 
     #[serde(default, rename = "requestHeaders", alias = "request_headers")]
     pub request_headers: PluginRequestHeaders,
+
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -214,16 +206,16 @@ pub struct PluginRequestHeaders {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProxyTransportConfig {
-    #[serde(default, rename = "bandwidthLimit", alias = "bandwidth_limit")]
-    pub bandwidth_limit: String,
+pub struct TunnelTransportConfig {
+    #[serde(default)]
+    pub bandwidth: f64,
 
     #[serde(
-        default = "default_bandwidth_limit_mode",
-        rename = "bandwidthLimitMode",
-        alias = "bandwidth_limit_mode"
+        default = "default_bandwidth_limit_side",
+        rename = "bandwidthLimitSide",
+        alias = "bandwidth_limit_side"
     )]
-    pub bandwidth_limit_mode: String,
+    pub bandwidth_limit_side: String,
 
     #[serde(
         default,
@@ -233,11 +225,11 @@ pub struct ProxyTransportConfig {
     pub proxy_protocol_version: String,
 }
 
-fn default_bandwidth_limit_mode() -> String {
+fn default_bandwidth_limit_side() -> String {
     "client".into()
 }
 
-fn default_auth_method() -> String {
+fn default_auth_type() -> String {
     "token".into()
 }
 
@@ -253,7 +245,7 @@ fn default_tcp_mux() -> bool {
     true
 }
 
-fn default_tcp_mux_keepalive() -> i64 {
+fn default_mux_keepalive_secs() -> i64 {
     30
 }
 
@@ -265,24 +257,88 @@ fn default_heartbeat_timeout() -> i64 {
     -1
 }
 
-fn default_local_ip() -> String {
-    "127.0.0.1".into()
-}
-
 fn default_udp_packet_size() -> usize {
     1500
 }
 
+fn default_server() -> String {
+    "127.0.0.1:9527".into()
+}
+
+impl TunnelConfig {
+    pub fn service_host_port(&self) -> anyhow::Result<(String, u16)> {
+        let raw = self.service.trim();
+        if raw.is_empty() {
+            return Ok(("127.0.0.1".into(), 0));
+        }
+        let (host, port) = parse_host_port(raw, 0)
+            .map_err(|e| anyhow!("tunnel `{}` invalid service: {e}", self.name))?;
+        if port == 0 {
+            return Err(anyhow!(
+                "tunnel `{}` service must include a port (got {raw:?})",
+                self.name
+            ));
+        }
+        if host.is_empty() {
+            return Err(anyhow!("tunnel `{}` service has empty host", self.name));
+        }
+        Ok((host, port))
+    }
+
+    pub fn has_plugin(&self) -> bool {
+        matches!(
+            self.plugin
+                .as_ref()
+                .map(|p| p.plugin_type.trim().is_empty()),
+            Some(false)
+        )
+    }
+
+    pub fn requires_local_service(&self) -> bool {
+        !self.has_plugin()
+    }
+}
+
+enum LoadMode {
+    Runtime,
+    Edit,
+}
+
 impl ClientConfig {
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        Self::load_with(path, LoadMode::Runtime)
+    }
+
+    pub fn load_for_edit(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        Self::load_with(path, LoadMode::Edit)
+    }
+
+    fn load_with(path: impl AsRef<Path>, mode: LoadMode) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let raw = super::read_toml_file(path)?;
-        let mut cfg: Self = toml::from_str(&raw)
+        let file = super::read_toml_file(path)?;
+        let expanded = match mode {
+            LoadMode::Runtime => Some(super::expand_env_placeholders(&file)?),
+            LoadMode::Edit => {
+                super::env::reject_env_placeholders(&file)?;
+                None
+            }
+        };
+        let text = expanded.as_deref().unwrap_or(file.as_str());
+        let mut cfg: Self = toml::from_str(text)
             .with_context(|| format!("failed to parse config file '{}'", path.display()))?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
-        cfg.resolve_paths(base);
+        if matches!(mode, LoadMode::Runtime) {
+            cfg.resolve_paths(base);
+        }
         cfg.complete();
+        cfg.validate()?;
         Ok(cfg)
+    }
+
+    pub fn prepare_runtime(&mut self, config_path: &Path) {
+        let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+        self.resolve_paths(base);
+        self.complete();
     }
 
     fn resolve_paths(&mut self, base: &Path) {
@@ -290,9 +346,20 @@ impl ClientConfig {
         tls.cert_file = super::resolve_maybe_relative(base, &tls.cert_file);
         tls.key_file = super::resolve_maybe_relative(base, &tls.key_file);
         tls.trusted_ca_file = super::resolve_maybe_relative(base, &tls.trusted_ca_file);
+        for t in &mut self.tunnels {
+            if let Some(ref mut plugin) = t.plugin {
+                plugin.cert_file = super::resolve_maybe_relative(base, &plugin.cert_file);
+                plugin.key_file = super::resolve_maybe_relative(base, &plugin.key_file);
+            }
+        }
     }
 
     pub fn complete(&mut self) {
+        if matches!(self.protocol().ok(), Some(crate::transport::Protocol::Quic)) {
+            self.transport.tcp_mux = false;
+            self.transport.tls.enable = true;
+        }
+
         if !self.transport.tcp_mux {
             if self.transport.heartbeat_interval < 0 {
                 self.transport.heartbeat_interval = 30;
@@ -302,21 +369,197 @@ impl ClientConfig {
             }
         }
 
+        if self.auth.auth_type.trim().is_empty() {
+            self.auth.auth_type = default_auth_type();
+        }
+
+        if self.udp_packet_size == 0 {
+            self.udp_packet_size = default_udp_packet_size();
+        }
+
         if self.transport.tls.server_name.trim().is_empty() {
-            self.transport.tls.server_name = self.server_addr.clone();
+            if let Ok(host) = self.server_host() {
+                self.transport.tls.server_name = host;
+            }
         }
     }
 
-    pub fn tls_server_name(&self) -> &str {
-        if self.transport.tls.server_name.trim().is_empty() {
-            &self.server_addr
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.server.trim().is_empty() {
+            return Err(anyhow!("server is required (host:port)"));
+        }
+        let (host, port) = parse_host_port(&self.server, 9527)
+            .map_err(|e| anyhow!("invalid server {:?}: {e}", self.server))?;
+        if host.is_empty() {
+            return Err(anyhow!("server host is empty"));
+        }
+        if port == 0 {
+            return Err(anyhow!("server port must be > 0"));
+        }
+        let _ = self.protocol()?;
+        if self.transport.pool_count < 1 {
+            return Err(anyhow!(
+                "transport.poolCount must be >= 1, got {}",
+                self.transport.pool_count
+            ));
+        }
+        if self.udp_packet_size == 0 || self.udp_packet_size > 65535 {
+            return Err(anyhow!(
+                "udpPacketSize out of range: {}",
+                self.udp_packet_size
+            ));
+        }
+        if self.transport.heartbeat_timeout > 0
+            && self.transport.heartbeat_interval > 0
+            && self.transport.heartbeat_timeout < self.transport.heartbeat_interval
+        {
+            return Err(anyhow!(
+                "heartbeatTimeout ({}) must be >= heartbeatInterval ({})",
+                self.transport.heartbeat_timeout,
+                self.transport.heartbeat_interval
+            ));
+        }
+        for t in &self.tunnels {
+            if t.name.trim().is_empty() {
+                return Err(anyhow!("tunnel name is required"));
+            }
+            let proto = t.protocol.trim().to_ascii_lowercase();
+            if !matches!(proto.as_str(), "tcp" | "udp" | "http" | "https") {
+                return Err(anyhow!(
+                    "tunnel `{}` unsupported protocol {:?}",
+                    t.name,
+                    t.protocol
+                ));
+            }
+            if !t.transport.bandwidth.is_finite() || t.transport.bandwidth < 0.0 {
+                return Err(anyhow!(
+                    "tunnel `{}` invalid bandwidth {}",
+                    t.name,
+                    t.transport.bandwidth
+                ));
+            }
+            let side = t.transport.bandwidth_limit_side.trim().to_ascii_lowercase();
+            if !side.is_empty() && side != "client" && side != "server" {
+                return Err(anyhow!(
+                    "tunnel `{}` invalid bandwidthLimitSide {:?}",
+                    t.name,
+                    t.transport.bandwidth_limit_side
+                ));
+            }
+            match proto.as_str() {
+                "tcp" | "udp" => {
+                    if t.remote_port == 0 {
+                        return Err(anyhow!(
+                            "tunnel `{}` remotePort is required for {}",
+                            t.name,
+                            proto
+                        ));
+                    }
+                    if t.requires_local_service() {
+                        let _ = t.service_host_port()?;
+                    }
+                    if let Some(plugin) = &t.plugin {
+                        Self::validate_tcp_tunnel_plugin(t.name.as_str(), plugin)?;
+                    }
+                }
+                "http" | "https" => {
+                    if t.domains.is_empty() {
+                        return Err(anyhow!(
+                            "tunnel `{}` domains is required for {}",
+                            t.name,
+                            proto
+                        ));
+                    }
+                    if t.requires_local_service() {
+                        let _ = t.service_host_port()?;
+                    }
+                    if let Some(plugin) = &t.plugin {
+                        Self::validate_https_tunnel_plugin(t.name.as_str(), plugin)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_tcp_tunnel_plugin(name: &str, plugin: &PluginConfig) -> anyhow::Result<()> {
+        let pt = plugin.plugin_type.trim().to_ascii_lowercase();
+        if pt.is_empty() {
+            return Ok(());
+        }
+        match pt.as_str() {
+            "socks5" => Self::validate_socks5_plugin_fields(name, plugin),
+            other => Err(anyhow!(
+                "tunnel `{}` unsupported plugin.type {:?}",
+                name,
+                other
+            )),
+        }
+    }
+
+    fn validate_https_tunnel_plugin(name: &str, plugin: &PluginConfig) -> anyhow::Result<()> {
+        let pt = plugin.plugin_type.trim().to_ascii_lowercase();
+        if pt.is_empty() {
+            return Ok(());
+        }
+        match pt.as_str() {
+            "tls-term" => {
+                if plugin.service.trim().is_empty() {
+                    return Err(anyhow!(
+                        "tunnel `{}` plugin.service is required for tls-term",
+                        name
+                    ));
+                }
+                let (h, p) = parse_host_port(&plugin.service, 0)
+                    .map_err(|e| anyhow!("tunnel `{}` invalid plugin.service: {e}", name))?;
+                if h.is_empty() || p == 0 {
+                    return Err(anyhow!(
+                        "tunnel `{}` plugin.service must be host:port",
+                        name
+                    ));
+                }
+                Ok(())
+            }
+            other => Err(anyhow!(
+                "tunnel `{}` unsupported plugin.type {:?}",
+                name,
+                other
+            )),
+        }
+    }
+
+    fn validate_socks5_plugin_fields(name: &str, plugin: &PluginConfig) -> anyhow::Result<()> {
+        let user = plugin.username.trim();
+        let pass = plugin.password.trim();
+        if user.is_empty() || pass.is_empty() {
+            return Err(anyhow!(
+                "tunnel `{}` socks5 requires username and password",
+                name
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn server_host(&self) -> anyhow::Result<String> {
+        Ok(parse_host_port(&self.server, 9527)?.0)
+    }
+
+    pub fn server_port(&self) -> anyhow::Result<u16> {
+        Ok(parse_host_port(&self.server, 9527)?.1)
+    }
+
+    pub fn tls_server_name(&self) -> String {
+        let sn = self.transport.tls.server_name.trim();
+        if sn.is_empty() {
+            self.server_host().unwrap_or_else(|_| "localhost".into())
         } else {
-            &self.transport.tls.server_name
+            sn.to_string()
         }
     }
 
     pub fn server_endpoint(&self) -> String {
-        format!("{}:{}", self.server_addr, self.server_port)
+        self.server.trim().to_string()
     }
 
     pub fn protocol(&self) -> anyhow::Result<crate::transport::Protocol> {
@@ -347,15 +590,14 @@ mod tests {
 
     fn sample() -> ClientConfig {
         ClientConfig {
-            server_addr: "example.com".into(),
-            server_port: 9527,
+            server: "example.com:9527".into(),
             user: "alice".into(),
             auth: AuthConfig {
-                method: "token".into(),
+                auth_type: "token".into(),
                 token: "secret".into(),
             },
             transport: TransportConfig::default(),
-            proxies: vec![],
+            tunnels: vec![],
             udp_packet_size: 1500,
         }
     }
@@ -448,25 +690,24 @@ mod tests {
         std::fs::write(
             &path,
             r#"
-serverAddr = "127.0.0.1"
-serverPort = 9527
-[[proxies]]
+server = "127.0.0.1:9527"
+[[tunnels]]
 name = "web"
-type = "http"
-localIP = "127.0.0.1"
-localPort = 8080
+protocol = "http"
+domains = ["web.example.com"]
 remotePort = 80
 "#,
         )
         .unwrap();
         let cfg = ClientConfig::load(&path).unwrap();
-        assert_eq!(cfg.server_addr, "127.0.0.1");
-        assert_eq!(cfg.server_port, 9527);
-        assert_eq!(cfg.proxies.len(), 1);
-        assert_eq!(cfg.proxies[0].name, "web");
+        assert_eq!(cfg.server, "127.0.0.1:9527");
+        assert_eq!(cfg.server_host().unwrap(), "127.0.0.1");
+        assert_eq!(cfg.server_port().unwrap(), 9527);
+        assert_eq!(cfg.tunnels.len(), 1);
+        assert_eq!(cfg.tunnels[0].name, "web");
         assert_eq!(cfg.transport.protocol, "tcp"); // default
-        // No [auth] block present -> AuthConfig::default() -> method is empty string.
-        assert_eq!(cfg.auth.method, "");
+        // No [auth] block present -> AuthConfig::default() -> auth_type is "token".
+        assert_eq!(cfg.auth.auth_type, "token");
         std::fs::remove_file(&path).ok();
     }
 

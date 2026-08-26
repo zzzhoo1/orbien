@@ -76,6 +76,31 @@ impl<S: AsyncRead + Unpin> AsyncRead for LimitedStream<S> {
                     if want == 0 {
                         return Poll::Ready(Ok(()));
                     }
+
+                    if self.limiter.try_wait_n(want) {
+                        let unfilled = buf.initialize_unfilled();
+                        let ncap = want.min(unfilled.len());
+                        let mut tmp = ReadBuf::new(&mut unfilled[..ncap]);
+                        match Pin::new(&mut self.inner).poll_read(cx, &mut tmp) {
+                            Poll::Pending => {
+                                self.limiter.return_n(want);
+                                return Poll::Pending;
+                            }
+                            Poll::Ready(Err(e)) => {
+                                self.limiter.return_n(want);
+                                return Poll::Ready(Err(e));
+                            }
+                            Poll::Ready(Ok(())) => {
+                                let n = tmp.filled().len();
+                                if n < want {
+                                    self.limiter.return_n(want - n);
+                                }
+                                buf.advance(n);
+                                return Poll::Ready(Ok(()));
+                            }
+                        }
+                    }
+
                     let mut tmp_storage = vec![0u8; want];
                     let mut tmp = ReadBuf::new(&mut tmp_storage);
                     match Pin::new(&mut self.inner).poll_read(cx, &mut tmp) {
@@ -88,20 +113,16 @@ impl<S: AsyncRead + Unpin> AsyncRead for LimitedStream<S> {
                             }
                             tmp_storage.truncate(n);
                             let limiter = Arc::clone(&self.limiter);
-
                             if limiter.try_wait_n(n) {
-                                self.read_phase = ReadPhase::Deliver {
-                                    data: tmp_storage,
-                                    off: 0,
-                                };
-                            } else {
-                                let wait = Box::pin(async move { limiter.wait_n(n).await });
-                                self.read_phase = ReadPhase::Wait {
-                                    data: tmp_storage,
-                                    off: 0,
-                                    wait,
-                                };
+                                buf.put_slice(&tmp_storage);
+                                return Poll::Ready(Ok(()));
                             }
+                            let wait = Box::pin(async move { limiter.wait_n(n).await });
+                            self.read_phase = ReadPhase::Wait {
+                                data: tmp_storage,
+                                off: 0,
+                                wait,
+                            };
                         }
                     }
                 }
@@ -157,7 +178,12 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for LimitedStream<S> {
 
             let take = buf.len().min(self.io_chunk_cap());
             self.write_report = take;
-            self.write_pending = buf[..take].to_vec();
+            self.write_pending.clear();
+            let need = take.saturating_sub(self.write_pending.capacity());
+            if need > 0 {
+                self.write_pending.reserve(need);
+            }
+            self.write_pending.extend_from_slice(&buf[..take]);
         }
 
         loop {
@@ -194,25 +220,27 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for LimitedStream<S> {
                     }
                 }
                 WritePhase::Write { chunk, written } => {
-                    let chunk = chunk.min(self.write_pending.len());
+                    let this = &mut *self;
+                    let chunk = chunk.min(this.write_pending.len());
                     if written >= chunk {
-                        self.write_pending.drain(..chunk);
-                        self.write_phase = WritePhase::Idle;
+                        this.write_pending.drain(..chunk);
+                        this.write_phase = WritePhase::Idle;
                         continue;
                     }
-                    let to_write = self.write_pending[written..chunk].to_vec();
-                    match Pin::new(&mut self.inner).poll_write(cx, &to_write) {
+                    match Pin::new(&mut this.inner)
+                        .poll_write(cx, &this.write_pending[written..chunk])
+                    {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Err(e)) => {
-                            self.write_pending.clear();
-                            self.write_phase = WritePhase::Idle;
-                            self.write_report = 0;
+                            this.write_pending.clear();
+                            this.write_phase = WritePhase::Idle;
+                            this.write_report = 0;
                             return Poll::Ready(Err(e));
                         }
                         Poll::Ready(Ok(0)) => {
-                            self.write_pending.clear();
-                            self.write_phase = WritePhase::Idle;
-                            self.write_report = 0;
+                            this.write_pending.clear();
+                            this.write_phase = WritePhase::Idle;
+                            this.write_report = 0;
                             return Poll::Ready(Err(io::Error::new(
                                 io::ErrorKind::WriteZero,
                                 "write zero in limited stream",
@@ -221,10 +249,10 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for LimitedStream<S> {
                         Poll::Ready(Ok(n)) => {
                             let written = written + n;
                             if written >= chunk {
-                                self.write_pending.drain(..chunk);
-                                self.write_phase = WritePhase::Idle;
+                                this.write_pending.drain(..chunk);
+                                this.write_phase = WritePhase::Idle;
                             } else {
-                                self.write_phase = WritePhase::Write { chunk, written };
+                                this.write_phase = WritePhase::Write { chunk, written };
                             }
                         }
                     }

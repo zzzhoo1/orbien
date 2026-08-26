@@ -2,9 +2,11 @@
     position: relative;
     padding: 3.50rem 0 1.75rem;
     overflow: hidden;
-    background: radial-gradient(1200px 500px at 12% -10%, rgba(14, 165, 233, 0.18), transparent 55%),
-    radial-gradient(900px 420px at 88% 0%, rgba(56, 189, 248, 0.12), transparent 50%),
-    linear-gradient(180deg, var(--orbien-hero-bg) 0%, transparent 100%);
+    background: var(--orbien-hero-bg);
+}
+
+[data-theme='dark'] .hero {
+    border-bottom: 1px solid var(--orbien-panel-border);
 }
 
 .heroInner {
@@ -63,6 +65,10 @@
     color: var(--ifm-color-emphasis-700);
 }
 
+[data-theme='dark'] .heroDesc {
+    color: #94a3b8;
+}
+
 .heroActions {
     display: flex;
     flex-wrap: wrap;
@@ -93,6 +99,16 @@
 .btnSecondary:hover {
     background: var(--ifm-color-emphasis-300) !important;
     color: var(--ifm-font-color-base) !important;
+}
+
+[data-theme='dark'] .btnSecondary {
+    background: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .btnSecondary:hover {
+    background: #334155 !important;
+    color: #f8fafc !important;
 }
 
 .btnGitHub {
@@ -133,17 +149,7 @@
 }
 
 .heroShotGlow {
-    position: absolute;
-    inset: 12% 6% 8%;
-    border-radius: 24px;
-    background: radial-gradient(ellipse at center, rgba(14, 165, 233, 0.22), transparent 70%);
-    filter: blur(18px);
-    z-index: 0;
-    pointer-events: none;
-}
-
-[data-theme='dark'] .heroShotGlow {
-    background: radial-gradient(ellipse at center, rgba(56, 189, 248, 0.2), transparent 72%);
+    display: none;
 }
 
 .heroShotImg {
@@ -171,14 +177,14 @@
 
 [data-theme='dark'] .heroShotImg {
     box-shadow:
-        0 28px 64px rgba(0, 0, 0, 0.45),
-        0 1px 0 rgba(255, 255, 255, 0.06) inset;
+        0 20px 48px rgba(0, 0, 0, 0.45),
+        0 1px 0 rgba(255, 255, 255, 0.04) inset;
 }
 
 [data-theme='dark'] .heroShot:hover .heroShotImg {
     box-shadow:
-        0 34px 78px rgba(0, 0, 0, 0.55),
-        0 1px 0 rgba(255, 255, 255, 0.08) inset;
+        0 24px 56px rgba(0, 0, 0, 0.55),
+        0 1px 0 rgba(255, 255, 255, 0.06) inset;
 }
 
 @keyframes floatIn {
@@ -206,6 +212,11 @@
 
 .desktop {
     padding: 0.5rem 0 4rem;
+    background: var(--orbien-hero-bg);
+}
+
+[data-theme='dark'] .desktop {
+    border-top: 1px solid var(--orbien-panel-border);
 }
 
 .desktopInner {
@@ -249,6 +260,10 @@
     color: var(--ifm-color-emphasis-700);
 }
 
+[data-theme='dark'] .desktopDesc {
+    color: #94a3b8;
+}
+
 .desktopVisual {
     min-width: 0;
 }
@@ -264,7 +279,7 @@
 }
 
 [data-theme='dark'] .desktopFrame {
-    box-shadow: 0 22px 48px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
 }
 
 .desktopGif {

@@ -52,25 +52,36 @@ impl BandwidthLimiter {
         }
     }
 
+    pub fn return_n(&self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.refill(self.rate, self.burst);
+        st.tokens = (st.tokens + n as f64).min(self.burst);
+    }
+
     pub async fn wait_n(&self, n: usize) {
         if n == 0 {
             return;
         }
-        let n = n as f64;
-        debug_assert!(n <= self.burst + f64::EPSILON);
-
-        loop {
-            let sleep_for = {
-                let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                st.refill(self.rate, self.burst);
-                if st.tokens >= n {
-                    st.tokens -= n;
-                    return;
-                }
-                let need = n - st.tokens;
-                Duration::from_secs_f64(need / self.rate)
-            };
-            tokio::time::sleep(sleep_for).await;
+        let mut remaining = n as f64;
+        while remaining > f64::EPSILON {
+            let want = remaining.min(self.burst);
+            loop {
+                let sleep_for = {
+                    let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                    st.refill(self.rate, self.burst);
+                    if st.tokens >= want {
+                        st.tokens -= want;
+                        remaining -= want;
+                        break;
+                    }
+                    let need = want - st.tokens;
+                    Duration::from_secs_f64((need / self.rate).max(1e-6))
+                };
+                tokio::time::sleep(sleep_for).await;
+            }
         }
     }
 }

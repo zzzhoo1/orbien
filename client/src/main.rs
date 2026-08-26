@@ -1,18 +1,12 @@
-mod connector;
-mod control;
-mod plugin;
-mod proxy;
-mod run_id;
-mod service;
-
 use anyhow::Result;
 use clap::Parser;
+use orbien_client::ClientHandle;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "orbien",
-    about = "orbien client — TCP tunnel over TCP/QUIC",
+    about = "orbien client",
     after_help = "Config:\n  \
         orbien                         # try ./orbien.toml, then ./conf/orbien.toml\n  \
         orbien -c conf/orbien.toml     # explicit path"
@@ -29,16 +23,16 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let config_path = orbien_core::config::resolve_client_config_path(args.config.as_deref())?;
+    let config_path = orbien_client::resolve_client_config_path(args.config.as_deref())?;
     tracing::info!(config = %config_path.display(), "loading config");
 
-    let cfg = orbien_core::config::ClientConfig::load(&config_path)?;
+    let cfg = orbien_client::ClientConfig::load(&config_path)?;
     tracing::info!(
         server = %cfg.server_endpoint(),
         protocol = %cfg.transport.protocol,
-        proxies = cfg.proxies.len(),
+        tunnels = cfg.tunnels.len(),
         "starting orbien"
     );
 
-    service::Service::new(cfg, &config_path).run().await
+    ClientHandle::new().run_foreground(cfg, config_path).await
 }

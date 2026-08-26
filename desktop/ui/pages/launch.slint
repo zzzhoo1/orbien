@@ -1,0 +1,267 @@
+import { Button } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { IconRocket } from "../icons.slint";
+import { Tr } from "../i18n.slint";
+
+component LaunchOrb inherits Rectangle {
+    width: 220px;
+    height: 220px;
+    background: transparent;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+
+    Rectangle {
+        x: 10px;
+        y: 30px;
+        width: 180px;
+        height: 180px;
+        border-radius: 90px;
+        background: Theme.blob-a;
+    }
+
+    Rectangle {
+        x: 70px;
+        y: 20px;
+        width: 140px;
+        height: 140px;
+        border-radius: 70px;
+        background: Theme.blob-b;
+    }
+
+    Rectangle {
+        x: (parent.width - 112px) / 2;
+        y: (parent.height - 112px) / 2;
+        width: 112px;
+        height: 112px;
+        border-radius: 56px;
+        background: white;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #3b82f62e;
+        drop-shadow-offset-y: 8px;
+
+        IconRocket {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            size: 52px;
+            tint: Theme.accent;
+        }
+    }
+}
+
+export component LaunchPage inherits Rectangle {
+    in-out property <bool> running: false;
+    in property <string> running-label: "—";
+    in property <bool> busy: false;
+    callback toggle-clicked;
+    callback view-log-clicked;
+
+    background: transparent;
+    min-height: Theme.page-min-height;
+
+    private property <length> title-h: 38px;
+    private property <length> gap: 16px;
+    private property <length> orb-size: 220px;
+    private property <length> action-w: 220px;
+
+    HorizontalLayout {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.title-h;
+        spacing: 10px;
+        vertical-stretch: 0;
+
+        Rectangle {
+            width: 22px;
+            height: root.title-h;
+            horizontal-stretch: 0;
+            vertical-stretch: 0;
+            background: transparent;
+            IconRocket {
+                y: (parent.height - self.height) / 2;
+                size: 22px;
+                tint: Theme.accent;
+            }
+        }
+
+        Text {
+            text: Tr.launch-title;
+            color: Theme.accent;
+            font-size: 22px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-alignment: left;
+            horizontal-stretch: 0;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            background: transparent;
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: root.title-h + root.gap;
+        width: parent.width;
+        height: max(320px, parent.height - root.title-h - root.gap);
+        background: Theme.panel;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.line;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #1e3a5f0f;
+        drop-shadow-offset-y: 6px;
+        clip: true;
+
+        VerticalLayout {
+            width: 100%;
+            height: 100%;
+            spacing: 0;
+
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 24px;
+                background: transparent;
+            }
+
+            HorizontalLayout {
+                vertical-stretch: 0;
+                spacing: 0;
+                height: root.orb-size;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 24px;
+                    background: transparent;
+                }
+
+                HorizontalLayout {
+                    spacing: 48px;
+                    vertical-stretch: 0;
+                    horizontal-stretch: 0;
+                    height: root.orb-size;
+
+                    LaunchOrb { }
+
+                    Rectangle {
+                        width: root.action-w;
+                        height: root.orb-size;
+                        horizontal-stretch: 0;
+                        vertical-stretch: 0;
+                        background: transparent;
+
+                        VerticalLayout {
+                            width: 100%;
+                            height: 100%;
+                            spacing: 0;
+
+                            Rectangle {
+                                vertical-stretch: 1;
+                                background: transparent;
+                            }
+
+                            VerticalLayout {
+                                spacing: 12px;
+                                vertical-stretch: 0;
+                                alignment: stretch;
+                                width: root.action-w;
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    vertical-stretch: 0;
+                                    height: 28px;
+
+                                    Rectangle {
+                                        width: 14px;
+                                        height: 28px;
+                                        horizontal-stretch: 0;
+                                        vertical-stretch: 0;
+                                        background: transparent;
+                                        Rectangle {
+                                            y: (parent.height - self.height) / 2;
+                                            width: 14px;
+                                            height: 14px;
+                                            border-radius: 7px;
+                                            background: root.running ? Theme.ok : #cbd5e1;
+                                            border-width: 2px;
+                                            border-color: white;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: root.running ? Tr.launch-running : Tr.launch-stopped;
+                                        color: Theme.text;
+                                        font-size: 22px;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: left;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    vertical-stretch: 0;
+                                    height: 22px;
+                                    width: root.action-w;
+
+                                    Text {
+                                        text: Tr.launch-uptime + "  " + (root.running ? root.running-label : "—");
+                                        color: Theme.accent;
+                                        font-size: 15px;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: left;
+                                        horizontal-stretch: 1;
+                                    }
+
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        vertical-stretch: 0;
+                                        horizontal-stretch: 0;
+                                        clicked => { root.view-log-clicked(); }
+                                        Text {
+                                            text: Tr.launch-view-log;
+                                            color: Theme.accent;
+                                            font-size: 14px;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Button {
+                                    text: root.running ? Tr.launch-stop : Tr.launch-start;
+                                    primary: true;
+                                    enabled: !root.busy;
+                                    width: root.action-w;
+                                    height: 42px;
+                                    vertical-stretch: 0;
+                                    horizontal-stretch: 0;
+                                    clicked => { root.toggle-clicked(); }
+                                }
+                            }
+
+                            Rectangle {
+                                vertical-stretch: 1;
+                                background: transparent;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 24px;
+                    background: transparent;
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 24px;
+                background: transparent;
+            }
+        }
+    }
+}

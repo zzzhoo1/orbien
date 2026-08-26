@@ -1,0 +1,232 @@
+import { Theme } from "../../theme.slint";
+import { Tr } from "../../i18n.slint";
+import { TunnelRow } from "types.slint";
+
+component TypeBadge inherits Rectangle {
+    in property <string> tunnel-type: "tcp";
+    border-radius: 3px;
+    background: Theme.accent-soft;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    height: 22px;
+
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 7px;
+        Text {
+            text: root.tunnel-type == "udp" ? "UDP"
+                : root.tunnel-type == "http" ? "HTTP"
+                : root.tunnel-type == "https" ? "HTTPS"
+                : root.tunnel-type == "socks5" ? "SOCKS5"
+                : "TCP";
+            color: Theme.accent-strong;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component TunnelCard inherits Rectangle {
+    in property <TunnelRow> item;
+    callback edit-clicked;
+    callback delete-clicked;
+    callback copy-clicked(string);
+
+    private property <string> remote-fallback:
+        (root.item.tunnel-type == "http" || root.item.tunnel-type == "https")
+        ? (root.item.domains != "" ? root.item.domains : "—")
+        : (root.item.remote-port != "" && root.item.remote-port != "0"
+        ? root.item.remote-port : "—");
+    private property <string> remote-text:
+        root.item.remote-addr != "" ? root.item.remote-addr : root.remote-fallback;
+    private property <string> local-text:
+        root.item.tunnel-type == "socks5" ? "—"
+        : root.item.local-ip != ""
+        ? root.item.local-ip + ":" + root.item.local-port
+        : root.item.local-port != "" ? root.item.local-port : "—";
+
+    background: Theme.panel;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.line;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #1e3a5f0c;
+    drop-shadow-offset-y: 3px;
+    clip: true;
+
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        padding: 12px;
+        spacing: 8px;
+        alignment: stretch;
+
+        HorizontalLayout {
+            alignment: space-between;
+            vertical-stretch: 0;
+            spacing: 12px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                horizontal-stretch: 0;
+
+                Text {
+                    text: root.item.name;
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                }
+
+                TypeBadge {
+                    tunnel-type: root.item.tunnel-type;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+                horizontal-stretch: 0;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.edit-clicked(); }
+                    Text {
+                        text: Tr.modify;
+                        color: Theme.accent;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.delete-clicked(); }
+                    Text {
+                        text: Tr.delete;
+                        color: Theme.danger;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            vertical-stretch: 1;
+            alignment: stretch;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                vertical-stretch: 0;
+
+                Text {
+                    text: Tr.local;
+                    color: Theme.muted;
+                    font-size: 14px;
+                    width: 40px;
+                    horizontal-stretch: 0;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.local-text;
+                    color: Theme.text;
+                    font-size: 15px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+                vertical-stretch: 0;
+
+                Text {
+                    text: Tr.remote;
+                    color: Theme.muted;
+                    font-size: 14px;
+                    width: 40px;
+                    horizontal-stretch: 0;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.remote-text;
+                    color: Theme.text;
+                    font-size: 15px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+
+                if root.remote-text != "—": TouchArea {
+                    mouse-cursor: pointer;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                    height: 22px;
+                    clicked => { root.copy-clicked(root.remote-text); }
+                    Rectangle {
+                        height: 22px;
+                        border-radius: 3px;
+                        background: Theme.accent-soft;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            alignment: center;
+                            Text {
+                                text: Tr.copy;
+                                color: Theme.accent-strong;
+                                font-size: 12px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component TunnelCardGrid inherits Rectangle {
+    in property <[TunnelRow]> tunnels;
+    callback edit-row(int);
+    callback delete-row(int);
+    callback copy-remote(string);
+
+    private property <length> gap: 14px;
+    private property <length> card-h: 118px;
+    private property <int> cols: self.width >= 900px ? 3 : 2;
+    private property <length> card-w: (self.width - root.gap * (root.cols - 1)) / root.cols;
+    private property <int> row-count:
+        root.tunnels.length == 0 ? 0
+        : Math.floor((root.tunnels.length + root.cols - 1) / root.cols);
+
+    height: root.row-count == 0 ? 0
+        : root.row-count * root.card-h + (root.row-count - 1) * root.gap;
+    background: transparent;
+
+    for p[i] in root.tunnels: TunnelCard {
+        x: Math.mod(i, root.cols) * (root.card-w + root.gap);
+        y: Math.floor(i / root.cols) * (root.card-h + root.gap);
+        width: root.card-w;
+        height: root.card-h;
+        item: p;
+        edit-clicked => { root.edit-row(i); }
+        delete-clicked => { root.delete-row(i); }
+        copy-clicked(text) => { root.copy-remote(text); }
+    }
+}

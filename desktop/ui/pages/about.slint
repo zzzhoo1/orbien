@@ -1,0 +1,58 @@
+import { AboutSlint, Button } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { Tr } from "../i18n.slint";
+
+export component AboutDialog inherits Window {
+    title: Tr.about-window-title;
+    preferred-width: 340px;
+    preferred-height: 300px;
+    min-width: 320px;
+    min-height: 280px;
+    background: Theme.panel;
+    icon: @image-url("../../assets/logo.png");
+
+    callback close-clicked();
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: center;
+
+            Image {
+                source: @image-url("../../assets/logo.png");
+                width: 36px;
+                height: 36px;
+                image-fit: contain;
+            }
+
+            Text {
+                text: "Orbien Desktop";
+                color: Theme.text;
+                font-size: 17px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: Tr.about-license-note;
+            color: Theme.text-secondary;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        AboutSlint { }
+
+        HorizontalLayout {
+            alignment: end;
+            Button {
+                text: Tr.about-close;
+                primary: true;
+                clicked => { root.close-clicked(); }
+            }
+        }
+    }
+}

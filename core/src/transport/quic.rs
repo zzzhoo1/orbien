@@ -101,11 +101,19 @@ impl QuicSession {
         server_name: &str,
         keepalive: Duration,
         idle_timeout: Duration,
+        max_incoming_streams: u32,
         tls_cert: &str,
         tls_key: &str,
         tls_ca: &str,
     ) -> Result<Self> {
-        let endpoint = build_client_endpoint(keepalive, idle_timeout, tls_cert, tls_key, tls_ca)?;
+        let endpoint = build_client_endpoint(
+            keepalive,
+            idle_timeout,
+            Some(max_incoming_streams),
+            tls_cert,
+            tls_key,
+            tls_ca,
+        )?;
         let conn = endpoint
             .connect(server_addr, server_name)
             .context("quic connect")?
@@ -214,6 +222,7 @@ pub fn build_server_endpoint(
 pub fn build_client_endpoint(
     keepalive: Duration,
     idle_timeout: Duration,
+    max_streams: Option<u32>,
     tls_cert: &str,
     tls_key: &str,
     tls_ca: &str,
@@ -224,7 +233,7 @@ pub fn build_client_endpoint(
     client.transport_config(Arc::new(high_perf_transport(
         keepalive,
         idle_timeout,
-        None,
+        max_streams,
     )?));
 
     let socket = UdpSocket::bind("0.0.0.0:0").context("bind quic client udp")?;

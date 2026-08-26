@@ -1,0 +1,26 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docsSidebar.category.隧道协议": {
+    "message": "Tunnel Protocols",
+    "description": "The label for category '隧道协议' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.传输与安全": {
+    "message": "Transport & Security",
+    "description": "The label for category '传输与安全' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.传输协议": {
+    "message": "Transport Protocols",
+    "description": "The label for category '传输协议' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.功能特性": {
+    "message": "Features",
+    "description": "The label for category '功能特性' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.集成": {
+    "message": "Integrations",
+    "description": "The label for category '集成' in sidebar 'docsSidebar'"
+  }
+}

@@ -30,17 +30,17 @@ export function formatText(value: string | null | undefined): string | null {
     return value!.trim()
 }
 
-export function isHttpProxyType(type?: string | null): boolean {
+export function isHttpTunnelType(type?: string | null): boolean {
     const t = (type || '').toLowerCase()
     return t === 'http' || t === 'https'
 }
 
-export function formatProxyEndpoint(
+export function formatTunnelEndpoint(
     type?: string | null,
     remoteAddr?: string | null,
 ): string {
     const raw = (remoteAddr || '').trim()
     if (!raw) return '—'
-    if (isHttpProxyType(type)) return raw
+    if (isHttpTunnelType(type)) return raw
     return raw.replace(/^:/, '') || '—'
 }

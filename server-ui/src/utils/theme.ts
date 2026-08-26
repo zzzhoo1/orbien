@@ -22,12 +22,6 @@ export function applyTheme(mode: ThemeMode) {
     localStorage.setItem(STORAGE_KEY, mode)
 }
 
-export function initTheme(): ThemeMode {
-    const mode = resolveTheme()
-    applyTheme(mode)
-    return mode
-}
-
 export function toggleTheme(current: ThemeMode): ThemeMode {
     const next: ThemeMode = current === 'dark' ? 'light' : 'dark'
     applyTheme(next)

@@ -6,44 +6,42 @@ title: 带宽限制
 
 # 带宽限制
 
-按代理限制转发带宽。配置在 `[[proxies]]` 的 `transport` 下。
+按隧道限制转发带宽。配置在 `[[tunnels]]` 的 `transport` 下。
 
-- `bandwidthLimitMode = "client"`：在客户端限速
-- `bandwidthLimitMode = "server"`：在服务端限速
+- `bandwidthLimitSide = "client"`：在客户端限速（默认）
+- `bandwidthLimitSide = "server"`：在服务端限速
 
-单位仅支持 `KB`、`MB`（如 `100KB`、`1MB`）。留空表示不限制。
+`bandwidth` 为数字，单位固定为Mbps（如 `2`、`0.5`）。`0` 表示不限制。
 
 ## 示例：客户端限速
 
 ```toml
 # orbien.toml
-[[proxies]]
+[[tunnels]]
 name = "web"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 80
+protocol = "tcp"
+service = "127.0.0.1:80"
 remotePort = 9000
-transport.bandwidthLimit = "1MB"
-transport.bandwidthLimitMode = "client"
+transport.bandwidth = 2
+transport.bandwidthLimitSide = "client"
 ```
 
 ## 示例：服务端限速
 
 ```toml
 # orbien.toml
-[[proxies]]
+[[tunnels]]
 name = "web"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 80
+protocol = "tcp"
+service = "127.0.0.1:80"
 remotePort = 9000
-transport.bandwidthLimit = "500KB"
-transport.bandwidthLimitMode = "server"
+transport.bandwidth = 0.5
+transport.bandwidthLimitSide = "server"
 ```
 
 ## 参数
 
 | 参数                             | 必填 | 默认值      | 说明                          |
 |--------------------------------|----|----------|-----------------------------|
-| `transport.bandwidthLimit`     | 否  |          | 带宽上限，如 `1MB`、`100KB`；空表示不限制 |
-| `transport.bandwidthLimitMode` | 否  | `client` | 限速端：`client` / `server`     |
+| `transport.bandwidth`          | 否  | `0`      | 带宽上限（Mbps）；`0` 表示不限制       |
+| `transport.bandwidthLimitSide` | 否  | `client` | 限速端：`client` / `server`     |

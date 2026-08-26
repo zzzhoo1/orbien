@@ -129,6 +129,27 @@ impl AccessPolicy {
     }
 }
 
+pub struct IngressConn {
+    pub stream: PrefixedStream<TcpStream>,
+    pub peer: SocketAddr,
+    pub source: SocketAddr,
+    pub local: Option<SocketAddr>,
+}
+
+pub async fn prepare_ingress(
+    stream: TcpStream,
+    peer: SocketAddr,
+    _policy: &AccessPolicy,
+) -> Result<IngressConn> {
+    let local = stream.local_addr().ok();
+    Ok(IngressConn {
+        stream: PrefixedStream::new(Vec::new(), stream),
+        peer,
+        source: peer,
+        local,
+    })
+}
+
 pub struct VisitorConn {
     pub stream: PrefixedStream<TcpStream>,
     pub peer: SocketAddr,
@@ -154,7 +175,7 @@ pub async fn prepare_visitor(
 
     if policy.is_denied(visitor.ip()) {
         tracing::info!(visitor = %visitor.ip(), peer = %peer, "denied by denySrcCidrs");
-        bail!("visitor {} denied by denySrcCidrs", visitor.ip());
+        anyhow::bail!("visitor {} denied by denySrcCidrs", visitor.ip());
     }
 
     Ok(VisitorConn {

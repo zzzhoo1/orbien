@@ -36,7 +36,7 @@ defineProps<{
   gap: 0.35rem;
   min-width: 0;
   padding: 0.65rem 0.75rem;
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--panel-hover);
   border: 1px solid transparent;
 }

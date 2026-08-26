@@ -66,7 +66,7 @@ function donutArc(x: number, y: number, radius: number, start: number, end: numb
         class="donut-svg"
         :viewBox="`0 0 ${size} ${size}`"
         role="img"
-        :aria-label="t('monitor.proxyTypes')"
+        :aria-label="t('monitor.tunnelTypes')"
     >
       <circle
           v-if="!arcs.length"
@@ -167,7 +167,7 @@ function donutArc(x: number, y: number, radius: number, start: number, end: numb
 .swatch {
   width: 0.65rem;
   height: 0.65rem;
-  border-radius: 3px;
+  border-radius: var(--radius);
   flex-shrink: 0;
 }
 

@@ -10,8 +10,8 @@ public class Login {
     public String os = "";
     public String arch = "";
     public String user = "";
-    public String privilegeKey = "";
+    public String authDigest = "";
     public long timestamp;
-    public String runId = "";
+    public String sessionId = "";
     public int poolCount;
 }

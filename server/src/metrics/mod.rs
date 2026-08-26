@@ -4,7 +4,7 @@ mod hour_counter;
 mod mem;
 mod traits;
 
-pub use mem::{MemMetrics, ProxyTrafficHistory, TrafficWindow};
+pub use mem::{MemMetrics, TrafficWindow, TunnelTrafficHistory};
 pub use traits::ServerMetrics;
 
 pub const RESERVE_DAYS: usize = 7;
@@ -13,21 +13,21 @@ pub const RESERVE_HOURS: usize = 24;
 pub async fn join_and_record<A, B>(
     metrics: &std::sync::Arc<MemMetrics>,
     name: &str,
-    proxy_type: &str,
-    visitor: A,
-    work: B,
+    tunnel_type: &str,
+    ingress: A,
+    data: B,
 ) -> std::io::Result<(u64, u64)>
 where
     A: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     B: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let _guard = metrics.track_connection(name, proxy_type);
-    let (to_work, from_work, err) = orbien_core::io::join_counted(visitor, work).await;
-    metrics.add_traffic_in(name, proxy_type, to_work);
-    metrics.add_traffic_out(name, proxy_type, from_work);
+    let _guard = metrics.track_connection(name, tunnel_type);
+    let (to_data, from_data, err) = orbien_core::io::join_counted(ingress, data).await;
+    metrics.add_traffic_in(name, tunnel_type, to_data);
+    metrics.add_traffic_out(name, tunnel_type, from_data);
     match err {
-        None => Ok((to_work, from_work)),
-        Some(e) if is_benign_close(&e) => Ok((to_work, from_work)),
+        None => Ok((to_data, from_data)),
+        Some(e) if is_benign_close(&e) => Ok((to_data, from_data)),
         Some(e) => Err(e),
     }
 }

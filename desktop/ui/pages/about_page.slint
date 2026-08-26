@@ -1,0 +1,285 @@
+import { Theme } from "../theme.slint";
+import { IconAbout, IconGithub, IconDoc, IconBug } from "../icons.slint";
+import { Tr } from "../i18n.slint";
+import { AppMeta } from "../version.slint";
+
+component AboutLink inherits TouchArea {
+    in property <string> label;
+    in property <color> fg: Theme.accent;
+    in property <color> bg: Theme.accent-soft;
+    in property <string> kind: "github";
+    callback activated;
+
+    mouse-cursor: pointer;
+    vertical-stretch: 0;
+    horizontal-stretch: 0;
+    height: 36px;
+
+    clicked => { root.activated(); }
+
+    Rectangle {
+        border-radius: Theme.radius;
+        background: root.has-hover ? root.fg : root.bg;
+        border-width: 1px;
+        border-color: root.fg;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 16px;
+            spacing: 8px;
+            alignment: center;
+
+            if root.kind == "github": IconGithub {
+                y: (parent.height - self.height) / 2;
+                size: 16px;
+                tint: root.has-hover ? white : root.fg;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+            }
+            if root.kind == "doc": IconDoc {
+                y: (parent.height - self.height) / 2;
+                size: 16px;
+                tint: root.has-hover ? white : root.fg;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+            }
+            if root.kind == "bug": IconBug {
+                y: (parent.height - self.height) / 2;
+                size: 16px;
+                tint: root.has-hover ? white : root.fg;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+            }
+            Text {
+                text: root.label;
+                color: root.has-hover ? white : root.fg;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+            }
+        }
+    }
+}
+
+export component AboutPage inherits Rectangle {
+    callback open-github();
+    callback open-docs();
+    callback open-feedback();
+    callback open-slint-about();
+
+    background: transparent;
+    min-height: Theme.page-min-height;
+    private property <length> content-w: 480px;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 16px;
+        alignment: stretch;
+
+        HorizontalLayout {
+            height: 38px;
+            vertical-stretch: 0;
+            spacing: 10px;
+
+            Rectangle {
+                width: 22px;
+                height: 38px;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+                background: transparent;
+                IconAbout {
+                    y: (parent.height - self.height) / 2;
+                    size: 22px;
+                    tint: Theme.accent;
+                }
+            }
+
+            Text {
+                text: Tr.about-page-title;
+                color: Theme.accent;
+                font-size: 22px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                horizontal-stretch: 1;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Theme.panel;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-blur: 14px;
+            drop-shadow-color: #1e3a5f0f;
+            drop-shadow-offset-y: 4px;
+            clip: true;
+
+            VerticalLayout {
+                width: 100%;
+                height: 100%;
+                spacing: 0;
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 16px;
+                    background: transparent;
+                }
+
+                HorizontalLayout {
+                    vertical-stretch: 0;
+                    spacing: 0;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 24px;
+                        background: transparent;
+                    }
+
+                    VerticalLayout {
+                        width: root.content-w;
+                        horizontal-stretch: 0;
+                        spacing: 14px;
+                        alignment: stretch;
+
+                        HorizontalLayout {
+                            height: 88px;
+                            vertical-stretch: 0;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                background: transparent;
+                            }
+
+                            Image {
+                                source: @image-url("../../assets/logo.png");
+                                width: 88px;
+                                height: 88px;
+                                image-fit: contain;
+                                horizontal-stretch: 0;
+                                vertical-stretch: 0;
+                            }
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                background: transparent;
+                            }
+                        }
+
+                        Text {
+                            text: "Orbien Desktop";
+                            color: Theme.text;
+                            font-size: 26px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            width: 100%;
+                            vertical-stretch: 0;
+                        }
+
+                        Text {
+                            text: "v" + AppMeta.version;
+                            color: Theme.muted;
+                            font-size: 15px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            width: 100%;
+                            vertical-stretch: 0;
+                        }
+
+                        Text {
+                            text: Tr.about-tagline;
+                            color: Theme.text-secondary;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            width: 100%;
+                            vertical-stretch: 0;
+                        }
+
+                        Text {
+                            text: Tr.about-features;
+                            color: Theme.muted;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            width: 100%;
+                            vertical-stretch: 0;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            vertical-stretch: 0;
+                            height: 36px;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                background: transparent;
+                            }
+
+                            AboutLink {
+                                label: "GitHub";
+                                kind: "github";
+                                fg: Theme.accent;
+                                bg: Theme.accent-soft;
+                                activated => { root.open-github(); }
+                            }
+
+                            AboutLink {
+                                label: Tr.about-docs;
+                                kind: "doc";
+                                fg: #059669;
+                                bg: #0596691a;
+                                activated => { root.open-docs(); }
+                            }
+
+                            AboutLink {
+                                label: Tr.about-feedback;
+                                kind: "bug";
+                                fg: Theme.danger;
+                                bg: #e11d4814;
+                                activated => { root.open-feedback(); }
+                            }
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                background: transparent;
+                            }
+                        }
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            vertical-stretch: 0;
+                            height: 22px;
+                            width: 100%;
+                            clicked => { root.open-slint-about(); }
+                            Text {
+                                width: 100%;
+                                height: 100%;
+                                text: Tr.about-slint-link;
+                                color: Theme.accent-muted;
+                                font-size: 12px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 24px;
+                        background: transparent;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 16px;
+                    background: transparent;
+                }
+            }
+        }
+    }
+}

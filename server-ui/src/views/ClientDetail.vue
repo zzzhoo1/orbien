@@ -1,399 +1,844 @@
 <script setup lang="ts">
-import {computed, ref} from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
-import EmptyText from '@/components/EmptyText.vue'
-import InlineAlert from '@/components/InlineAlert.vue'
 import OsBadge from '@/components/OsBadge.vue'
-import SectionCard from '@/components/SectionCard.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
-import TrafficChart from '@/components/TrafficChart.vue'
-import TrafficSummary from '@/components/TrafficSummary.vue'
-import {kickClient} from '@/api'
-import {useDashboardStore} from '@/stores/dashboard'
+import PaginationBar from '@/components/PaginationBar.vue'
+import TrafficIO from '@/components/TrafficIO.vue'
+import {fetchClient, fetchTunnels, kickClient} from '@/api'
+import {ApiError} from '@/api/errors'
+import type {ClientInfo, TunnelInfo} from '@/types/api'
 import {useLocale} from '@/composables/useLocale'
+import {usePresence} from '@/composables/usePresence'
+import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
+import searchIcon from '@/assets/icon/search.svg?raw'
 
 const route = useRoute()
 const router = useRouter()
-const store = useDashboardStore()
 const {t} = useLocale()
+const {isOnline, statusLabel, formatSeen} = usePresence()
+
+const sessionId = computed(() => String(route.params.sessionId || ''))
+
+const client = ref<ClientInfo | null>(null)
+const loading = ref(true)
+const notFound = ref(false)
 const kicking = ref(false)
-const kickError = ref('')
 
-const runId = computed(() => route.params.runId as string)
-const client = computed(() => store.clients.find(c => c.runId === runId.value))
-const isOnline = computed(() => !client.value?.status || client.value.status === 'online')
+const tunnels = ref<TunnelInfo[]>([])
+const tunnelsLoading = ref(false)
+const tunnelSearch = ref('')
+const page = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const ready = ref(false)
 
-const proxies = computed(() =>
-  store.proxies.filter(p => p.clientId === runId.value)
-)
+let refreshTimer: number | null = null
+let searchDebounce: number | null = null
+let tunnelReqSeq = 0
 
-const proxyTrafficIn = computed(() => proxies.value.reduce((sum, p) => sum + (p.todayTrafficIn ?? 0), 0))
-const proxyTrafficOut = computed(() => proxies.value.reduce((sum, p) => sum + (p.todayTrafficOut ?? 0), 0))
-
-const TYPE_COLORS: Record<string, string> = {
-  http:'#3b82f6', https:'#93c5fd', tcp:'#94a3b8',
-  udp:'#2dd4bf', socks5:'#f97316', file:'#fb7185', stcp:'#a78bfa', xtcp:'#f472b6',
+function goBack() {
+  if (window.history.length > 1) router.back()
+  else router.push({name: 'clients'})
 }
-function typeColor(type: string) { return TYPE_COLORS[(type||'tcp').toLowerCase()] ?? '#60a5fa' }
 
-function formatUptime(secs: number) {
-  const n = Math.max(0, Math.floor(secs || 0))
-  if (n < 60) return `${n}s`
-  if (n < 3600) return `${Math.floor(n/60)}m ${n%60}s`
-  if (n < 86400) { const h=Math.floor(n/3600); return `${h}h ${Math.floor((n%3600)/60)}m` }
-  return `${Math.floor(n/86400)}d ${Math.floor((n%86400)/3600)}h`
+function openTunnel(name: string) {
+  router.push({name: 'tunnel-detail', params: {name}})
+}
+
+function onKeyOpenTunnel(evt: KeyboardEvent, name: string) {
+  if (evt.key === 'Enter' || evt.key === ' ') {
+    evt.preventDefault()
+    openTunnel(name)
+  }
+}
+
+async function loadClient() {
+  const id = sessionId.value
+  if (!id) {
+    loading.value = false
+    notFound.value = true
+    return false
+  }
+  try {
+    client.value = await fetchClient(id)
+    notFound.value = false
+    return true
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'http' && e.params?.status === 404) {
+      client.value = null
+      notFound.value = true
+      return false
+    }
+    // Soft-fail refresh: keep previous client if we already have one.
+    if (!client.value) notFound.value = true
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadTunnels() {
+  const id = client.value?.sessionId || sessionId.value
+  if (!id) return
+  const seq = ++tunnelReqSeq
+  tunnelsLoading.value = true
+  try {
+    const q = tunnelSearch.value.trim()
+    const data = await fetchTunnels({
+      page: page.value,
+      pageSize: pageSize.value,
+      sessionId: id,
+      q: q || undefined,
+    })
+    if (seq !== tunnelReqSeq) return
+
+    const maxPage = Math.max(1, Math.ceil(data.total / Math.max(data.pageSize, 1)))
+    if (data.items.length === 0 && data.total > 0 && data.page > maxPage) {
+      page.value = maxPage
+      await loadTunnels()
+      return
+    }
+
+    tunnels.value = data.items ?? []
+    total.value = data.total
+    page.value = data.page
+    pageSize.value = data.pageSize
+  } catch {
+    if (seq !== tunnelReqSeq) return
+  } finally {
+    if (seq === tunnelReqSeq) tunnelsLoading.value = false
+  }
+}
+
+async function refreshAll() {
+  const ok = await loadClient()
+  if (ok) await loadTunnels()
 }
 
 async function onKick() {
-  if (kicking.value) return
+  const id = client.value?.sessionId
+  if (!id || kicking.value) return
   if (!window.confirm(t('clients.kickConfirm'))) return
   kicking.value = true
-  kickError.value = ''
   try {
-    await kickClient(runId.value)
-    await store.refresh()
-    router.push({name: 'clients'})
-  } catch {
-    kickError.value = t('clients.kickFailed')
+    await kickClient(id)
+    await refreshAll()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    window.alert(t('clients.kickFailed', {msg}))
   } finally {
     kicking.value = false
   }
 }
+
+function clearSearchDebounce() {
+  if (searchDebounce !== null) {
+    window.clearTimeout(searchDebounce)
+    searchDebounce = null
+  }
+}
+
+watch(tunnelSearch, () => {
+  if (!ready.value) return
+  clearSearchDebounce()
+  tunnelReqSeq++
+  tunnelsLoading.value = false
+  page.value = 1
+  searchDebounce = window.setTimeout(() => {
+    searchDebounce = null
+    loadTunnels()
+  }, 300)
+})
+
+watch([page, pageSize], () => {
+  if (!ready.value) return
+  if (searchDebounce !== null) return
+  loadTunnels()
+})
+
+watch(sessionId, async () => {
+  if (!ready.value) return
+  loading.value = true
+  client.value = null
+  tunnels.value = []
+  total.value = 0
+  page.value = 1
+  tunnelSearch.value = ''
+  await refreshAll()
+})
+
+onMounted(async () => {
+  await refreshAll()
+  ready.value = true
+  refreshTimer = window.setInterval(() => {
+    refreshAll()
+  }, 5000)
+})
+
+onUnmounted(() => {
+  clearSearchDebounce()
+  if (refreshTimer !== null) {
+    window.clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+})
 </script>
 
 <template>
-  <!-- client not found -->
-  <div v-if="!client" class="not-found">
-    <EmptyText icon="👤" :title="t('clients.notFound')">
-      <template #action>
-        <button class="back-btn" @click="router.push({name:'clients'})">
-          ← {{ t('common.back') }}
-        </button>
-      </template>
-    </EmptyText>
-  </div>
-
-  <div v-else class="client-detail">
-    <!-- kick error alert -->
-    <InlineAlert
-      v-if="kickError"
-      variant="error"
-      :title="kickError"
-      :closable="true"
-      @close="kickError = ''"
-    />
-
-    <!-- ── Hero header ── -->
-    <header class="detail-hero">
-      <button class="back-icon" :aria-label="t('common.back')" @click="router.back()">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 3L5 8l5 5"/></svg>
+  <div class="detail">
+    <nav class="breadcrumb" :aria-label="t('clients.detail')">
+      <button type="button" class="crumb-back" @click="goBack" :aria-label="t('clients.back')">
+        ←
       </button>
+      <button type="button" class="crumb-link" @click="router.push({ name: 'clients' })">
+        {{ t('nav.clients') }}
+      </button>
+      <span class="crumb-sep" aria-hidden="true">/</span>
+      <span class="crumb-current mono">{{ client?.sessionId || sessionId }}</span>
+    </nav>
 
-      <div class="hero-avatar" :class="{online: isOnline}">
-        <OsBadge :os="client.os" :arch="client.arch" icon-only/>
-        <span class="hero-dot" :class="{online: isOnline}"/>
-      </div>
+    <div v-if="loading && !client" class="empty-card">{{ t('traffic.loading') }}</div>
 
-      <div class="hero-info">
-        <div class="hero-title-row">
-          <h1 class="hero-id">{{ client.runId }}</h1>
-          <StatusBadge :status="isOnline ? 'running' : 'stopped'" />
-        </div>
-        <div class="hero-meta">
-          <span v-if="client.hostname" class="meta-chip">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="3" width="12" height="9" rx="1.5"/><path d="M5 14h6M8 12v2"/></svg>
-            {{ client.hostname }}
-          </span>
-          <span v-if="client.user" class="meta-chip">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5.5" r="3"/><path d="M2 13.5c0-3.314 2.686-6 6-6s6 2.686 6 6"/></svg>
-            {{ client.user }}
-          </span>
-          <span class="meta-chip">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="1" y="4" width="14" height="9" rx="1.5"/><path d="M4 4V2.5M12 4V2.5M1 8h14"/></svg>
-            <span class="mono">{{ client.clientIP || '—' }}</span>
-          </span>
-          <span v-if="client.version" class="meta-chip accent">v{{ client.version }}</span>
-          <OsBadge :os="client.os" :arch="client.arch" text-only/>
-          <span v-if="isOnline" class="meta-chip uptime">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 2.5"/></svg>
-            {{ formatUptime(client.connectedSecs) }}
-          </span>
-        </div>
-      </div>
-
-      <div class="hero-actions">
-        <button
-          v-if="isOnline"
-          type="button" class="kick-btn"
-          :disabled="kicking"
-          @click="onKick"
-        >
-          <AppIcon name="kick"/>
-          {{ t('clients.kick') }}
-        </button>
-      </div>
-    </header>
-
-    <!-- ── Traffic summary ── -->
-    <div class="stat-row">
-      <SectionCard :title="t('traffic.network')">
-        <TrafficSummary
-          :traffic-in="proxyTrafficIn"
-          :traffic-out="proxyTrafficOut"
-        />
-      </SectionCard>
-
-      <SectionCard :title="t('traffic.historyAll')">
-        <TrafficChart variant="line" range="24h" :run-id="runId" :refresh-ms="6000"/>
-      </SectionCard>
-    </div>
-
-    <!-- ── Proxy list ── -->
-    <SectionCard :title="t('nav.proxies')">
-      <template #extra>
-        <span class="proxy-count">{{ proxies.length }}</span>
-      </template>
-
-      <EmptyText
-        v-if="!proxies.length"
-        icon="⎕"
-        :title="t('overview.emptyProxies')"
-      />
-
-      <div v-else class="proxy-grid">
-        <div
-          v-for="p in proxies" :key="p.name"
-          class="proxy-card"
-          @click="router.push({name:'proxy-detail', params:{name:p.name}})"
-        >
-          <div class="proxy-card-top">
-            <span class="type-badge" :style="{color:typeColor(p.type), background:typeColor(p.type)+'1a', borderColor:typeColor(p.type)+'44'}">
-              {{ (p.type||'tcp').toUpperCase() }}
-            </span>
-            <span class="conn-badge">{{ p.curConns ?? 0 }} conn</span>
+    <template v-else-if="client">
+      <section class="summary card">
+        <div class="summary-head">
+          <div class="head-left">
+            <div class="avatar" aria-hidden="true">
+              <OsBadge :os="client.os" :arch="client.arch" icon-only size="md"/>
+            </div>
+            <div class="head-body">
+              <div class="title-row">
+                <h2 class="name mono">{{ client.sessionId }}</h2>
+                <span v-if="client.version" class="tag version">v{{ client.version }}</span>
+                <span v-if="client.user" class="tag">{{ client.user }}</span>
+              </div>
+              <div class="meta">
+                <span v-if="client.clientIP" class="mono">{{ client.clientIP }}</span>
+                <OsBadge :os="client.os" :arch="client.arch" size="md" text-only/>
+              </div>
+            </div>
           </div>
-          <div class="proxy-name">{{ p.name }}</div>
-          <div class="proxy-addr mono">{{ p.localAddr || '—' }}</div>
+          <div class="head-right">
+            <button
+                v-if="isOnline(client.status)"
+                type="button"
+                class="kick-btn"
+                :disabled="kicking"
+                :title="t('clients.kick')"
+                :aria-label="t('clients.kick')"
+                @click="onKick"
+            >
+              <AppIcon name="kick"/>
+            </button>
+            <span class="status-badge" :class="{ online: isOnline(client.status) }">
+              {{ statusLabel(client.status) }}
+            </span>
+          </div>
         </div>
-      </div>
-    </SectionCard>
+
+        <div class="info-row" role="list">
+          <div class="info-item" role="listitem">
+            <em>{{ t('clients.connections') }}</em>
+            <strong>{{ client.activeConnections ?? 0 }}</strong>
+          </div>
+          <div class="info-item" role="listitem">
+            <em>{{ t('clients.tunnels') }}</em>
+            <strong>{{ client.tunnelCount ?? 0 }}</strong>
+          </div>
+          <div class="info-item" role="listitem">
+            <em>{{ isOnline(client.status) ? t('clients.connected') : t('clients.disconnected') }}</em>
+            <strong>{{ formatSeen(client.connectedSecs, isOnline(client.status)) }}</strong>
+          </div>
+          <div v-if="client.hostname" class="info-item" role="listitem">
+            <em>{{ t('clients.hostname') }}</em>
+            <strong>{{ client.hostname }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="tunnels-panel card">
+        <div class="tunnels-header">
+          <div class="tunnels-title">
+            <h3>{{ t('nav.tunnels') }}</h3>
+            <span class="count">{{ total }}</span>
+          </div>
+          <label class="search">
+            <span class="search-icon" aria-hidden="true" v-html="searchIcon"/>
+            <input
+                v-model="tunnelSearch"
+                type="search"
+                :placeholder="t('clients.searchTunnels')"
+                autocomplete="off"
+            />
+          </label>
+        </div>
+
+        <div v-if="tunnelsLoading && !tunnels.length" class="panel-empty">
+          {{ t('traffic.loading') }}
+        </div>
+        <div v-else-if="!tunnels.length" class="panel-empty">
+          {{
+            tunnelSearch.trim()
+                ? t('clients.tunnelsSearchEmpty', {q: tunnelSearch.trim()})
+                : t('clients.tunnelsEmpty')
+          }}
+        </div>
+
+        <div v-else class="tunnel-list">
+          <article
+              v-for="p in tunnels"
+              :key="`${p.name}:${p.sessionId}`"
+              class="tunnel-card"
+              role="button"
+              tabindex="0"
+              @click="openTunnel(p.name)"
+              @keydown="onKeyOpenTunnel($event, p.name)"
+          >
+            <div class="tunnel-main">
+              <div class="tunnel-title">
+                <h3 class="tunnel-name">{{ p.name }}</h3>
+                <span class="tunnel-type">{{ (p.type || '—').toUpperCase() }}</span>
+              </div>
+              <div class="tunnel-meta">
+                <span class="meta-endpoint">
+                  <em>{{ isHttpTunnelType(p.type) ? t('tunnels.domain') : t('tunnels.port') }}</em>
+                  <code>{{ formatTunnelEndpoint(p.type, p.remoteAddr) }}</code>
+                </span>
+                <span class="meta-arrow" aria-hidden="true">→</span>
+                <span class="meta-endpoint">
+                  <em>{{ t('tunnels.localAddr') }}</em>
+                  <code>{{ p.localAddr || '—' }}</code>
+                </span>
+                <span>
+                  <em>{{ t('tunnels.activeConnections') }}</em>
+                  {{ p.activeConnections ?? 0 }}
+                </span>
+                <span class="meta-client">
+                  <em>{{ t('tunnels.client') }}</em>
+                  {{ p.sessionId || '—' }}
+                </span>
+              </div>
+            </div>
+
+            <div class="tunnel-side">
+              <TrafficIO :traffic-in="p.todayTrafficIn" :traffic-out="p.todayTrafficOut"/>
+              <span class="status-badge" :class="{ online: isOnline(p.status) }">
+                {{ statusLabel(p.status) }}
+              </span>
+            </div>
+          </article>
+        </div>
+
+        <PaginationBar
+            v-if="total > 0"
+            v-model:page="page"
+            v-model:page-size="pageSize"
+            :total="total"
+        />
+      </section>
+    </template>
+
+    <section v-else-if="notFound" class="not-found card">
+      <h2>{{ t('clients.notFound') }}</h2>
+      <p>{{ t('clients.notFoundDesc') }}</p>
+      <button type="button" class="back-btn" @click="router.push({ name: 'clients' })">
+        {{ t('clients.back') }}
+      </button>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.client-detail {
+.detail {
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
-  animation: page-in 0.35s ease both;
-}
-
-@keyframes page-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* not found */
-.not-found {
-  display: grid;
-  place-items: center;
-  min-height: 20rem;
-}
-
-.back-btn {
-  padding: 0.4rem 1rem; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--panel);
-  color: var(--text); font: inherit; font-size: 0.85rem;
-  cursor: pointer; transition: background 0.15s;
-}
-.back-btn:hover { background: var(--panel-hover); }
-
-/* hero */
-.detail-hero {
-  display: flex;
-  align-items: flex-start;
   gap: 1rem;
-  padding: 1.25rem 1.4rem;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
-  position: relative;
 }
 
-.back-icon {
-  width: 2rem; height: 2rem;
-  border-radius: 8px;
-  border: 1px solid var(--line);
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.crumb-back,
+.crumb-link {
+  border: 0;
   background: transparent;
   color: var(--muted);
-  display: grid; place-items: center;
-  cursor: pointer; flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
-  margin-top: 0.15rem;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
 }
-.back-icon:hover { background: var(--panel-hover); color: var(--text); }
-.back-icon svg { width: 1rem; height: 1rem; }
 
-.hero-avatar {
-  position: relative;
-  width: 3.2rem; height: 3.2rem;
-  border-radius: 14px;
-  display: grid; place-items: center;
+.crumb-back:hover,
+.crumb-link:hover {
+  color: var(--accent-text);
+}
+
+.crumb-sep {
+  opacity: 0.55;
+}
+
+.crumb-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mono {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.summary,
+.tunnels-panel,
+.not-found,
+.empty-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+  padding: 1.15rem 1.25rem 1.3rem;
+  overflow: hidden;
+}
+
+.summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0;
+}
+
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.avatar {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
   background: color-mix(in srgb, var(--muted) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 15%, transparent);
-  transition: background 0.2s;
-}
-.hero-avatar.online {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 14%, transparent);
 }
 
-.hero-dot {
-  position: absolute;
-  right: -0.2rem; bottom: -0.2rem;
-  width: 0.65rem; height: 0.65rem;
-  border-radius: 50%;
-  background: var(--muted);
-  border: 2.5px solid var(--panel);
-  box-sizing: content-box;
-}
-.hero-dot.online {
-  background: var(--status-ok);
-  animation: pulse 2.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-ok) 20%, transparent); }
-  50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--status-ok) 7%, transparent); }
+.avatar :deep(.os-icon) {
+  width: 1.45rem;
+  height: 1.45rem;
 }
 
-.hero-info { flex: 1; min-width: 0; }
-
-.hero-title-row {
-  display: flex; align-items: center; gap: 0.65rem;
-  flex-wrap: wrap; margin-bottom: 0.55rem;
+.head-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
-.hero-id {
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.name {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
   letter-spacing: -0.02em;
+  line-height: 1.25;
+  word-break: break-all;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.5rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 14%, transparent);
+}
+
+.tag.version {
+  color: var(--status-ok);
+  background: var(--status-ok-soft);
+  border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-shrink: 0;
+}
+
+.kick-btn {
+  box-sizing: border-box;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, transparent);
+  background: transparent;
+  color: var(--danger, #ef4444);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.kick-btn:hover:not(:disabled) {
+  border-color: var(--danger, #ef4444);
+}
+
+.kick-btn:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.info-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.75rem;
+  padding: 0;
+}
+
+.info-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.82rem;
+}
+
+.info-item em {
+  font-style: normal;
+  color: var(--muted);
+}
+
+.info-item em::after {
+  content: ':';
+}
+
+.info-item strong {
+  font-weight: 650;
   color: var(--text);
   word-break: break-all;
 }
 
-.hero-meta {
-  display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem;
+.tunnels-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.tunnels-header {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.95rem 1.15rem;
+  border-bottom: 1px solid var(--line);
 }
 
-.meta-chip {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  padding: 0.18rem 0.55rem;
-  border-radius: 8px;
-  font-size: 0.76rem; font-weight: 500;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 14%, transparent);
-}
-.meta-chip svg { width: 0.78rem; height: 0.78rem; opacity: 0.75; flex-shrink: 0; }
-.meta-chip.accent { color: var(--accent-text); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 22%, transparent); }
-.meta-chip.uptime { color: var(--status-ok); background: var(--status-ok-soft); border-color: color-mix(in srgb, var(--status-ok) 22%, transparent); }
-.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.75rem; }
-
-.hero-actions { flex-shrink: 0; }
-
-.kick-btn {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  padding: 0.48rem 1rem;
-  border-radius: 10px;
-  border: 1px solid var(--danger-border);
-  background: var(--danger-bg);
-  color: var(--danger);
-  font: inherit; font-size: 0.82rem; font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.1s;
-}
-.kick-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  border-color: var(--danger);
-}
-.kick-btn:disabled { opacity: 0.4; cursor: wait; }
-
-/* stat row */
-.stat-row {
-  display: grid;
-  grid-template-columns: 1fr 2fr;
-  gap: 1rem;
-  align-items: stretch;
+.tunnels-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-/* proxy grid */
-.proxy-count {
-  font-size: 0.75rem; font-weight: 700;
-  color: var(--accent-text);
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
-  padding: 0.12rem 0.48rem; border-radius: 999px;
-  font-variant-numeric: tabular-nums;
+.tunnels-title h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
 }
 
-.proxy-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.65rem;
-}
-
-.proxy-card {
-  padding: 0.85rem 1rem;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--muted) 4%, transparent);
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.12s;
-  display: flex; flex-direction: column; gap: 0.38rem;
-}
-.proxy-card:hover {
-  background: var(--panel-hover);
-  border-color: var(--line-strong);
-  transform: translateY(-1px);
-}
-
-.proxy-card-top {
-  display: flex; align-items: center; justify-content: space-between;
-}
-
-.type-badge {
-  display: inline-flex; align-items: center;
+.count {
+  min-width: 1.35rem;
   padding: 0.1rem 0.45rem;
-  border-radius: 6px; font-size: 0.66rem; font-weight: 700;
-  border: 1px solid; letter-spacing: 0.04em;
-}
-
-.conn-badge {
-  font-size: 0.68rem; color: var(--muted);
+  border-radius: var(--radius);
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
 }
 
-.proxy-name {
-  font-weight: 600;
+.search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: min(100%, 14rem);
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
+}
+
+.search-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.search-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+  stroke: none;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.search input::placeholder {
+  color: var(--muted);
+}
+
+.panel-empty,
+.empty-card {
+  padding: 2.25rem 1rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.tunnel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+}
+
+.tunnel-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1rem 1.2rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: border-color 0.18s ease,
+  box-shadow 0.18s ease,
+  transform 0.18s ease;
+}
+
+.tunnel-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.tunnel-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.tunnel-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tunnel-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.tunnel-name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.tunnel-type {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.tunnel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.15rem;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.tunnel-meta em {
+  font-style: normal;
+  color: var(--muted);
+  margin-right: 0.3rem;
+  font-weight: 500;
+}
+
+.meta-endpoint {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.meta-endpoint code {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.82rem; color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
   word-break: break-all;
 }
 
-.proxy-addr {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.74rem; color: var(--muted);
+.meta-arrow {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 -0.55rem;
+  user-select: none;
 }
 
-@media (max-width: 860px) {
-  .detail-hero { flex-wrap: wrap; }
-  .hero-actions { width: 100%; }
-  .stat-row { grid-template-columns: 1fr; }
+.meta-client {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.76rem;
+  word-break: break-all;
+}
+
+.tunnel-side {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  flex-shrink: 0;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 3.6rem;
+  justify-content: center;
+  padding: 0.28rem 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
+}
+
+.status-badge.online {
+  color: var(--status-ok);
+  background: var(--status-ok-soft);
+  border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
+}
+
+.tunnels-panel :deep(.pagination-bar) {
+  padding: 0 1rem 0.9rem;
+  border-top: 0;
+}
+
+.not-found {
+  padding: 2.5rem 1.25rem;
+  text-align: center;
+}
+
+.not-found h2 {
+  margin: 0 0 0.45rem;
+  font-size: 1.1rem;
+}
+
+.not-found p {
+  margin: 0 0 1.1rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.back-btn {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 650;
+  padding: 0.45rem 0.95rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.back-btn:hover {
+  border-color: var(--accent);
+}
+
+@media (max-width: 560px) {
+  .meta-arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .summary-head {
+    flex-direction: column;
+  }
+
+  .head-right {
+    align-self: flex-end;
+  }
+
+  .tunnel-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+  }
+
+  .tunnel-side {
+    justify-content: space-between;
+  }
 }
 </style>

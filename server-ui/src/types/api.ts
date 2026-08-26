@@ -18,69 +18,68 @@ export interface SystemInfo {
 }
 
 export interface SystemConfig {
-    bindAddr: string
-    bindPort: number
-    quicBindPort: number
-    kcpBindPort: number
-    vhostHTTPPort: number
-    vhostHTTPSPort: number
-    subDomainHost: string
+    listen: string
+    quicPort: number
+    kcpPort: number
+    httpGwPort: number
+    httpsGwPort: number
+    rootDomain: string
     tcpMux: boolean
     tlsForce: boolean
-    maxPoolCount: number
+    maxConnPool: number
     heartbeatTimeout: number
 }
 
 export interface SystemStatus {
     clientCounts: number
     totalClientCounts: number
-    proxyTypeCount: Record<string, number>
-    curConns: number
+    tunnelTypeCount: Record<string, number>
+    activeConnections: number
     totalTrafficIn: number
     totalTrafficOut: number
 }
 
 export interface ClientInfo {
-    runId: string
+    sessionId: string
     user: string
     hostname: string
     os: string
     arch: string
     clientIP: string
     version: string
-    proxyCount: number
-    curConns: number
+    tunnelCount: number
+    activeConnections: number
     connectedSecs: number
     status: string
     totalTrafficIn?: number
     totalTrafficOut?: number
 }
 
-export interface ProxyInfo {
+export interface TunnelInfo {
     name: string
     type: string
     remoteAddr: string
     localAddr: string
-    clientId: string
+    sessionId: string
     status: string
     todayTrafficIn: number
     todayTrafficOut: number
-    curConns: number
+    activeConnections: number
     lastStartTime?: string
     historyConns?: number
 }
 
-export interface ProxyTrafficPoint {
+export interface TunnelTrafficPoint {
     date: string
     trafficIn: number
     trafficOut: number
 }
 
-export interface ProxyTrafficResp {
+export interface TunnelTrafficResp {
     name: string
     unit: 'bytes' | string
     granularity: 'day' | string
-    history: ProxyTrafficPoint[]
+    history: TunnelTrafficPoint[]
 }
 
 export interface TokenMetricItem {

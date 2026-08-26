@@ -1,19 +1,24 @@
 use anyhow::{bail, Result};
 
-pub const KB: u64 = 1024;
-pub const MB: u64 = 1024 * 1024;
+pub fn mbps_to_bytes_per_sec(mbps: f64) -> u64 {
+    if mbps <= 0.0 || !mbps.is_finite() {
+        return 0;
+    }
+    (mbps * 1_000_000.0 / 8.0).round() as u64
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BandwidthLimitMode {
+pub enum BandwidthLimitSide {
     Client,
     Server,
 }
 
-impl BandwidthLimitMode {
+impl BandwidthLimitSide {
     pub fn parse(s: &str) -> Self {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "server" => Self::Server,
-            _ => Self::Client,
+        if s.trim().eq_ignore_ascii_case("server") {
+            Self::Server
+        } else {
+            Self::Client
         }
     }
 
@@ -25,20 +30,18 @@ impl BandwidthLimitMode {
     }
 }
 
-pub fn parse_bandwidth_limit(s: &str) -> Result<u64> {
-    let s = s.trim();
+pub fn parse_bandwidth_mbps(raw: &str) -> Result<f64> {
+    let s = raw.trim();
     if s.is_empty() {
-        return Ok(0);
+        return Ok(0.0);
     }
-    if let Some(num) = s.strip_suffix("MB").or_else(|| s.strip_suffix("mb")) {
-        let f: f64 = num.trim().parse()?;
-        return Ok((f * MB as f64) as u64);
+    let n: f64 = s
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid bandwidth (Mbps number expected), got {s:?}"))?;
+    if !n.is_finite() || n < 0.0 {
+        bail!("invalid bandwidth value: {s:?}");
     }
-    if let Some(num) = s.strip_suffix("KB").or_else(|| s.strip_suffix("kb")) {
-        let f: f64 = num.trim().parse()?;
-        return Ok((f * KB as f64) as u64);
-    }
-    bail!("bandwidthLimit unit not supported (use KB or MB), got {s:?}");
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -47,46 +50,45 @@ mod tests {
 
     #[test]
     fn parse_zero_and_empty() {
-        assert_eq!(parse_bandwidth_limit("").unwrap(), 0);
-        assert_eq!(parse_bandwidth_limit("   ").unwrap(), 0);
-        // Bare number without unit is rejected.
-        assert!(parse_bandwidth_limit("0").is_err());
+        assert_eq!(parse_bandwidth_mbps("").unwrap(), 0.0);
+        assert_eq!(parse_bandwidth_mbps("   ").unwrap(), 0.0);
+        assert_eq!(parse_bandwidth_mbps("0").unwrap(), 0.0);
     }
 
     #[test]
-    fn parse_kb() {
-        assert_eq!(parse_bandwidth_limit("1KB").unwrap(), KB);
-        assert_eq!(parse_bandwidth_limit("2kb").unwrap(), 2 * KB);
-        assert_eq!(parse_bandwidth_limit(" 512 KB ").unwrap(), 512 * KB);
+    fn parse_valid_mbps() {
+        assert_eq!(parse_bandwidth_mbps("1").unwrap(), 1.0);
+        assert_eq!(parse_bandwidth_mbps("2.5").unwrap(), 2.5);
+        assert_eq!(parse_bandwidth_mbps(" 512 ").unwrap(), 512.0);
     }
 
     #[test]
-    fn parse_mb() {
-        assert_eq!(parse_bandwidth_limit("1MB").unwrap(), MB);
-        assert_eq!(parse_bandwidth_limit("1.5mb").unwrap(), (1.5 * MB as f64) as u64);
-        assert_eq!(parse_bandwidth_limit("0.5MB").unwrap(), (0.5 * MB as f64) as u64);
+    fn parse_invalid() {
+        assert!(parse_bandwidth_mbps("abc").is_err());
+        assert!(parse_bandwidth_mbps("-1").is_err());
+        assert!(parse_bandwidth_mbps("nan").is_err());
     }
 
     #[test]
-    fn parse_unsupported_unit() {
-        assert!(parse_bandwidth_limit("1GB").is_err());
-        assert!(parse_bandwidth_limit("10").is_err());
-        assert!(parse_bandwidth_limit("abc").is_err());
+    fn mbps_to_bytes() {
+        assert_eq!(mbps_to_bytes_per_sec(8.0), 1_000_000);
+        assert_eq!(mbps_to_bytes_per_sec(0.0), 0);
+        assert_eq!(mbps_to_bytes_per_sec(-1.0), 0);
     }
 
     #[test]
     fn mode_parse() {
-        assert_eq!(BandwidthLimitMode::parse("server"), BandwidthLimitMode::Server);
-        assert_eq!(BandwidthLimitMode::parse("SERVER"), BandwidthLimitMode::Server);
-        assert_eq!(BandwidthLimitMode::parse("Server"), BandwidthLimitMode::Server);
-        assert_eq!(BandwidthLimitMode::parse("client"), BandwidthLimitMode::Client);
-        assert_eq!(BandwidthLimitMode::parse("anything"), BandwidthLimitMode::Client);
-        assert_eq!(BandwidthLimitMode::parse(""), BandwidthLimitMode::Client);
+        assert_eq!(BandwidthLimitSide::parse("server"), BandwidthLimitSide::Server);
+        assert_eq!(BandwidthLimitSide::parse("SERVER"), BandwidthLimitSide::Server);
+        assert_eq!(BandwidthLimitSide::parse("Server"), BandwidthLimitSide::Server);
+        assert_eq!(BandwidthLimitSide::parse("client"), BandwidthLimitSide::Client);
+        assert_eq!(BandwidthLimitSide::parse("anything"), BandwidthLimitSide::Client);
+        assert_eq!(BandwidthLimitSide::parse(""), BandwidthLimitSide::Client);
     }
 
     #[test]
     fn mode_as_str() {
-        assert_eq!(BandwidthLimitMode::Server.as_str(), "server");
-        assert_eq!(BandwidthLimitMode::Client.as_str(), "client");
+        assert_eq!(BandwidthLimitSide::Server.as_str(), "server");
+        assert_eq!(BandwidthLimitSide::Client.as_str(), "client");
     }
 }

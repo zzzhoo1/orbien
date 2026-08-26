@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {computed} from 'vue'
 import {useLocale} from '@/composables/useLocale'
+import arrowLeftIcon from '@/assets/icon/arrow-left.svg?raw'
+import arrowRightIcon from '@/assets/icon/arrow-right.svg?raw'
 
 const props = withDefaults(
     defineProps<{
@@ -76,9 +78,7 @@ function onPageSizeChange(evt: Event) {
             :aria-label="t('common.prevPage')"
             @click="go(current - 1)"
         >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M10 3.5 5.5 8 10 12.5"/>
-          </svg>
+          <span class="nav-icon" aria-hidden="true" v-html="arrowLeftIcon"/>
         </button>
 
         <button
@@ -99,9 +99,7 @@ function onPageSizeChange(evt: Event) {
             :aria-label="t('common.nextPage')"
             @click="go(current + 1)"
         >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M6 3.5 10.5 8 6 12.5"/>
-          </svg>
+          <span class="nav-icon" aria-hidden="true" v-html="arrowRightIcon"/>
         </button>
       </div>
     </div>
@@ -139,7 +137,7 @@ function onPageSizeChange(evt: Event) {
   color: var(--text);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 0.28rem 1.7rem 0.28rem 0.65rem;
   cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5 8 10.5 12 6.5'/%3E%3C/svg%3E");
@@ -174,20 +172,28 @@ function onPageSizeChange(evt: Event) {
   min-width: 1.7rem;
   height: 1.7rem;
   padding: 0 0.3rem;
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: pointer;
   display: inline-grid;
   place-items: center;
 }
 
-.nav-btn svg {
-  width: 0.95rem;
-  height: 0.95rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.nav-btn svg,
+.nav-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  color: inherit;
+}
+
+.nav-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+  stroke: none;
 }
 
 .nav-btn:hover:not(:disabled),

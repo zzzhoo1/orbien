@@ -8,7 +8,6 @@ target
 **/target
 **/node_modules
 **/dist
-desktop
 examples
 .DS_Store
 **/.DS_Store

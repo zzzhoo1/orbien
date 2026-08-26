@@ -1,11 +1,7 @@
 <script setup lang="ts">
-withDefaults(
-    defineProps<{
-      title: string
-      description?: string
-    }>(),
-    {description: ''},
-)
+defineProps<{
+  title: string
+}>()
 </script>
 
 <template>
@@ -13,9 +9,6 @@ withDefaults(
     <header class="section-head">
       <div>
         <h2 class="section-title">{{ title }}</h2>
-        <p v-if="description || $slots.description" class="section-desc">
-          <slot name="description">{{ description }}</slot>
-        </p>
       </div>
       <div v-if="$slots.extra" class="section-extra">
         <slot name="extra"/>
@@ -48,13 +41,6 @@ withDefaults(
   font-weight: 650;
   color: var(--text);
   letter-spacing: 0.01em;
-}
-
-.section-desc {
-  margin: 0.3rem 0 0;
-  color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.4;
 }
 
 .section-extra {

@@ -27,6 +27,7 @@ pub async fn dial_websocket(endpoint: &str) -> Result<DynStream> {
     let stream = TcpStream::connect(endpoint)
         .await
         .with_context(|| format!("tcp dial for websocket {endpoint}"))?;
+    crate::net::enable_nodelay(&stream);
     let url = format!("ws://{endpoint}{ORBIEN_WEBSOCKET_PATH}");
     let (ws, _resp) = client_async(&url, stream)
         .await
@@ -118,7 +119,7 @@ where
 
         if let Err(e) = sink
             .as_mut()
-            .start_send(Message::Binary(buf.to_vec().into()))
+            .start_send(Message::Binary(bytes::Bytes::copy_from_slice(buf)))
         {
             return Poll::Ready(Err(std::io::Error::other(e)));
         }
@@ -146,8 +147,4 @@ where
             Poll::Pending => Poll::Pending,
         }
     }
-}
-
-pub fn websocket_url(endpoint: &str) -> String {
-    format!("ws://{endpoint}{ORBIEN_WEBSOCKET_PATH}")
 }

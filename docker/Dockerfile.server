@@ -1,4 +1,3 @@
-# orbien-server — multi-stage image (embeds server-ui via rust-embed)
 ARG RUST_VERSION=1.88
 
 FROM node:22-bookworm AS web
@@ -6,7 +5,6 @@ WORKDIR /src
 COPY server-ui/package.json server-ui/package-lock.json ./server-ui/
 RUN cd server-ui && npm ci
 COPY server-ui/ ./server-ui/
-# vite outDir → ../server/assets
 RUN mkdir -p server/assets && cd server-ui && npm run build
 
 FROM rust:${RUST_VERSION}-bookworm AS build
@@ -15,6 +13,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY core ./core
 COPY client ./client
 COPY server ./server
+COPY desktop ./desktop
 COPY --from=web /src/server/assets ./server/assets
 RUN cargo build --release -p orbien-server \
     && strip target/release/orbien-server

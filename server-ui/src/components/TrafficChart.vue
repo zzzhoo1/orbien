@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
-import {fetchProxyTraffic, fetchSystemTraffic, type TrafficRange} from '@/api/client'
+import {fetchTunnelTraffic, fetchSystemTraffic, type TrafficRange} from '@/api/client'
 import {formatFileSize} from '@/utils/format'
 import {useLocale} from '@/composables/useLocale'
 
 const props = withDefaults(
     defineProps<{
-      proxyName?: string
+      tunnelName?: string
       range?: TrafficRange
       variant?: 'bar' | 'line'
       refreshMs?: number
     }>(),
     {
-      proxyName: '',
+      tunnelName: '',
       range: '7d',
       variant: 'bar',
       refreshMs: 0,
@@ -166,12 +166,12 @@ const hoverX = computed(() => {
 async function load() {
   const seq = ++loadSeq
   const range = props.range
-  const name = props.proxyName
+  const name = props.tunnelName
   loading.value = true
   error.value = null
   try {
     const data = name
-        ? await fetchProxyTraffic(name, range)
+        ? await fetchTunnelTraffic(name, range)
         : await fetchSystemTraffic(range)
     if (seq !== loadSeq) return
     granularity.value = data.granularity || (range === '24h' ? 'hour' : 'day')
@@ -238,7 +238,7 @@ onUnmounted(() => {
 })
 
 watch(
-    () => [props.proxyName, props.range] as const,
+    () => [props.tunnelName, props.range] as const,
     () => {
       hoverIndex.value = null
       points.value = []
@@ -553,7 +553,7 @@ watch(
   transform: translateX(-50%);
   min-width: 7.5rem;
   padding: 0.45rem 0.6rem;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--panel);
   border: 1px solid var(--line-strong);
   box-shadow: var(--shadow);
@@ -583,7 +583,7 @@ watch(
 .tip-row i {
   width: 0.45rem;
   height: 0.45rem;
-  border-radius: 2px;
+  border-radius: var(--radius);
   display: inline-block;
 }
 
@@ -608,7 +608,7 @@ watch(
   display: inline-block;
   width: 0.55rem;
   height: 0.55rem;
-  border-radius: 2px;
+  border-radius: var(--radius);
   margin-right: 0.3rem;
   vertical-align: middle;
 }

@@ -1,0 +1,78 @@
+name: 🐛 Bug Report
+description: 报告问题 / Report a bug
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索 [现有 Issues](https://github.com/orbien-org/orbien/issues)，并脱敏 token、证书、域名、真实 IP等敏感信息
+        Please search [existing issues](https://github.com/orbien-org/orbien/issues) first, and redact tokens, certs, domains, real IPs, etc.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 / Description
+      description: 说明期望行为与实际现象 / Describe expected vs actual behavior
+      placeholder: |
+        期望：...
+        实际：...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息 / Environment
+      description: 版本、系统、组件及网络情况 / Version, OS, components, and network context
+      placeholder: |
+        版本 / Version:
+        系统 / OS:
+        组件 / Components: server / client / desktop / docker / SDK
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置 / Config
+      description: 脱敏后的最小可复现配置 / Minimal reproducible config, redacted
+      render: toml
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: 服务端与客户端相关输出 / Relevant server and client output
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤 / Steps
+      description: 按顺序列出操作步骤 / List steps in order
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图 / Screenshots
+      description: 可选。可直接粘贴或拖拽图片 / Optional. Paste or drag images here
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息 / Extra
+      description: 可选 / Optional

@@ -17,15 +17,11 @@ const {t} = useLocale()
 const trafficRange = ref<TrafficRange>('24h')
 const chartVariant = ref<'bar' | 'line'>('line')
 
-const PROXY_COLORS: Record<string, string> = {
+const TUNNEL_COLORS: Record<string, string> = {
   http: '#3b82f6',
   https: '#93c5fd',
   tcp: '#cbd5e1',
   udp: '#2dd4bf',
-  socks5: '#f97316',
-  file: '#fb7185',
-  stcp: '#a78bfa',
-  xtcp: '#f472b6',
 }
 
 const FALLBACK_COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#818cf8', '#94a3b8']
@@ -42,19 +38,19 @@ const totalClients = computed(() =>
     Math.max(status.value?.totalClientCounts ?? 0, onlineClients.value),
 )
 
-const proxyTotal = computed(() => {
-  const m = status.value?.proxyTypeCount || {}
+const tunnelTotal = computed(() => {
+  const m = status.value?.tunnelTypeCount || {}
   return Object.values(m).reduce((a, b) => a + b, 0)
 })
 
 const chartSlices = computed<ChartSlice[]>(() => {
-  const m = status.value?.proxyTypeCount || {}
+  const m = status.value?.tunnelTypeCount || {}
   const entries = Object.entries(m).sort(([a], [b]) => a.localeCompare(b))
   return entries.map(([key, value], i) => ({
     key,
     label: key,
     value,
-    color: PROXY_COLORS[key.toLowerCase()] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length]!,
+    color: TUNNEL_COLORS[key.toLowerCase()] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length]!,
   }))
 })
 
@@ -81,19 +77,92 @@ interface ConfigField {
 const configFields = computed<ConfigField[]>(() => {
   const c = cfg.value
   if (!c) return []
-  const fields: ConfigField[] = [
-    {key: 'listen', label: t('monitor.bindAddr'), type: 'raw', value: `${c.bindAddr || '—'}:${c.bindPort ?? '—'}`},
-  ]
-  if (!isUnsetPort(c.kcpBindPort)) fields.push({key: 'kcp', label: t('monitor.kcpBindPort'), type: 'port', value: c.kcpBindPort})
-  if (!isUnsetPort(c.quicBindPort)) fields.push({key: 'quic', label: t('monitor.quicBindPort'), type: 'port', value: c.quicBindPort})
-  if (!isUnsetPort(c.vhostHTTPPort)) fields.push({key: 'http', label: t('monitor.vhostHTTPPort'), type: 'port', value: c.vhostHTTPPort})
-  if (!isUnsetPort(c.vhostHTTPSPort)) fields.push({key: 'https', label: t('monitor.vhostHTTPSPort'), type: 'port', value: c.vhostHTTPSPort})
-  if (!isUnsetText(c.subDomainHost ?? '')) fields.push({key: 'subdomain', label: t('monitor.subDomainHost'), type: 'text', value: c.subDomainHost})
+
+  const fields: ConfigField[] = []
+
+  const version = store.info?.version?.trim()
+  if (version) {
+    fields.push({
+      key: 'version',
+      label: t('monitor.version'),
+      type: 'raw',
+      value: version,
+    })
+  }
+
+  fields.push({
+    key: 'listen',
+    label: t('monitor.listen'),
+    type: 'raw',
+    value: c.listen || '—',
+  })
+
+  if (!isUnsetPort(c.kcpPort)) {
+    fields.push({
+      key: 'kcp',
+      label: t('monitor.kcpPort'),
+      type: 'port',
+      value: c.kcpPort,
+    })
+  }
+  if (!isUnsetPort(c.quicPort)) {
+    fields.push({
+      key: 'quic',
+      label: t('monitor.quicPort'),
+      type: 'port',
+      value: c.quicPort,
+    })
+  }
+  if (!isUnsetPort(c.httpGwPort)) {
+    fields.push({
+      key: 'http',
+      label: t('monitor.httpGwPort'),
+      type: 'port',
+      value: c.httpGwPort,
+    })
+  }
+  if (!isUnsetPort(c.httpsGwPort)) {
+    fields.push({
+      key: 'https',
+      label: t('monitor.httpsGwPort'),
+      type: 'port',
+      value: c.httpsGwPort,
+    })
+  }
+  if (!isUnsetText(c.rootDomain ?? '')) {
+    fields.push({
+      key: 'rootDomain',
+      label: t('monitor.rootDomain'),
+      type: 'text',
+      value: c.rootDomain,
+    })
+  }
+
   fields.push(
-    {key: 'mux', label: t('monitor.tcpMux'), type: 'bool', value: c.tcpMux},
-    {key: 'tls', label: t('monitor.tlsForce'), type: 'bool', value: c.tlsForce},
-    {key: 'pool', label: t('monitor.metricMaxPool'), type: 'raw', value: c.maxPoolCount ?? 0},
-    {key: 'heartbeat', label: t('monitor.metricHeartbeat'), type: 'raw', value: formatHeartbeat(c.heartbeatTimeout)},
+      {
+        key: 'mux',
+        label: t('monitor.tcpMux'),
+        type: 'bool',
+        value: c.tcpMux,
+      },
+      {
+        key: 'tls',
+        label: t('monitor.tlsForce'),
+        type: 'bool',
+        value: c.tlsForce,
+      },
+      {
+        key: 'pool',
+        label: t('monitor.maxConnPool'),
+        type: 'raw',
+        value: c.maxConnPool ?? 0,
+      },
+      {
+        key: 'heartbeat',
+        label: t('monitor.heartbeatTimeout'),
+        type: 'raw',
+        value: formatHeartbeat(c.heartbeatTimeout),
+      },
   )
   return fields
 })
@@ -109,11 +178,11 @@ const configFields = computed<ConfigField[]>(() => {
       <StatCard :label="t('overview.onlineClients')" icon="user" tone="green">
         {{ onlineClients }}
       </StatCard>
-      <StatCard :label="t('overview.proxies')" icon="proxies" tone="violet">
-        {{ proxyTotal }}
+      <StatCard :label="t('overview.tunnels')" icon="tunnels" tone="violet">
+        {{ tunnelTotal }}
       </StatCard>
       <StatCard :label="t('overview.connections')" icon="link" tone="orange">
-        {{ status?.curConns ?? 0 }}
+        {{ status?.activeConnections ?? 0 }}
       </StatCard>
     </section>
 
@@ -126,7 +195,7 @@ const configFields = computed<ConfigField[]>(() => {
         <TrafficSummary :traffic-in="trafficIn" :traffic-out="trafficOut"/>
       </SectionCard>
 
-      <SectionCard class="panel donut-panel" :title="t('monitor.proxyDist')">
+      <SectionCard class="panel" :title="t('monitor.tunnelDist')">
         <DonutChart :slices="chartSlices"/>
       </SectionCard>
     </div>
@@ -230,9 +299,9 @@ const configFields = computed<ConfigField[]>(() => {
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.16rem 0.52rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--accent-text);
   background: var(--accent-soft);
@@ -251,7 +320,7 @@ const configFields = computed<ConfigField[]>(() => {
 .seg {
   display: inline-flex;
   padding: 2px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--muted) 10%, transparent);
   border: 1px solid var(--line);
 }
@@ -263,8 +332,8 @@ const configFields = computed<ConfigField[]>(() => {
   font: inherit;
   font-size: 0.75rem;
   font-weight: 600;
-  padding: 0.26rem 0.65rem;
-  border-radius: 999px;
+  padding: 0.28rem 0.7rem;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   transition: color 0.15s, background 0.15s, box-shadow 0.15s;
 }

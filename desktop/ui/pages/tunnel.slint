@@ -1,0 +1,189 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { IconCloud, IconPlus } from "../icons.slint";
+import { Tr } from "../i18n.slint";
+import { TunnelRow } from "tunnel_parts/types.slint";
+import { TunnelCardGrid } from "tunnel_parts/card.slint";
+import { TunnelEditor } from "tunnel_parts/editor.slint";
+
+export { TunnelRow }
+export component TunnelPage inherits Rectangle {
+    in property <[TunnelRow]> tunnels;
+    in property <int> editing-index: -1;
+    in-out property <bool> editor-open: false;
+    in-out property <string> edit-name: "";
+    in-out property <string> edit-local-ip: "127.0.0.1";
+    in-out property <string> edit-local-port: "8080";
+    in-out property <string> edit-remote-port: "9000";
+    in-out property <string> edit-domains: "";
+    in-out property <string> edit-locations: "";
+    in-out property <string> edit-basic-auth-user: "";
+    in-out property <string> edit-basic-auth-password: "";
+    in-out property <string> edit-host-header-rewrite: "";
+    in-out property <string> edit-route-by-http-user: "";
+    in-out property <string> edit-bandwidth-limit: "";
+    in-out property <int> edit-bandwidth-side-index: 0;
+    in-out property <int> edit-proxy-protocol-index: 0;
+    in-out property <bool> edit-plugin-tls-term: false;
+    in-out property <string> edit-plugin-local-addr: "127.0.0.1:80";
+    in-out property <string> edit-plugin-cert-file: "";
+    in-out property <string> edit-plugin-key-file: "";
+    in-out property <string> edit-plugin-host-rewrite: "";
+    in-out property <string> edit-plugin-username: "";
+    in-out property <string> edit-plugin-password: "";
+    in-out property <int> edit-type-index: 0;
+    in-out property <bool> show-advanced: false;
+
+    callback add-clicked;
+    callback save-clicked;
+    callback cancel-clicked;
+    callback edit-row(int);
+    callback delete-row(int);
+    callback copy-remote(string);
+    callback pick-file(string);
+
+    background: transparent;
+    min-height: Theme.page-min-height;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 16px;
+        alignment: stretch;
+
+        HorizontalLayout {
+            height: 38px;
+            vertical-stretch: 0;
+            spacing: 10px;
+
+            Rectangle {
+                width: 22px;
+                height: 38px;
+                horizontal-stretch: 0;
+                vertical-stretch: 0;
+                background: transparent;
+                IconCloud {
+                    y: (parent.height - self.height) / 2;
+                    size: 22px;
+                    tint: Theme.accent;
+                }
+            }
+
+            Text {
+                text: Tr.tunnel-title;
+                color: Theme.accent;
+                font-size: 22px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                horizontal-stretch: 1;
+            }
+
+            if !root.editor-open: TouchArea {
+                width: 38px;
+                height: 38px;
+                horizontal-stretch: 0;
+                mouse-cursor: pointer;
+                clicked => { root.add-clicked(); }
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    border-radius: Theme.radius;
+                    background: Theme.accent;
+                    IconPlus {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        size: 16px;
+                        tint: white;
+                    }
+                }
+            }
+        }
+
+        if !root.editor-open: ScrollView {
+            vertical-stretch: 1;
+            width: parent.width;
+            viewport-width: self.width;
+
+            VerticalLayout {
+                width: 100%;
+                spacing: 14px;
+                padding-right: 4px;
+                padding-bottom: 8px;
+                alignment: stretch;
+
+                if root.tunnels.length == 0: Rectangle {
+                    background: Theme.panel;
+                    border-radius: Theme.radius;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    height: 120px;
+                    vertical-stretch: 0;
+                    VerticalLayout {
+                        padding: 24px;
+                        alignment: center;
+                        Text {
+                            text: Tr.tunnel-empty;
+                            color: Theme.muted;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if root.tunnels.length > 0: TunnelCardGrid {
+                    width: 100%;
+                    vertical-stretch: 0;
+                    tunnels: root.tunnels;
+                    edit-row(i) => { root.edit-row(i); }
+                    delete-row(i) => { root.delete-row(i); }
+                    copy-remote(t) => { root.copy-remote(t); }
+                }
+            }
+        }
+
+        if root.editor-open: ScrollView {
+            vertical-stretch: 1;
+            width: parent.width;
+            viewport-width: self.width;
+
+            VerticalLayout {
+                width: 100%;
+                spacing: 0;
+                padding-right: 4px;
+                padding-bottom: 12px;
+                alignment: stretch;
+
+                TunnelEditor {
+                    width: 100%;
+                    vertical-stretch: 0;
+                    editing-index: root.editing-index;
+                    edit-name <=> root.edit-name;
+                    edit-local-ip <=> root.edit-local-ip;
+                    edit-local-port <=> root.edit-local-port;
+                    edit-remote-port <=> root.edit-remote-port;
+                    edit-domains <=> root.edit-domains;
+                    edit-locations <=> root.edit-locations;
+                    edit-basic-auth-user <=> root.edit-basic-auth-user;
+                    edit-basic-auth-password <=> root.edit-basic-auth-password;
+                    edit-host-header-rewrite <=> root.edit-host-header-rewrite;
+                    edit-route-by-http-user <=> root.edit-route-by-http-user;
+                    edit-bandwidth-limit <=> root.edit-bandwidth-limit;
+                    edit-bandwidth-side-index <=> root.edit-bandwidth-side-index;
+                    edit-proxy-protocol-index <=> root.edit-proxy-protocol-index;
+                    edit-plugin-tls-term <=> root.edit-plugin-tls-term;
+                    edit-plugin-local-addr <=> root.edit-plugin-local-addr;
+                    edit-plugin-cert-file <=> root.edit-plugin-cert-file;
+                    edit-plugin-key-file <=> root.edit-plugin-key-file;
+                    edit-plugin-host-rewrite <=> root.edit-plugin-host-rewrite;
+                    edit-plugin-username <=> root.edit-plugin-username;
+                    edit-plugin-password <=> root.edit-plugin-password;
+                    edit-type-index <=> root.edit-type-index;
+                    show-advanced <=> root.show-advanced;
+                    save-clicked => { root.save-clicked(); }
+                    cancel-clicked => { root.cancel-clicked(); }
+                    pick-file(target) => { root.pick-file(target); }
+                }
+            }
+        }
+    }
+}

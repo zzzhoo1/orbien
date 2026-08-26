@@ -21,7 +21,3 @@ export function formatArch(raw?: string | null): string {
     if (s === 'i386' || s === 'i686' || s === 'x86') return 'x86'
     return raw!.trim()
 }
-
-export function hasOsInfo(os?: string | null, arch?: string | null): boolean {
-    return Boolean((os && os.trim()) || (arch && arch.trim()))
-}

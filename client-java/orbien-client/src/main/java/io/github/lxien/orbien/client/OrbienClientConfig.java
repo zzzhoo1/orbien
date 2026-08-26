@@ -11,10 +11,10 @@ public final class OrbienClientConfig {
     private boolean tcpMux = false;
     private int poolCount = 1;
     private String user = "";
-    private String runId = "";
-    private String runIdFile = "";
+    private String sessionId = "";
+    private String sessionIdFile = "";
     private int heartbeatIntervalSecs = 30;
-    private final List<ProxyConfig> proxies = new ArrayList<>();
+    private final List<TunnelConfig> tunnels = new ArrayList<>();
 
     public String getServerAddr() {
         return serverAddr;
@@ -64,20 +64,20 @@ public final class OrbienClientConfig {
         this.user = user == null ? "" : user;
     }
 
-    public String getRunId() {
-        return runId;
+    public String getSessionId() {
+        return sessionId;
     }
 
-    public void setRunId(String runId) {
-        this.runId = runId == null ? "" : runId;
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId == null ? "" : sessionId;
     }
 
-    public String getRunIdFile() {
-        return runIdFile;
+    public String getSessionIdFile() {
+        return sessionIdFile;
     }
 
-    public void setRunIdFile(String runIdFile) {
-        this.runIdFile = runIdFile == null ? "" : runIdFile;
+    public void setSessionIdFile(String sessionIdFile) {
+        this.sessionIdFile = sessionIdFile == null ? "" : sessionIdFile;
     }
 
     public int getHeartbeatIntervalSecs() {
@@ -88,25 +88,24 @@ public final class OrbienClientConfig {
         this.heartbeatIntervalSecs = heartbeatIntervalSecs;
     }
 
-    public List<ProxyConfig> getProxies() {
-        return proxies;
+    public List<TunnelConfig> getTunnels() {
+        return tunnels;
     }
 
-    public static final class ProxyConfig {
-        private String type = "tcp";
+    public static final class TunnelConfig {
+        private String protocol = "tcp";
         private String name;
         private String localIp = "127.0.0.1";
         private int localPort;
         private int remotePort;
-        private List<String> customDomains = new ArrayList<>();
-        private String subdomain = "";
+        private List<String> domains = new ArrayList<>();
 
-        public String getType() {
-            return type;
+        public String getProtocol() {
+            return protocol;
         }
 
-        public void setType(String type) {
-            this.type = type;
+        public void setProtocol(String protocol) {
+            this.protocol = protocol;
         }
 
         public String getName() {
@@ -141,20 +140,12 @@ public final class OrbienClientConfig {
             this.remotePort = remotePort;
         }
 
-        public List<String> getCustomDomains() {
-            return customDomains;
+        public List<String> getDomains() {
+            return domains;
         }
 
-        public void setCustomDomains(List<String> customDomains) {
-            this.customDomains = customDomains == null ? new ArrayList<>() : customDomains;
-        }
-
-        public String getSubdomain() {
-            return subdomain;
-        }
-
-        public void setSubdomain(String subdomain) {
-            this.subdomain = subdomain == null ? "" : subdomain;
+        public void setDomains(List<String> domains) {
+            this.domains = domains == null ? new ArrayList<>() : domains;
         }
     }
 }

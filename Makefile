@@ -1,10 +1,7 @@
-.PHONY: build release orbien-server orbien web test clean fmt package desktop-sidecar desktop-dev desktop-build
-
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 export CARGO_TARGET_DIR := $(ROOT)/target
 
 WEB_DIR := server-ui
-DESKTOP_DIR := desktop
 
 web:
 	cd $(WEB_DIR) && npm install && npm run build
@@ -19,20 +16,36 @@ release: web
 	@echo "artifacts:"
 	@ls -lh target/release/orbien-server target/release/orbien
 
-orbien-server:
-	./docs/scripts/build-server.sh
+orbien-server: web
+	cargo build --release -p orbien-server
+	@echo ""
+	@echo "artifact:"
+	@ls -lh target/release/orbien-server
 
 orbien:
 	cargo build --release -p orbien-client
 
-desktop-sidecar:
-	./scripts/prepare-desktop-sidecar.sh
+desktop-dev:
+	cargo run -p orbien-desktop
 
-desktop-dev: desktop-sidecar
-	cd $(DESKTOP_DIR) && npm install && npm run tauri dev
+desktop-build:
+	cargo build --release -p orbien-desktop
 
-desktop-build: desktop-sidecar
-	cd $(DESKTOP_DIR) && npm install && npm run tauri build
+desktop-app desktop-dmg: desktop-build
+	chmod +x scripts/pack-desktop-macos.sh
+	./scripts/pack-desktop-macos.sh
+	@echo "app → dist/Orbien Desktop.app"
+	@echo "dmg → dist/orbien-desktop_*_darwin_*.dmg"
+
+desktop-windows: desktop-build
+	chmod +x scripts/pack-desktop-windows.sh
+	./scripts/pack-desktop-windows.sh
+	@echo "exe/zip → dist/orbien-desktop_*_windows_*"
+
+desktop-deb: desktop-build
+	chmod +x scripts/pack-desktop-linux-deb.sh
+	./scripts/pack-desktop-linux-deb.sh
+	@echo "deb → dist/orbien-desktop_*_linux_*.deb"
 
 test:
 	cargo test --workspace
@@ -43,7 +56,6 @@ fmt:
 clean:
 	cargo clean
 	rm -rf $(WEB_DIR)/node_modules $(WEB_DIR)/dist
-	rm -rf $(DESKTOP_DIR)/node_modules $(DESKTOP_DIR)/dist
 
 package: release
 	mkdir -p dist

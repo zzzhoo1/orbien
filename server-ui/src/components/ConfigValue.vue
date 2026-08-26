@@ -49,7 +49,7 @@ const kind = computed(() => {
   align-items: center;
   gap: 0.35rem;
   padding: 0.15rem 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 0.8rem;
   font-weight: 600;
 }
@@ -58,7 +58,7 @@ const kind = computed(() => {
   content: '';
   width: 0.45rem;
   height: 0.45rem;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: currentColor;
 }
 

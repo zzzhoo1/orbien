@@ -17,18 +17,18 @@ use tokio::io::{duplex, DuplexStream};
 fn sample_message(kind: &str) -> Message {
     match kind {
         "login" => Message::Login(Login {
-            run_id: "bench-run-id".into(),
-            user: "bench-user".into(),
+            version: "0.1.0".into(),
             hostname: "bench-host".into(),
             os: "linux".into(),
             arch: "x86_64".into(),
-            version: "0.1.0".into(),
-            privilege_key: String::new(),
+            user: "bench-user".into(),
+            auth_digest: String::new(),
             timestamp: 0,
+            session_id: "bench-session".into(),
             pool_count: 0,
         }),
         "ping" => Message::Ping(Ping {
-            privilege_key: String::new(),
+            auth_digest: String::new(),
             timestamp: 0,
         }),
         "udp" => Message::UdpPacket(UdpPacket::new(vec![0xAB; 512], None)),

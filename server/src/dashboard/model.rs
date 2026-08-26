@@ -35,26 +35,23 @@ pub struct SystemInfo {
 
 #[derive(Serialize)]
 pub struct SystemConfig {
-    #[serde(rename = "bindAddr")]
-    pub bind_addr: String,
-    #[serde(rename = "bindPort")]
-    pub bind_port: u16,
-    #[serde(rename = "quicBindPort")]
-    pub quic_bind_port: u16,
-    #[serde(rename = "kcpBindPort")]
-    pub kcp_bind_port: u16,
-    #[serde(rename = "vhostHTTPPort")]
-    pub vhost_http_port: u16,
-    #[serde(rename = "vhostHTTPSPort")]
-    pub vhost_https_port: u16,
-    #[serde(rename = "subDomainHost")]
-    pub sub_domain_host: String,
+    pub listen: String,
+    #[serde(rename = "quicPort")]
+    pub quic_port: u16,
+    #[serde(rename = "kcpPort")]
+    pub kcp_port: u16,
+    #[serde(rename = "httpGwPort")]
+    pub http_gw_port: u16,
+    #[serde(rename = "httpsGwPort")]
+    pub https_gw_port: u16,
+    #[serde(rename = "rootDomain")]
+    pub root_domain: String,
     #[serde(rename = "tcpMux")]
     pub tcp_mux: bool,
     #[serde(rename = "tlsForce")]
     pub tls_force: bool,
-    #[serde(rename = "maxPoolCount")]
-    pub max_pool_count: i64,
+    #[serde(rename = "maxConnPool")]
+    pub max_conn_pool: i64,
     #[serde(rename = "heartbeatTimeout")]
     pub heartbeat_timeout: i64,
 }
@@ -65,10 +62,10 @@ pub struct SystemStatus {
     pub client_counts: usize,
     #[serde(rename = "totalClientCounts")]
     pub total_client_counts: usize,
-    #[serde(rename = "proxyTypeCount")]
-    pub proxy_type_count: std::collections::BTreeMap<String, usize>,
-    #[serde(rename = "curConns")]
-    pub cur_conns: usize,
+    #[serde(rename = "tunnelTypeCount")]
+    pub tunnel_type_count: std::collections::BTreeMap<String, usize>,
+    #[serde(rename = "activeConnections")]
+    pub active_connections: usize,
     #[serde(rename = "totalTrafficIn")]
     pub total_traffic_in: u64,
     #[serde(rename = "totalTrafficOut")]
@@ -77,8 +74,8 @@ pub struct SystemStatus {
 
 #[derive(Serialize)]
 pub struct ClientInfo {
-    #[serde(rename = "runId")]
-    pub run_id: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
     pub user: String,
     pub hostname: String,
     pub os: String,
@@ -86,39 +83,39 @@ pub struct ClientInfo {
     #[serde(rename = "clientIP")]
     pub client_ip: String,
     pub version: String,
-    #[serde(rename = "proxyCount")]
-    pub proxy_count: usize,
-    #[serde(rename = "curConns")]
-    pub cur_conns: usize,
+    #[serde(rename = "tunnelCount")]
+    pub tunnel_count: usize,
+    #[serde(rename = "activeConnections")]
+    pub active_connections: usize,
     #[serde(rename = "connectedSecs")]
     pub connected_secs: u64,
     pub status: String,
 }
 
 #[derive(Serialize)]
-pub struct ProxyInfo {
+pub struct TunnelInfo {
     pub name: String,
     #[serde(rename = "type")]
-    pub proxy_type: String,
+    pub tunnel_type: String,
     #[serde(rename = "remoteAddr")]
     pub remote_addr: String,
     #[serde(rename = "localAddr")]
     pub local_addr: String,
-    #[serde(rename = "clientId")]
-    pub client_id: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
     pub status: String,
     #[serde(rename = "todayTrafficIn")]
     pub today_traffic_in: u64,
     #[serde(rename = "todayTrafficOut")]
     pub today_traffic_out: u64,
-    #[serde(rename = "curConns")]
-    pub cur_conns: usize,
+    #[serde(rename = "activeConnections")]
+    pub active_connections: usize,
     #[serde(rename = "lastStartTime", skip_serializing_if = "Option::is_none")]
     pub last_start_time: Option<String>,
 }
 
 #[derive(Serialize)]
-pub struct ProxyTrafficPoint {
+pub struct TunnelTrafficPoint {
     pub date: String,
     #[serde(rename = "trafficIn")]
     pub traffic_in: u64,
@@ -127,9 +124,9 @@ pub struct ProxyTrafficPoint {
 }
 
 #[derive(Serialize)]
-pub struct ProxyTrafficResp {
+pub struct TunnelTrafficResp {
     pub name: String,
     pub unit: &'static str,
     pub granularity: &'static str,
-    pub history: Vec<ProxyTrafficPoint>,
+    pub history: Vec<TunnelTrafficPoint>,
 }

@@ -1,8 +1,8 @@
 import {reactive} from 'vue'
-import {fetchClients, fetchProxies, fetchSystemInfo, fetchSystemTokens, isApiError, type ApiError} from '@/api'
+import {fetchClients, fetchTunnels, fetchSystemInfo, fetchSystemTokens, isApiError, type ApiError} from '@/api'
 import {useAuthStore} from '@/stores/auth'
 import {router} from '@/router'
-import type {ClientInfo, ProxyInfo, SystemInfo, TokenMetricItem} from '@/types/api'
+import type {ClientInfo, TunnelInfo, SystemInfo, TokenMetricItem} from '@/types/api'
 
 export type DashboardError =
     | { code: ApiError['code']; params?: Record<string, unknown> }
@@ -11,7 +11,7 @@ export type DashboardError =
 const state = reactive({
     info: null as SystemInfo | null,
     clients: [] as ClientInfo[],
-    proxies: [] as ProxyInfo[],
+    tunnels: [] as TunnelInfo[],
     tokens: [] as TokenMetricItem[],
     loading: false,
     error: null as DashboardError,
@@ -19,18 +19,17 @@ const state = reactive({
 
 export function useDashboardStore() {
     async function refresh() {
-        state.loading = true
         state.error = null
         try {
-            const [sys, cli, prox, tokenMetrics] = await Promise.all([
+            const [sys, cli, tun, tokenMetrics] = await Promise.all([
                 fetchSystemInfo(),
                 fetchClients(),
-                fetchProxies(),
+                fetchTunnels(),
                 fetchSystemTokens(),
             ])
             state.info = sys
             state.clients = cli.items ?? []
-            state.proxies = prox.items ?? []
+            state.tunnels = tun.items ?? []
             state.tokens = tokenMetrics.tokens ?? []
         } catch (e) {
             if (isApiError(e)) {
@@ -45,8 +44,6 @@ export function useDashboardStore() {
             } else {
                 state.error = {code: 'unknown'}
             }
-        } finally {
-            state.loading = false
         }
     }
 
@@ -57,8 +54,11 @@ export function useDashboardStore() {
         get clients() {
             return state.clients
         },
+        get tunnels() {
+            return state.tunnels
+        },
         get proxies() {
-            return state.proxies
+            return state.tunnels
         },
         get tokens() {
             return state.tokens

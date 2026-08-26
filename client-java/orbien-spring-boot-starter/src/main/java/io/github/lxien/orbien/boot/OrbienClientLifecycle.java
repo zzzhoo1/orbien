@@ -38,49 +38,49 @@ public class OrbienClientLifecycle {
     }
 
     private void applyLocalDefaults(ApplicationContext applicationContext) {
-        OrbienProperties.Proxy proxyProps = properties.getProxy();
-        if (!properties.hasProxy()) {
+        OrbienProperties.Tunnel tunnelProps = properties.getTunnel();
+        if (!properties.hasTunnel()) {
             return;
         }
 
-        String localIp = proxyProps.getLocalIp();
+        String localIp = tunnelProps.getLocalIp();
         if (!StringUtils.hasText(localIp)) {
             localIp = DEFAULT_LOCAL_IP;
-            proxyProps.setLocalIp(localIp);
+            tunnelProps.setLocalIp(localIp);
         }
 
-        int localPort = proxyProps.getLocalPort();
+        int localPort = tunnelProps.getLocalPort();
         if (localPort <= 0) {
             localPort = resolveLocalPort(applicationContext);
-            proxyProps.setLocalPort(localPort);
-            log.info("orbien.proxy.local-port not set; using Spring Boot port {}", localPort);
+            tunnelProps.setLocalPort(localPort);
+            log.info("orbien.tunnel.local-port not set; using Spring Boot port {}", localPort);
         }
 
-        String name = proxyProps.getName();
+        String name = tunnelProps.getName();
         if (!StringUtils.hasText(name)) {
-            name = defaultProxyName(applicationContext.getEnvironment(), proxyProps.getType());
-            proxyProps.setName(name);
-            log.info("orbien.proxy.name not set; using {}", name);
+            name = defaultTunnelName(applicationContext.getEnvironment(), tunnelProps.getProtocol());
+            tunnelProps.setName(name);
+            log.info("orbien.tunnel.name not set; using {}", name);
         }
 
-        syncClientProxy(name, localIp, localPort);
+        syncClientTunnel(name, localIp, localPort);
     }
 
-    private void syncClientProxy(String name, String localIp, int localPort) {
+    private void syncClientTunnel(String name, String localIp, int localPort) {
         OrbienClientConfig cfg = client.config();
-        OrbienClientConfig.ProxyConfig proxy;
-        if (cfg.getProxies().isEmpty()) {
-            proxy = properties.toClientConfig().getProxies().stream().findFirst().orElse(null);
-            if (proxy == null) {
+        OrbienClientConfig.TunnelConfig tunnel;
+        if (cfg.getTunnels().isEmpty()) {
+            tunnel = properties.toClientConfig().getTunnels().stream().findFirst().orElse(null);
+            if (tunnel == null) {
                 return;
             }
-            cfg.getProxies().add(proxy);
+            cfg.getTunnels().add(tunnel);
         } else {
-            proxy = cfg.getProxies().get(0);
+            tunnel = cfg.getTunnels().get(0);
         }
-        proxy.setName(name);
-        proxy.setLocalIp(localIp);
-        proxy.setLocalPort(localPort);
+        tunnel.setName(name);
+        tunnel.setLocalIp(localIp);
+        tunnel.setLocalPort(localPort);
     }
 
     static int resolveLocalPort(ApplicationContext applicationContext) {
@@ -107,16 +107,16 @@ public class OrbienClientLifecycle {
         }
 
         throw new IllegalStateException(
-                "orbien.proxy.local-port is not set and the Spring Boot web server port could not be"
-                        + " determined; set orbien.proxy.local-port explicitly");
+                "orbien.tunnel.local-port is not set and the Spring Boot web server port could not be"
+                        + " determined; set orbien.tunnel.local-port explicitly");
     }
 
-    static String defaultProxyName(Environment env, String type) {
+    static String defaultTunnelName(Environment env, String type) {
         String appName = env.getProperty("spring.application.name");
         if (StringUtils.hasText(appName)) {
             return appName.trim();
         }
-        String proxyType = StringUtils.hasText(type) ? type.trim().toLowerCase() : "tcp";
-        return "orbien-" + proxyType;
+        String tunnelType = StringUtils.hasText(type) ? type.trim().toLowerCase() : "tcp";
+        return "orbien-" + tunnelType;
     }
 }

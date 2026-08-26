@@ -8,16 +8,6 @@
 .idea
 /dist/
 /server/assets/
-.orbien.run_id
-
-/desktop/src-tauri/binaries/orbien-*
-!/desktop/src-tauri/binaries/README.md
-!/desktop/src-tauri/binaries/.gitkeep
-/desktop/src-tauri/gen/schemas
-/desktop/src/assets/*.icns
-/desktop/src/assets/app-icon.png
-/desktop/src/assets/logo_origin.png
-/desktop/pnpm-lock.yaml
 
 node_modules/
 dist-ssr/
@@ -49,7 +39,8 @@ yarn.lock
 .env
 .env.*
 !.env.example
-/conf/*.run_id
+**/*.session_id
+.orbien.session_id
 /bak/
 *.bak
 
@@ -69,15 +60,15 @@ $RECYCLE.BIN/
 *.njsproj
 *.sln
 *.code-workspace
-/benchmark/results/
 docs/build
 docs/.docusaurus
 
-# Temp
-/conf
-/examples
-/benchmark
-/bench-quick
-BUILD_ZH.md
+/desktop/ui/i18n.slint
+/desktop/ui/version.slint
+/dev
+/bak/
+.idea/
+.vscode/
+
 
 

@@ -12,7 +12,6 @@ import org.springframework.util.StringUtils;
 @ConfigurationProperties(prefix = "orbien")
 public class OrbienProperties {
     private static final String DEFAULT_LOCAL_IP = "127.0.0.1";
-
     private boolean enabled = true;
     private String serverAddr = "127.0.0.1";
     private int serverPort = 9527;
@@ -21,11 +20,11 @@ public class OrbienProperties {
     private int poolCount = 1;
     private String user = "";
     private int heartbeatIntervalSecs = 30;
-    private String runId = "";
-    private String runIdFile = "";
+    private String sessionId = "";
+    private String sessionIdFile = "";
 
     @NestedConfigurationProperty
-    private final Proxy proxy = new Proxy();
+    private final Tunnel tunnel = new Tunnel();
 
     public boolean isEnabled() {
         return enabled;
@@ -91,33 +90,31 @@ public class OrbienProperties {
         this.heartbeatIntervalSecs = heartbeatIntervalSecs;
     }
 
-    public String getRunId() {
-        return runId;
+    public String getSessionId() {
+        return sessionId;
     }
 
-    public void setRunId(String runId) {
-        this.runId = runId == null ? "" : runId;
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId == null ? "" : sessionId;
     }
 
-    public String getRunIdFile() {
-        return runIdFile;
+    public String getSessionIdFile() {
+        return sessionIdFile;
     }
 
-    public void setRunIdFile(String runIdFile) {
-        this.runIdFile = runIdFile == null ? "" : runIdFile;
+    public void setSessionIdFile(String sessionIdFile) {
+        this.sessionIdFile = sessionIdFile == null ? "" : sessionIdFile;
     }
 
-    public Proxy getProxy() {
-        return proxy;
+    public Tunnel getTunnel() {
+        return tunnel;
     }
 
-    /** Whether a proxy tunnel is configured (name / port / domains / subdomain). */
-    public boolean hasProxy() {
-        return StringUtils.hasText(proxy.getName())
-                || proxy.getLocalPort() > 0
-                || proxy.getRemotePort() > 0
-                || (proxy.getCustomDomains() != null && !proxy.getCustomDomains().isEmpty())
-                || StringUtils.hasText(proxy.getSubdomain());
+    public boolean hasTunnel() {
+        return StringUtils.hasText(tunnel.getName())
+                || tunnel.getLocalPort() > 0
+                || tunnel.getRemotePort() > 0
+                || (tunnel.getDomains() != null && !tunnel.getDomains().isEmpty());
     }
 
     public OrbienClientConfig toClientConfig() {
@@ -129,37 +126,35 @@ public class OrbienProperties {
         cfg.setPoolCount(poolCount);
         cfg.setUser(user);
         cfg.setHeartbeatIntervalSecs(heartbeatIntervalSecs);
-        cfg.setRunId(runId);
-        cfg.setRunIdFile(runIdFile);
-        if (hasProxy()) {
-            OrbienClientConfig.ProxyConfig p = new OrbienClientConfig.ProxyConfig();
-            String name = proxy.getName();
+        cfg.setSessionId(sessionId);
+        cfg.setSessionIdFile(sessionIdFile);
+        if (hasTunnel()) {
+            OrbienClientConfig.TunnelConfig p = new OrbienClientConfig.TunnelConfig();
+            String name = tunnel.getName();
             if (!StringUtils.hasText(name)) {
-                String type = StringUtils.hasText(proxy.getType()) ? proxy.getType() : "tcp";
+                String type = StringUtils.hasText(tunnel.getProtocol()) ? tunnel.getProtocol() : "tcp";
                 name = "orbien-" + type.toLowerCase();
             }
             p.setName(name);
-            p.setType(proxy.getType());
+            p.setProtocol(tunnel.getProtocol());
             String localIp =
-                    StringUtils.hasText(proxy.getLocalIp()) ? proxy.getLocalIp() : DEFAULT_LOCAL_IP;
+                    StringUtils.hasText(tunnel.getLocalIp()) ? tunnel.getLocalIp() : DEFAULT_LOCAL_IP;
             p.setLocalIp(localIp);
-            p.setLocalPort(proxy.getLocalPort());
-            p.setRemotePort(proxy.getRemotePort());
-            p.setCustomDomains(new ArrayList<>(proxy.getCustomDomains()));
-            p.setSubdomain(proxy.getSubdomain());
-            cfg.getProxies().add(p);
+            p.setLocalPort(tunnel.getLocalPort());
+            p.setRemotePort(tunnel.getRemotePort());
+            p.setDomains(new ArrayList<>(tunnel.getDomains()));
+            cfg.getTunnels().add(p);
         }
         return cfg;
     }
 
-    public static class Proxy {
+    public static class Tunnel {
         private String name;
-        private String type = "tcp";
+        private String protocol = "tcp";
         private String localIp = DEFAULT_LOCAL_IP;
         private int localPort;
         private int remotePort;
-        private List<String> customDomains = new ArrayList<>();
-        private String subdomain = "";
+        private List<String> domains = new ArrayList<>();
 
         public String getName() {
             return name;
@@ -169,12 +164,12 @@ public class OrbienProperties {
             this.name = name;
         }
 
-        public String getType() {
-            return type;
+        public String getProtocol() {
+            return protocol;
         }
 
-        public void setType(String type) {
-            this.type = type;
+        public void setProtocol(String protocol) {
+            this.protocol = protocol;
         }
 
         public String getLocalIp() {
@@ -201,20 +196,12 @@ public class OrbienProperties {
             this.remotePort = remotePort;
         }
 
-        public List<String> getCustomDomains() {
-            return customDomains;
+        public List<String> getDomains() {
+            return domains;
         }
 
-        public void setCustomDomains(List<String> customDomains) {
-            this.customDomains = customDomains == null ? new ArrayList<>() : customDomains;
-        }
-
-        public String getSubdomain() {
-            return subdomain;
-        }
-
-        public void setSubdomain(String subdomain) {
-            this.subdomain = subdomain == null ? "" : subdomain;
+        public void setDomains(List<String> domains) {
+            this.domains = domains == null ? new ArrayList<>() : domains;
         }
     }
 }

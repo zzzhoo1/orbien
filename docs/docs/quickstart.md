@@ -25,22 +25,7 @@ title: 快速开始
 
 ```toml
 # orbien-server.toml
-
-# 监听所有网卡
-bindAddr = "0.0.0.0"
-# 客户端连接端口
-bindPort = 9527
-
-# 可选：开启 Token 鉴权，防止非授权客户端连接
-# [auth]
-# token = "your-secret-token"
-
-# 可选：开启 Web 管理面板
-# [webServer]
-# addr = "0.0.0.0"
-# port = 8020
-# user = "admin"
-# password = "changeme"
+listen = "0.0.0.0:9527"
 ```
 
 启动服务端：
@@ -61,28 +46,19 @@ bindPort = 9527
 
 ---
 
-## 第二步：配置并启动客户端
+## 第二步
 
-在**内网机器**上创建配置文件 `orbien.toml`：
+如果觉得命令行 CLI 操作麻烦，可以使用 [Orbien Desktop](download.mdx) 桌面客户端。
 
 ```toml
 # orbien.toml
+server = "127.0.0.1:9527"
 
-# 公网服务器地址
-serverAddr = "YOUR_SERVER_IP"
-serverPort = 9527
-
-# 若服务端开启了 Token 鉴权，需保持一致
-# [auth]
-# token = "your-secret-token"
-
-# 穿透规则示例：将本机 MySQL 映射到服务器的 6050 端口
-[[proxies]]
+[[tunnels]]
 name = "mysql"
-type = "tcp"
-localIP  = "127.0.0.1"
-localPort  = 3306
-remotePort = 6050
+protocol = "tcp"
+service = "127.0.0.1:3306"
+remotePort = 9000
 ```
 
 启动客户端：

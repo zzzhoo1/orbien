@@ -14,19 +14,17 @@ title: 获取真实 IP
 
 ```toml
 # orbien.toml
-serverAddr = "YOUR_SERVER_IP"
-serverPort = 9527
+server = "YOUR_SERVER_IP:9527"
 
-[[proxies]]
+[[tunnels]]
 name = "web"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 80
+protocol = "tcp"
+service = "127.0.0.1:80"
 remotePort = 9000
 transport.proxyProtocolVersion = "v2"
 ```
 
-适用于 `tcp` / `udp` / `http` / `https`（透传）。`https2http` 不可用。
+适用于 `tcp` / `udp` / `http` / `https`（透传）。`tls-term`（TLS终止） 不可用。
 
 | 参数                               | 必填 | 默认值 | 说明                |
 |----------------------------------|----|-----|-------------------|
@@ -34,14 +32,14 @@ transport.proxyProtocolVersion = "v2"
 
 ## X-Forwarded-For
 
-`http` 由服务端自动注入；`https` + `https2http` 由客户端插件自动注入，无需额外配置：
+`http` 由服务端自动注入；`https` + `tls-term` 由客户端插件自动注入，无需额外配置：
 
 - `X-Forwarded-For`：访客 IP
 - `X-Forwarded-Proto`：`http` 或 `https`
 
 应用从请求头读取即可。
 
-## 服务端前置负载均衡
+## 说明
 
 若 orbien-server 前还有 CDN / 负载均衡，需在服务端开启 PROXY Protocol，接收上游传递的真实 IP：
 

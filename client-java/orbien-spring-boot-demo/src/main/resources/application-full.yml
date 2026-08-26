@@ -3,17 +3,14 @@ orbien:
   server-addr: 127.0.0.1
   server-port: 9527
   token: YOUR_TOKEN
-  tcp-mux: false # must match server (Java client does not support mux)
+  tcp-mux: false
   pool-count: 1
   heartbeat-interval-secs: 30
   user: java-demo
-  # run-id: ""              # optional; empty = restore from run-id-file / generate
-  # run-id-file: ""         # optional; empty = default path under user home
-  proxy:
+  tunnel:
     name: java-demo-http
-    type: http
+    protocol: http
     local-ip: 127.0.0.1
-    # local-port: 18080
-    custom-domains:
-      - java.domain1.com
-    # subdomain: demo       # optional alternative to custom-domains
+    domains:
+      - web.example.com
+      - admin

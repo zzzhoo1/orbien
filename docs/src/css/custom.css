@@ -4,17 +4,18 @@
   --ifm-font-family-base: 'Outfit', 'Noto Sans SC', system-ui, sans-serif;
   --ifm-heading-font-family: 'Outfit', 'Noto Sans SC', system-ui, sans-serif;
 
-  --ifm-color-primary: #0ea5e9;
-  --ifm-color-primary-dark: #0284c7;
-  --ifm-color-primary-darker: #0369a1;
-  --ifm-color-primary-darkest: #0c4a6e;
-  --ifm-color-primary-light: #38bdf8;
-  --ifm-color-primary-lighter: #7dd3fc;
-  --ifm-color-primary-lightest: #bae6fd;
+  /* Align with server-ui --accent (#1677ff Ant Design Blue) */
+  --ifm-color-primary: #1677ff;
+  --ifm-color-primary-dark: #0958d9;
+  --ifm-color-primary-darker: #003eb3;
+  --ifm-color-primary-darkest: #002c8c;
+  --ifm-color-primary-light: #4096ff;
+  --ifm-color-primary-lighter: #69b1ff;
+  --ifm-color-primary-lightest: #91caff;
   --ifm-code-font-size: 95%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
 
-  --orbien-hero-bg: #f0f9ff;
+  --orbien-hero-bg: #ffffff;
   --orbien-panel-bg: #ffffff;
   --orbien-panel-border: rgba(15, 23, 42, 0.08);
   --orbien-code-bg: #0f172a;
@@ -24,22 +25,28 @@
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #38bdf8;
-  --ifm-color-primary-dark: #0ea5e9;
-  --ifm-color-primary-darker: #0284c7;
-  --ifm-color-primary-darkest: #0369a1;
-  --ifm-color-primary-light: #7dd3fc;
-  --ifm-color-primary-lighter: #bae6fd;
-  --ifm-color-primary-lightest: #e0f2fe;
+  /* server-ui dark: --accent-text / --accent-hover */
+  --ifm-color-primary: #69b1ff;
+  --ifm-color-primary-dark: #4096ff;
+  --ifm-color-primary-darker: #1677ff;
+  --ifm-color-primary-darkest: #0958d9;
+  --ifm-color-primary-light: #91caff;
+  --ifm-color-primary-lighter: #bae0ff;
+  --ifm-color-primary-lightest: #e6f4ff;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+
+  --ifm-background-color: #0b1220;
+  --ifm-background-surface-color: #111827;
+  --ifm-navbar-background-color: #0b1220;
+  --ifm-footer-background-color: #080d16;
 
   --orbien-hero-bg: #0b1220;
   --orbien-panel-bg: #111827;
-  --orbien-panel-border: rgba(148, 163, 184, 0.18);
+  --orbien-panel-border: rgba(148, 163, 184, 0.14);
   --orbien-code-bg: #020617;
   --orbien-code-fg: #e2e8f0;
   --orbien-card-bg: #111827;
-  --orbien-card-border: rgba(148, 163, 184, 0.14);
+  --orbien-card-border: rgba(148, 163, 184, 0.12);
 }
 
 .navbar__title {
@@ -49,4 +56,13 @@
 
 .navbar__logo img {
   border-radius: 6px;
+}
+
+[data-theme='dark'] .navbar {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .footer {
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
 }

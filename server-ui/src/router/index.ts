@@ -1,8 +1,8 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Monitor from '@/views/Monitor.vue'
-import Proxies from '@/views/Proxies.vue'
-import ProxyDetail from '@/views/ProxyDetail.vue'
+import Tunnels from '@/views/Tunnels.vue'
+import TunnelDetail from '@/views/TunnelDetail.vue'
 import Clients from '@/views/Clients.vue'
 import ClientDetail from '@/views/ClientDetail.vue'
 import Login from '@/views/Login.vue'
@@ -12,10 +12,10 @@ export const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     { path: '/', name: 'monitor', component: Monitor },
-    { path: '/proxies', name: 'proxies', component: Proxies },
-    { path: '/proxies/:name', name: 'proxy-detail', component: ProxyDetail },
+    { path: '/tunnels', name: 'tunnels', component: Tunnels },
+    { path: '/tunnels/:name', name: 'tunnel-detail', component: TunnelDetail },
     { path: '/clients', name: 'clients', component: Clients },
-    { path: '/clients/:runId', name: 'client-detail', component: ClientDetail },
+    { path: '/clients/:sessionId', name: 'client-detail', component: ClientDetail },
     { path: '/overview', redirect: '/' },
   ],
 })

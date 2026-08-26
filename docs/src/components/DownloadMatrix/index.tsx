@@ -1,23 +1,29 @@
 import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import clsx from 'clsx';
+import Translate, {translate} from '@docusaurus/Translate';
 
 import styles from './styles.module.css';
 
 const REPO = 'orbien-org/orbien';
 
-const FALLBACK_VERSION = '2.1.0';
+const FALLBACK_VERSION = '3.2.0';
 
 type OsId = 'windows' | 'linux' | 'darwin' | 'freebsd';
 type ArchId = 'amd64' | 'arm64';
 type LibcId = 'gnu' | 'musl';
 type ProductId = 'orbien-server' | 'orbien' | 'orbien-desktop';
-type AssetExt = 'tar.gz' | 'deb' | 'msi' | 'dmg';
+type AssetExt = 'tar.gz' | 'deb' | 'zip' | 'dmg';
+type NoteId =
+    | 'glibc'
+    | 'musl'
+    | 'macosGatekeeper'
+    | 'none';
 
 type Row = {
     os: OsId;
     arch: ArchId;
     libc?: LibcId;
-    note: string;
+    noteId: NoteId;
 };
 
 const RELEASE_BUILDS: ReadonlySet<string> = new Set([
@@ -50,43 +56,15 @@ const RELEASE_BUILDS: ReadonlySet<string> = new Set([
 ]);
 
 const ROWS: Row[] = [
-    {
-        os: 'linux',
-        arch: 'amd64',
-        libc: 'gnu',
-        note: '动态链接 glibc',
-    },
-    {
-        os: 'linux',
-        arch: 'amd64',
-        libc: 'musl',
-        note: '静态链接，兼容旧 glibc',
-    },
-    {
-        os: 'linux',
-        arch: 'arm64',
-        libc: 'gnu',
-        note: '动态链接 glibc',
-    },
-    {
-        os: 'linux',
-        arch: 'arm64',
-        libc: 'musl',
-        note: '静态链接，兼容旧 glibc',
-    },
-    {os: 'freebsd', arch: 'amd64', note: ''},
-    {os: 'windows', arch: 'amd64', note: ''},
-    {os: 'windows', arch: 'arm64', note: ''},
-    {
-        os: 'darwin',
-        arch: 'amd64',
-        note: '如遇拦截，于系统设置中允许运行',
-    },
-    {
-        os: 'darwin',
-        arch: 'arm64',
-        note: '如遇拦截，于系统设置中允许运行',
-    },
+    {os: 'linux', arch: 'amd64', libc: 'gnu', noteId: 'glibc'},
+    {os: 'linux', arch: 'amd64', libc: 'musl', noteId: 'musl'},
+    {os: 'linux', arch: 'arm64', libc: 'gnu', noteId: 'glibc'},
+    {os: 'linux', arch: 'arm64', libc: 'musl', noteId: 'musl'},
+    {os: 'freebsd', arch: 'amd64', noteId: 'none'},
+    {os: 'windows', arch: 'amd64', noteId: 'none'},
+    {os: 'windows', arch: 'arm64', noteId: 'none'},
+    {os: 'darwin', arch: 'amd64', noteId: 'macosGatekeeper'},
+    {os: 'darwin', arch: 'arm64', noteId: 'macosGatekeeper'},
 ];
 
 const OS_LABEL: Record<OsId, string> = {
@@ -105,19 +83,47 @@ const PRODUCTS = [
     {
         id: 'server',
         name: 'orbien-server' as ProductId,
-        label: '服务端',
+        label: (
+            <Translate id="download.product.server">服务端</Translate>
+        ),
     },
     {
         id: 'client',
         name: 'orbien' as ProductId,
-        label: '命令行客户端',
+        label: (
+            <Translate id="download.product.client">命令行客户端</Translate>
+        ),
     },
     {
         id: 'desktop',
         name: 'orbien-desktop' as ProductId,
-        label: '桌面客户端',
+        label: (
+            <Translate id="download.product.desktop">桌面客户端</Translate>
+        ),
     },
 ] as const;
+
+function noteText(noteId: NoteId): string {
+    switch (noteId) {
+        case 'glibc':
+            return translate({
+                id: 'download.note.glibc',
+                message: '动态链接 glibc',
+            });
+        case 'musl':
+            return translate({
+                id: 'download.note.musl',
+                message: '静态链接，兼容旧 glibc',
+            });
+        case 'macosGatekeeper':
+            return translate({
+                id: 'download.note.macosGatekeeper',
+                message: '如遇拦截，于系统设置中允许运行',
+            });
+        default:
+            return '';
+    }
+}
 
 function buildKey(
     product: ProductId,
@@ -145,7 +151,7 @@ function assetExt(product: ProductId, os: OsId): AssetExt {
         case 'linux':
             return 'deb';
         case 'windows':
-            return 'msi';
+            return 'zip';
         case 'darwin':
             return 'dmg';
         default:
@@ -241,7 +247,6 @@ export default function DownloadMatrix(): ReactNode {
                     setAssetSet(new Set(data.assets.map((a) => a.name)));
                 }
             } catch {
-                // keep fallback version / optimistic links
             }
         })();
         return () => {
@@ -272,7 +277,7 @@ export default function DownloadMatrix(): ReactNode {
                     className={styles.releasesLink}
                     href={`https://github.com/${REPO}/releases`}
                     rel="noopener noreferrer">
-                    所有版本
+                    <Translate id="download.allReleases">所有版本</Translate>
                 </a>
             </div>
 
@@ -280,13 +285,19 @@ export default function DownloadMatrix(): ReactNode {
                 <table className={styles.table}>
                     <thead>
                     <tr>
-                        <th>操作系统</th>
-                        <th>架构</th>
+                        <th>
+                            <Translate id="download.col.os">操作系统</Translate>
+                        </th>
+                        <th>
+                            <Translate id="download.col.arch">架构</Translate>
+                        </th>
                         <th>libc</th>
                         {PRODUCTS.map((p) => (
                             <th key={p.id}>{p.label}</th>
                         ))}
-                        <th>说明</th>
+                        <th>
+                            <Translate id="download.col.note">说明</Translate>
+                        </th>
                     </tr>
                     </thead>
                     <tbody>
@@ -360,7 +371,9 @@ export default function DownloadMatrix(): ReactNode {
                                         </td>
                                     );
                                 })}
-                                <td className={styles.note}>{row.note}</td>
+                                <td className={styles.note}>
+                                    {noteText(row.noteId)}
+                                </td>
                             </tr>
                         );
                     })}

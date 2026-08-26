@@ -10,11 +10,11 @@ pub use quic::{build_client_endpoint, build_server_endpoint, quic_bi, QuicBiStre
 pub use stream::{boxed_stream, AsyncStream, DynStream};
 pub use tls::{
     check_and_enable_tls, client_crypto_from_tls_files, client_crypto_insecure, client_enable_tls,
-    generate_self_signed_cert, install_ring_provider, new_client_tls_config, new_server_tls_config,
-    server_crypto, server_crypto_from_tls_files, ALPN_ORBIEN, CUSTOM_TLS_HEAD_BYTE,
+    generate_self_signed_cert, install_ring_provider, load_pem_cert_key, new_client_tls_config,
+    new_server_tls_config, server_crypto, server_crypto_from_tls_files, ALPN_ORBIEN,
 };
 pub use websocket::{
-    accept_websocket, dial_websocket, is_websocket_http_request, websocket_url, WsByteStream,
+    accept_websocket, dial_websocket, is_websocket_http_request, WsByteStream,
     ORBIEN_WEBSOCKET_PATH,
 };
 pub use yamux_mux::{client_session, serve_yamux_session, YamuxClient, MAX_NUM_STREAMS};
@@ -29,12 +29,17 @@ pub enum Protocol {
 
 impl Protocol {
     pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "tcp" | "" => Some(Self::Tcp),
-            "quic" => Some(Self::Quic),
-            "websocket" | "ws" => Some(Self::Websocket),
-            "kcp" => Some(Self::Kcp),
-            _ => None,
+        let s = s.trim();
+        if s.is_empty() || s.eq_ignore_ascii_case("tcp") {
+            Some(Self::Tcp)
+        } else if s.eq_ignore_ascii_case("quic") {
+            Some(Self::Quic)
+        } else if s.eq_ignore_ascii_case("websocket") || s.eq_ignore_ascii_case("ws") {
+            Some(Self::Websocket)
+        } else if s.eq_ignore_ascii_case("kcp") {
+            Some(Self::Kcp)
+        } else {
+            None
         }
     }
 

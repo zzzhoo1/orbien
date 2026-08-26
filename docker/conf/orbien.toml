@@ -1,13 +1,9 @@
-serverAddr = "127.0.0.1"
-serverPort = 9527
+server = "127.0.0.1:9527"
 
-#[auth]
-#method = "token"
-#token = "YOUR_TOKEN"
+#auth.token = ""
 
-[[proxies]]
-name = "mysql"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 3306
-remotePort = 6050
+#[[tunnels]]
+#name = "ssh"
+#protocol = "tcp"
+#service = "127.0.0.1:22"
+#remotePort = 9000

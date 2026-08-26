@@ -3,12 +3,12 @@ package io.github.lxien.orbien.client;
 import io.github.lxien.orbien.client.auth.AuthKeys;
 import io.github.lxien.orbien.client.msg.Login;
 import io.github.lxien.orbien.client.msg.MsgType;
-import io.github.lxien.orbien.client.msg.NewWorkConn;
+import io.github.lxien.orbien.client.msg.NewDataConn;
 import io.github.lxien.orbien.client.msg.WireMessage;
 import io.github.lxien.orbien.client.netty.ControlHandler;
 import io.github.lxien.orbien.client.netty.MsgFrameDecoder;
 import io.github.lxien.orbien.client.netty.MsgFrameEncoder;
-import io.github.lxien.orbien.client.netty.WorkHandshakeHandler;
+import io.github.lxien.orbien.client.netty.DataHandshakeHandler;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -31,13 +31,13 @@ import org.slf4j.LoggerFactory;
 
 public final class OrbienClient implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(OrbienClient.class);
-    private static final String VERSION = "0.1.0";
+    private static final String VERSION = "3.2.0";
 
     private final OrbienClientConfig config;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private EventLoopGroup group;
     private Channel controlChannel;
-    private final AtomicReference<String> runId = new AtomicReference<>("");
+    private final AtomicReference<String> sessionId = new AtomicReference<>("");
 
     public OrbienClient(OrbienClientConfig config) {
         this.config = config;
@@ -47,8 +47,8 @@ public final class OrbienClient implements AutoCloseable {
         return config;
     }
 
-    public String runId() {
-        return runId.get();
+    public String sessionId() {
+        return sessionId.get();
     }
 
     public void start() {
@@ -62,8 +62,8 @@ public final class OrbienClient implements AutoCloseable {
 
         group = new NioEventLoopGroup();
         CompletableFuture<String> loginFuture = new CompletableFuture<>();
-        Path runIdPath = resolveRunIdPath();
-        String previousRunId = resolvePreviousRunId(runIdPath);
+        Path sessionIdPath = resolveSessionIdPath();
+        String previousSessionId = resolvePreviousSessionId(sessionIdPath);
 
         try {
             Bootstrap b = new Bootstrap();
@@ -79,9 +79,9 @@ public final class OrbienClient implements AutoCloseable {
                                     .addLast(new MsgFrameEncoder())
                                     .addLast(new ControlHandler(
                                             config,
-                                            OrbienClient.this::openWorkConn,
+                                            OrbienClient.this::openDataConn,
                                             id -> {
-                                                runId.set(id);
+                                                sessionId.set(id);
                                                 loginFuture.complete(id);
                                             },
                                             loginFuture::completeExceptionally));
@@ -91,38 +91,38 @@ public final class OrbienClient implements AutoCloseable {
             ChannelFuture cf =
                     b.connect(config.getServerAddr(), config.getServerPort()).sync();
             controlChannel = cf.channel();
-            sendLogin(controlChannel, previousRunId);
+            sendLogin(controlChannel, previousSessionId);
 
             String id = loginFuture.get(30, TimeUnit.SECONDS);
-            config.setRunId(id);
-            RunIdStore.save(runIdPath, id);
-            log.info("connected to {}:{} runId={}", config.getServerAddr(), config.getServerPort(), id);
+            config.setSessionId(id);
+            SessionIdStore.save(sessionIdPath, id);
+            log.info("connected to {}:{} sessionId={}", config.getServerAddr(), config.getServerPort(), id);
         } catch (Exception e) {
             close();
             throw new IllegalStateException("failed to start Orbien client: " + e.getMessage(), e);
         }
     }
 
-    private Path resolveRunIdPath() {
-        String configured = config.getRunIdFile();
+    private Path resolveSessionIdPath() {
+        String configured = config.getSessionIdFile();
         if (configured != null && !configured.isBlank()) {
             return Path.of(configured);
         }
-        return RunIdStore.defaultPath();
+        return SessionIdStore.defaultPath();
     }
 
-    private String resolvePreviousRunId(Path runIdPath) {
-        if (config.getRunId() != null && !config.getRunId().isBlank()) {
-            return config.getRunId().trim();
+    private String resolvePreviousSessionId(Path sessionIdPath) {
+        if (config.getSessionId() != null && !config.getSessionId().isBlank()) {
+            return config.getSessionId().trim();
         }
-        String loaded = RunIdStore.load(runIdPath);
+        String loaded = SessionIdStore.load(sessionIdPath);
         if (!loaded.isEmpty()) {
-            log.info("restored runId={} from {}", loaded, runIdPath);
+            log.info("restored sessionId={} from {}", loaded, sessionIdPath);
         }
         return loaded;
     }
 
-    private void sendLogin(Channel ch, String previousRunId) {
+    private void sendLogin(Channel ch, String previousSessionId) {
         long ts = System.currentTimeMillis() / 1000;
         Login login = new Login();
         login.version = VERSION;
@@ -131,23 +131,23 @@ public final class OrbienClient implements AutoCloseable {
         login.arch = System.getProperty("os.arch", "");
         login.user = config.getUser();
         login.timestamp = ts;
-        login.privilegeKey = AuthKeys.getAuthKey(config.getToken(), ts);
-        login.runId = previousRunId == null ? "" : previousRunId;
+        login.authDigest = AuthKeys.computeAuthDigest(config.getToken(), ts);
+        login.sessionId = previousSessionId == null ? "" : previousSessionId;
         login.poolCount = Math.max(config.getPoolCount(), 1);
         ch.writeAndFlush(new WireMessage(MsgType.LOGIN, login));
         log.debug(
-                "login sent hostname={} user={} poolCount={} runId={}",
+                "login sent hostname={} user={} poolCount={} sessionId={}",
                 login.hostname,
                 login.user,
                 login.poolCount,
-                login.runId.isEmpty() ? "<new>" : login.runId);
+                login.sessionId.isEmpty() ? "<new>" : login.sessionId);
     }
 
-    private void openWorkConn(String currentRunId) {
+    private void openDataConn(String currentSessionId) {
         if (group == null || group.isShuttingDown()) {
             return;
         }
-        String rid = currentRunId == null || currentRunId.isEmpty() ? runId.get() : currentRunId;
+        String rid = currentSessionId == null || currentSessionId.isEmpty() ? sessionId.get() : currentSessionId;
         Bootstrap b = new Bootstrap();
         b.group(group)
                 .channel(NioSocketChannel.class)
@@ -157,24 +157,24 @@ public final class OrbienClient implements AutoCloseable {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline()
                                 .addLast(new MsgFrameEncoder())
-                                .addLast(new WorkHandshakeHandler(config, group));
+                                .addLast(new DataHandshakeHandler(config, group));
                     }
                 });
 
         b.connect(config.getServerAddr(), config.getServerPort())
                 .addListener(f -> {
                     if (!f.isSuccess()) {
-                        log.error("failed to open work connection", f.cause());
+                        log.error("failed to open data connection", f.cause());
                         return;
                     }
-                    Channel work = ((ChannelFuture) f).channel();
+                    Channel data = ((ChannelFuture) f).channel();
                     long ts = System.currentTimeMillis() / 1000;
-                    NewWorkConn nw = new NewWorkConn();
-                    nw.runId = rid;
+                    NewDataConn nw = new NewDataConn();
+                    nw.sessionId = rid;
                     nw.timestamp = ts;
-                    nw.privilegeKey = AuthKeys.getAuthKey(config.getToken(), ts);
-                    work.writeAndFlush(new WireMessage(MsgType.NEW_WORK_CONN, nw));
-                    log.debug("NewWorkConn sent, runId={}", rid);
+                    nw.authDigest = AuthKeys.computeAuthDigest(config.getToken(), ts);
+                    data.writeAndFlush(new WireMessage(MsgType.NEW_DATA_CONN, nw));
+                    log.debug("NewDataConn sent, sessionId={}", rid);
                 });
     }
 

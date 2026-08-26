@@ -4,61 +4,62 @@ import {useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
-import EmptyText from '@/components/EmptyText.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
-import InlineAlert from '@/components/InlineAlert.vue'
 import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
+import {usePresence} from '@/composables/usePresence'
+import signalIcon from '@/assets/icon/signal.svg?raw'
 
 type StatusFilter = 'all' | 'online' | 'offline'
+
 const FILTERS: StatusFilter[] = ['all', 'online', 'offline']
 
 const store = useDashboardStore()
 const router = useRouter()
 const {t} = useLocale()
+const {isOnline, statusLabel, formatSeen} = usePresence()
 
 const page = ref(1)
 const pageSize = ref(10)
 const statusFilter = ref<StatusFilter>('all')
 const kicking = ref<string | null>(null)
-const search = ref('')
-const kickError = ref('')
-
-function isOnline(raw?: string) { return !raw || raw === 'online' }
 
 const filtered = computed(() => {
-  let list = store.clients
-  if (statusFilter.value === 'online') list = list.filter(c => isOnline(c.status))
-  else if (statusFilter.value === 'offline') list = list.filter(c => !isOnline(c.status))
-  const q = search.value.trim().toLowerCase()
-  if (q) list = list.filter(c =>
-    c.runId.toLowerCase().includes(q) ||
-    (c.hostname || '').toLowerCase().includes(q) ||
-    (c.clientIP || '').toLowerCase().includes(q)
-  )
-  return list
+  const list = store.clients
+  if (statusFilter.value === 'all') return list
+  if (statusFilter.value === 'online') return list.filter((c) => isOnline(c.status))
+  return list.filter((c) => !isOnline(c.status))
 })
 
 const total = computed(() => filtered.value.length)
+
 const pageItems = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filtered.value.slice(start, start + pageSize.value)
 })
 
 const statusCounts = computed(() => {
-  let online = 0, offline = 0
+  let online = 0
+  let offline = 0
   for (const c of store.clients) {
-    if (isOnline(c.status)) online++; else offline++
+    if (isOnline(c.status)) online += 1
+    else offline += 1
   }
-  return {all: store.clients.length, online, offline} as Record<StatusFilter, number>
+  return {
+    all: store.clients.length,
+    online,
+    offline,
+  } as Record<StatusFilter, number>
 })
 
-watch([total, pageSize, statusFilter, search], () => {
+watch([total, pageSize, statusFilter], () => {
   const maxPage = Math.max(1, Math.ceil(total.value / Math.max(pageSize.value, 1)))
   if (page.value > maxPage) page.value = maxPage
 })
-watch([statusFilter, search], () => { page.value = 1 })
+
+watch(statusFilter, () => {
+  page.value = 1
+})
 
 function filterLabel(key: StatusFilter) {
   if (key === 'all') return t('clients.filterAll')
@@ -66,36 +67,28 @@ function filterLabel(key: StatusFilter) {
   return t('status.offline')
 }
 
-function formatSeen(secs: number, online: boolean) {
-  const n = Math.max(0, Math.floor(secs || 0))
-  if (online) {
-    if (n < 60) return t('clients.uptimeSecs', {n})
-    if (n < 3600) return t('clients.uptimeMins', {n: Math.floor(n/60)})
-    if (n < 86400) return t('clients.uptimeHours', {n: Math.floor(n/3600)})
-    return t('clients.uptimeDays', {n: Math.floor(n/86400)})
+function openDetail(sessionId: string) {
+  router.push({name: 'client-detail', params: {sessionId}})
+}
+
+function onKeyOpen(evt: KeyboardEvent, sessionId: string) {
+  if (evt.key === 'Enter' || evt.key === ' ') {
+    evt.preventDefault()
+    openDetail(sessionId)
   }
-  if (n < 60) return t('clients.agoSecs', {n})
-  if (n < 3600) return t('clients.agoMins', {n: Math.floor(n/60)})
-  if (n < 86400) return t('clients.agoHours', {n: Math.floor(n/3600)})
-  return t('clients.agoDays', {n: Math.floor(n/86400)})
 }
 
-function openDetail(runId: string) { router.push({name: 'client-detail', params: {runId}}) }
-function onKeyOpen(evt: KeyboardEvent, runId: string) {
-  if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); openDetail(runId) }
-}
-
-async function onKick(runId: string, evt: Event) {
+async function onKick(sessionId: string, evt: Event) {
   evt.stopPropagation()
   if (kicking.value) return
   if (!window.confirm(t('clients.kickConfirm'))) return
-  kicking.value = runId
-  kickError.value = ''
+  kicking.value = sessionId
   try {
-    await kickClient(runId)
+    await kickClient(sessionId)
     await store.refresh()
-  } catch {
-    kickError.value = t('clients.kickFailed')
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    window.alert(t('clients.kickFailed', {msg}))
   } finally {
     kicking.value = null
   }
@@ -104,103 +97,91 @@ async function onKick(runId: string, evt: Event) {
 
 <template>
   <section class="client-list">
-    <!-- kick error alert -->
-    <InlineAlert
-      v-if="kickError"
-      variant="error"
-      :title="kickError"
-      :closable="true"
-      @close="kickError = ''"
-    />
-
-    <!-- toolbar -->
-    <div class="toolbar">
-      <div class="filter-group" role="group" :aria-label="t('clients.filter')">
-        <button
-          v-for="key in FILTERS" :key="key" type="button"
-          class="filter-chip" :class="{active: statusFilter===key}"
-          @click="statusFilter=key"
-        >
-          <span class="chip-dot" :class="key"/>
-          {{ filterLabel(key) }}
-          <em>{{ statusCounts[key] }}</em>
-        </button>
-      </div>
-      <label class="search-wrap" :aria-label="t('clients.search')">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
-        <input
-          v-model="search" type="search"
-          class="search-input"
-          :placeholder="t('clients.search')"
-          autocomplete="off"
-        />
-      </label>
+    <div class="list-toolbar" role="group" :aria-label="t('clients.filter')">
+      <button
+          v-for="key in FILTERS"
+          :key="key"
+          type="button"
+          class="filter-chip"
+          :class="{ active: statusFilter === key }"
+          @click="statusFilter = key"
+      >
+        <span>{{ filterLabel(key) }}</span>
+        <em>{{ statusCounts[key] }}</em>
+      </button>
     </div>
 
-    <!-- empty states -->
-    <EmptyText
-      v-if="!store.clients.length"
-      icon="⌁"
-      :title="t('clients.empty')"
-    />
-    <EmptyText
-      v-else-if="!filtered.length"
-      icon="⌕"
-      :title="t('clients.filterEmpty')"
-    />
+    <div v-if="!store.clients.length" class="empty-card">
+      {{ t('clients.empty') }}
+    </div>
+    <div v-else-if="!filtered.length" class="empty-card">
+      {{ t('clients.filterEmpty') }}
+    </div>
 
-    <!-- client cards -->
-    <transition-group name="list" tag="div" class="cards">
-      <article
-        v-for="c in pageItems" :key="c.runId"
-        class="client-card" :class="{offline: !isOnline(c.status)}"
-        role="button" tabindex="0" :aria-label="t('clients.detail')"
-        @click="openDetail(c.runId)" @keydown="onKeyOpen($event, c.runId)"
-      >
-        <!-- left: avatar + info -->
-        <div class="card-left">
-          <div class="avatar" :class="{online: isOnline(c.status)}">
-            <OsBadge :os="c.os" :arch="c.arch" icon-only/>
-            <span class="pulse-dot" :class="{online: isOnline(c.status)}"/>
-          </div>
-          <div class="card-body">
-            <div class="card-title">
-              <span class="run-id">{{ c.runId }}</span>
-              <span v-if="c.hostname" class="tag">{{ c.hostname }}</span>
-              <span v-if="c.user" class="tag">{{ c.user }}</span>
-              <span v-if="c.version" class="tag accent">v{{ c.version }}</span>
-              <span class="tag soft">{{ t('clients.proxies') }} {{ c.proxyCount ?? 0 }}</span>
-            </div>
-            <div class="card-meta">
-              <span class="meta-item">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 3V1.5M11 3V1.5M1 7h14"/></svg>
-                <span class="mono">{{ c.clientIP || '—' }}</span>
-              </span>
-              <OsBadge :os="c.os" :arch="c.arch" text-only/>
-              <span class="meta-item seen">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12V8.5M5.5 12V5M9 12V7M12.5 12V3.5"/></svg>
-                {{ formatSeen(c.connectedSecs, isOnline(c.status)) }}
-              </span>
-            </div>
-          </div>
+    <article
+        v-for="c in pageItems"
+        :key="c.sessionId"
+        class="client-card"
+        :class="{ offline: !isOnline(c.status) }"
+        role="button"
+        tabindex="0"
+        :aria-label="t('clients.detail')"
+        @click="openDetail(c.sessionId)"
+        @keydown="onKeyOpen($event, c.sessionId)"
+    >
+      <div class="client-left">
+        <div class="os-avatar" :class="{ online: isOnline(c.status) }" aria-hidden="true">
+          <OsBadge :os="c.os" :arch="c.arch" icon-only/>
+          <span class="dot"/>
         </div>
 
-        <!-- right: actions + status -->
-        <div class="card-right">
-          <button
-            v-if="isOnline(c.status)" type="button"
-            class="kick-btn" :disabled="kicking===c.runId"
-            :title="t('clients.kick')" :aria-label="t('clients.kick')"
-            @click="onKick(c.runId,$event)"
-          >
-            <AppIcon name="kick"/>
-          </button>
-          <StatusBadge :status="isOnline(c.status) ? 'running' : 'stopped'" />
+        <div class="client-body">
+          <div class="client-title">
+            <h3 class="client-id">{{ c.sessionId }}</h3>
+            <span v-if="c.hostname" class="tag">{{ c.hostname }}</span>
+            <span v-if="c.user" class="tag">{{ c.user }}</span>
+            <span v-if="c.version" class="tag version">v{{ c.version }}</span>
+            <span class="tag soft">
+              {{ t('clients.tunnels') }} {{ c.tunnelCount ?? 0 }}
+            </span>
+          </div>
+          <div class="client-meta">
+            <span>
+              {{ t('clients.ip') }}
+              <strong class="mono">{{ c.clientIP || '—' }}</strong>
+            </span>
+            <OsBadge :os="c.os" :arch="c.arch" text-only/>
+            <span class="seen">
+              <span class="seen-icon" aria-hidden="true" v-html="signalIcon"/>
+              {{ formatSeen(c.connectedSecs, isOnline(c.status)) }}
+            </span>
+          </div>
         </div>
-      </article>
-    </transition-group>
+      </div>
 
-    <PaginationBar v-model:page="page" v-model:page-size="pageSize" :total="total"/>
+      <div class="client-right">
+        <button
+            v-if="isOnline(c.status)"
+            type="button"
+            class="kick-btn"
+            :disabled="kicking === c.sessionId"
+            :title="t('clients.kick')"
+            :aria-label="t('clients.kick')"
+            @click="onKick(c.sessionId, $event)"
+        >
+          <AppIcon name="kick"/>
+        </button>
+        <span class="status-badge" :class="{ online: isOnline(c.status) }">
+          {{ statusLabel(c.status) }}
+        </span>
+      </div>
+    </article>
+
+    <PaginationBar
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+    />
   </section>
 </template>
 
@@ -208,224 +189,178 @@ async function onKick(runId: string, evt: Event) {
 .client-list {
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
-  animation: page-in 0.35s ease both;
-}
-
-@keyframes page-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* toolbar */
-.toolbar {
-  display: flex;
-  align-items: center;
   gap: 0.75rem;
-  flex-wrap: wrap;
 }
 
-.filter-group {
+.list-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  flex: 1;
-  min-width: 0;
+  gap: 0.45rem;
 }
 
 .filter-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--muted);
   font: inherit;
   font-size: 0.78rem;
-  font-weight: 600;
-  padding: 0.36rem 0.7rem;
-  border-radius: 999px;
+  font-weight: 650;
+  padding: 0.38rem 0.75rem;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s ease,
+  color 0.15s ease,
+  background 0.15s ease;
 }
-
-.chip-dot {
-  width: 0.42rem;
-  height: 0.42rem;
-  border-radius: 50%;
-  background: var(--muted);
-  flex-shrink: 0;
-}
-
-.chip-dot.online  { background: var(--status-ok); }
-.chip-dot.offline { background: var(--danger); }
 
 .filter-chip em {
   font-style: normal;
   font-variant-numeric: tabular-nums;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  padding: 0.03rem 0.38rem;
-  border-radius: 999px;
+  min-width: 1.1rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--radius-pill);
+  text-align: center;
+  color: var(--muted);
   background: color-mix(in srgb, var(--muted) 12%, transparent);
 }
 
-.filter-chip:hover:not(.active) { color: var(--text); border-color: var(--line-strong); }
+.filter-chip:hover:not(.active) {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
 
 .filter-chip.active {
   color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
   background: var(--accent-soft);
 }
+
 .filter-chip.active em {
   color: var(--accent-text);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-/* search */
-.search-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.38rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+.empty-card {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: var(--muted);
   background: var(--panel);
-  transition: border-color 0.15s, box-shadow 0.15s;
-  cursor: text;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
-
-.search-wrap:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.search-wrap svg {
-  width: 0.9rem;
-  height: 0.9rem;
-  fill: none;
-  stroke: var(--muted);
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  flex-shrink: 0;
-}
-
-.search-input {
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8rem;
-  width: 12rem;
-  outline: none;
-}
-
-.search-input::placeholder { color: var(--muted); }
-
-/* card list */
-.cards {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-/* list transition */
-.list-enter-active, .list-leave-active { transition: all 0.22s ease; }
-.list-enter-from { opacity: 0; transform: translateY(-8px); }
-.list-leave-to   { opacity: 0; transform: translateY(8px); }
 
 .client-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.9rem 1.1rem;
+  padding: 1rem 1.15rem;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
   cursor: pointer;
-  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s, transform 0.12s;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
 .client-card:hover {
   border-color: var(--line-strong);
   background: var(--panel-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.22);
 }
-
-.client-card:active { transform: translateY(0); }
 
 .client-card:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-.client-card.offline { opacity: 0.88; }
+.client-card.offline {
+  opacity: 0.92;
+}
 
-/* card left */
-.card-left {
+.client-left {
   display: flex;
   align-items: flex-start;
-  gap: 0.8rem;
+  gap: 0.85rem;
   min-width: 0;
   flex: 1;
 }
 
-.avatar {
+.os-avatar {
   position: relative;
-  width: 2.4rem;
-  height: 2.4rem;
-  border-radius: 10px;
+  width: 2.45rem;
+  height: 2.45rem;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   flex-shrink: 0;
   background: color-mix(in srgb, var(--muted) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--muted) 14%, transparent);
-  transition: background 0.2s, border-color 0.2s;
 }
 
-.avatar.online {
+.os-avatar.online {
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.pulse-dot {
+.os-avatar :deep(.os-icon) {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.os-avatar .dot {
   position: absolute;
-  right: -0.14rem;
-  bottom: -0.14rem;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
+  right: -0.12rem;
+  bottom: -0.12rem;
+  width: 0.52rem;
+  height: 0.52rem;
+  border-radius: var(--radius-circle);
   background: var(--muted);
   border: 2px solid var(--panel);
   box-sizing: content-box;
-  transition: background 0.2s;
 }
 
-.pulse-dot.online {
-  background: var(--status-ok);
-  animation: pulse 2.4s ease-in-out infinite;
+.os-avatar.online .dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: pulse-dot 2s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-ok) 20%, transparent); }
-  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-ok) 8%, transparent); }
+@keyframes pulse-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent);
+    opacity: 0.85;
+  }
 }
 
-/* card body */
-.card-body { min-width: 0; display: flex; flex-direction: column; gap: 0.38rem; }
+.client-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
 
-.card-title {
+.client-title {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.38rem;
+  gap: 0.4rem;
 }
 
-.run-id {
-  font-size: 0.95rem;
+.client-id {
+  margin: 0;
+  font-size: 1rem;
   font-weight: 700;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   letter-spacing: -0.01em;
@@ -435,84 +370,133 @@ async function onKick(runId: string, evt: Event) {
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 0.1rem 0.48rem;
-  border-radius: 999px;
-  font-size: 0.7rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 14%, transparent);
 }
 
-.tag.accent {
+.tag.version {
   color: var(--accent-text);
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.tag.soft { font-weight: 500; }
+.tag.soft {
+  font-weight: 550;
+}
 
-/* meta */
-.card-meta {
+.client-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem 1rem;
-  font-size: 0.78rem;
+  gap: 0.75rem 1.1rem;
+  font-size: 0.8rem;
   color: var(--muted);
 }
 
-.meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28rem;
-}
-
-.meta-item svg {
-  width: 0.82rem;
-  height: 0.82rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  opacity: 0.75;
+.client-meta strong {
+  font-weight: 600;
+  color: var(--text-secondary, var(--text));
+  margin-left: 0.25rem;
 }
 
 .mono {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.76rem;
-  color: var(--text-secondary);
+  font-size: 0.78rem;
 }
 
-/* card right */
-.card-right { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+.seen {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.seen-icon {
+  width: 0.82rem;
+  height: 0.82rem;
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  color: inherit;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.seen-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+  stroke: none;
+}
+
+.client-right {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-shrink: 0;
+}
+
+.status-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.8rem;
+  min-height: 1.85rem;
+  padding: 0.28rem 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
+}
 
 .kick-btn {
+  box-sizing: border-box;
   width: 1.85rem;
   height: 1.85rem;
   padding: 0;
-  border-radius: 8px;
-  border: 1px solid var(--danger-border);
-  background: var(--danger-bg);
-  color: var(--danger);
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, transparent);
+  background: transparent;
+  color: var(--danger, #ef4444);
   display: inline-grid;
   place-items: center;
   cursor: pointer;
   font-size: 1rem;
-  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  transition: border-color 0.15s ease;
 }
 
 .kick-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  border-color: var(--danger);
-  transform: scale(1.08);
+  border-color: var(--danger, #ef4444);
 }
 
-.kick-btn:disabled { opacity: 0.4; cursor: wait; }
+.kick-btn:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.status-badge.online {
+  color: var(--status-ok);
+  background: var(--status-ok-soft);
+  border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
+}
 
 @media (max-width: 720px) {
-  .client-card { flex-direction: column; align-items: stretch; }
-  .card-right { align-self: flex-end; }
-  .search-input { width: 8rem; }
+  .client-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .client-right {
+    align-self: flex-end;
+  }
 }
 </style>

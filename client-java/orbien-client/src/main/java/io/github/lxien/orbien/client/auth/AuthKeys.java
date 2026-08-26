@@ -1,23 +1,27 @@
 package io.github.lxien.orbien.client.auth;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 public final class AuthKeys {
 
+    private static final String HMAC_SHA256 = "HmacSHA256";
+
     private AuthKeys() {}
 
-    public static String getAuthKey(String token, long timestamp) {
+    public static String computeAuthDigest(String token, long timestamp) {
         String t = token == null ? "" : token;
         try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            md.update(t.getBytes(StandardCharsets.UTF_8));
-            md.update(Long.toString(timestamp).getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(md.digest());
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("MD5 not available", e);
+            Mac mac = Mac.getInstance(HMAC_SHA256);
+            mac.init(new SecretKeySpec(t.getBytes(StandardCharsets.UTF_8), HMAC_SHA256));
+            mac.update(Long.toString(timestamp).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(mac.doFinal());
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            throw new IllegalStateException("HmacSHA256 not available", e);
         }
     }
 }

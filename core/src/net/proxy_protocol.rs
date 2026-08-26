@@ -8,11 +8,15 @@ const V2_SIG: [u8; 12] = [
 ];
 
 pub fn parse_proxy_protocol_version(s: &str) -> Result<Option<&'static str>> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "" => Ok(None),
-        "v1" => Ok(Some("v1")),
-        "v2" => Ok(Some("v2")),
-        other => bail!("invalid proxyProtocolVersion {other:?}; use \"\" | \"v1\" | \"v2\""),
+    let s = s.trim();
+    if s.is_empty() {
+        Ok(None)
+    } else if s.eq_ignore_ascii_case("v1") {
+        Ok(Some("v1"))
+    } else if s.eq_ignore_ascii_case("v2") {
+        Ok(Some("v2"))
+    } else {
+        bail!("invalid proxyProtocolVersion {s:?}; use \"\" | \"v1\" | \"v2\"")
     }
 }
 
@@ -24,7 +28,7 @@ pub fn build_proxy_protocol_header(
     match version {
         "v1" => Ok(build_v1(src, dst)?),
         "v2" => Ok(build_v2(src, dst)?),
-        other => bail!("unsupported proxy protocol version: {other}"),
+        other => bail!("unsupported PROXY Protocol version: {other}"),
     }
 }
 
@@ -236,7 +240,7 @@ fn parse_v2(buf: &[u8]) -> Result<PpConsume> {
     }))
 }
 
-pub fn addrs_from_start_work(
+pub fn addrs_from_start_data_conn(
     src_ip: &str,
     src_port: u16,
     dst_ip: &str,
@@ -374,26 +378,26 @@ mod tests {
     }
 
     #[test]
-    fn addrs_from_start_work_basic() {
-        let r = addrs_from_start_work("1.2.3.4", 1234, "5.6.7.8", 80, 8080).unwrap();
+    fn addrs_from_start_data_conn_basic() {
+        let r = addrs_from_start_data_conn("1.2.3.4", 1234, "5.6.7.8", 80, 8080).unwrap();
         assert_eq!(r.0, "1.2.3.4:1234".parse::<SocketAddr>().unwrap());
         assert_eq!(r.1, "5.6.7.8:80".parse::<SocketAddr>().unwrap());
     }
 
     #[test]
-    fn addrs_from_start_work_empty_src() {
-        assert!(addrs_from_start_work("", 0, "", 0, 8080).is_none());
+    fn addrs_from_start_data_conn_empty_src() {
+        assert!(addrs_from_start_data_conn("", 0, "", 0, 8080).is_none());
     }
 
     #[test]
-    fn addrs_from_start_work_fallback() {
-        let r = addrs_from_start_work("1.2.3.4", 1234, "", 0, 8080).unwrap();
+    fn addrs_from_start_data_conn_fallback() {
+        let r = addrs_from_start_data_conn("1.2.3.4", 1234, "", 0, 8080).unwrap();
         assert_eq!(r.0, "1.2.3.4:1234".parse::<SocketAddr>().unwrap());
         assert_eq!(r.1, "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
     }
 
     #[test]
-    fn addrs_from_start_work_invalid() {
-        assert!(addrs_from_start_work("not-an-ip", 1, "", 0, 8080).is_none());
+    fn addrs_from_start_data_conn_invalid() {
+        assert!(addrs_from_start_data_conn("not-an-ip", 1, "", 0, 8080).is_none());
     }
 }

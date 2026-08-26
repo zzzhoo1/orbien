@@ -21,30 +21,26 @@ title: Docker 安装
 创建 `orbien-server.toml`：
 
 ```toml
-# orbien-server.toml
-bindAddr = "0.0.0.0"
-bindPort = 9527
+listen = "0.0.0.0:9527"
 
-# 可选：HTTP 虚拟主机
-# vhostHTTPPort = 80
-
-# 可选：HTTPS 虚拟主机（SNI 透传）
-# vhostHTTPSPort = 443
+# 可选 通过域名路由
+# httpGwPort = 80
+# httpsGwPort = 443
 
 # 可选：Token 鉴权
 # [auth]
 # token = "your-secret-token"
 
 # 可选：Web 管理面板
-[webServer]
-addr     = "0.0.0.0"   # 必须为 0.0.0.0，宿主机才能通过端口映射访问
-port     = 8020
-user     = "admin"
-password = "changeme"
+[dashboard]
+addr = "0.0.0.0"
+port = 8020
+user = "admin"
+password = "123456"
 ```
 
-:::warning 注意
-`webServer.addr` **必须**设置为 `0.0.0.0`，否则管理面板只监听容器内部，宿主机无法访问。
+:::warning
+`dashboard.addr` 需为 `0.0.0.0`，否则宿主机无法通过端口映射访问管理面板
 :::
 
 ### 方式一：docker run
@@ -88,7 +84,54 @@ services:
 docker compose up -d
 ```
 
-启动后，访问 `http://YOUR_SERVER_IP:8020` 打开 Web 管理面板。
+<div id="env">
+
+### 方式三：用环境变量注入配置
+
+</div>
+
+配置里写 <code>{'{{env.NAME}}'}</code>，用 `-e` 或 Compose `environment` 传入。语法见 [环境变量](./features/env.md)。
+
+```toml
+#orbien-server.toml
+listen = "{{env.ORBIEN_LISTEN:0.0.0.0:9527}}"
+
+[auth]
+token = "{{env.ORBIEN_TOKEN}}"
+
+[dashboard]
+addr = "0.0.0.0"
+port = 8020
+user = "{{env.DASHBOARD_USER:admin}}"
+password = "{{env.DASHBOARD_PASSWORD:123456}}"
+```
+
+```yaml
+# docker-compose.yaml
+services:
+  orbien-server:
+    image: ghcr.io/orbien-org/orbien-server:latest
+    container_name: orbien-server
+    restart: unless-stopped
+    ports:
+      - "9527:9527"
+      - "8020:8020"
+    environment:
+      ORBIEN_TOKEN: ${ORBIEN_TOKEN}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+    volumes:
+      - ./orbien-server.toml:/etc/orbien/orbien-server.toml:ro
+```
+
+```shell
+export ORBIEN_TOKEN=YOUR_TOKEN
+export DASHBOARD_PASSWORD=change-me
+docker compose up -d
+```
+
+:::warning
+字符串字段必须给占位符加引号；变量未设置且没有默认值时进程会启动失败。桌面客户端（Orbien-Desktop）不要在配置里写 <code>{'{{env.}}'}</code>。
+:::
 
 ---
 
@@ -99,20 +142,17 @@ docker compose up -d
 创建 `orbien.toml`：
 
 ```toml
-# orbien.toml
-serverAddr = "YOUR_SERVER_IP"
-serverPort = 9527
+server = "YOUR_SERVER_IP:9527"
 
 # 若服务端开启了 Token 鉴权，需保持一致
 # [auth]
 # token = "your-secret-token"
 
-[[proxies]]
-name       = "mysql"
-type       = "tcp"
-localIP    = "127.0.0.1"
-localPort  = 3306
-remotePort = 6050
+[[tunnels]]
+name = "mysql"
+protocol = "tcp"
+service = "127.0.0.1:3306"
+remotePort = 9000
 ```
 
 :::tip 容器内 127.0.0.1 的含义
@@ -131,6 +171,9 @@ docker run -d \
 ```
 
 ### 方式一变体：host 网络模式
+:::tip
+容器内 `127.0.0.1` 是容器自己。若要穿透**宿主机**上的服务，把 `service` 改成宿主机 IP，或使用下方 host 网络
+:::
 
 使用 `--network host` 后，容器与宿主机共享网络栈，配置文件中可直接填写 `127.0.0.1` 访问宿主机本地服务：
 

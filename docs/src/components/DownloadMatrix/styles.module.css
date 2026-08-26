@@ -19,9 +19,9 @@
   border-radius: 999px;
   font-size: 0.85rem;
   font-weight: 700;
-  background: rgba(14, 165, 233, 0.12);
+  background: rgba(22, 119, 255, 0.12);
   color: var(--ifm-color-primary-dark);
-  border: 1px solid rgba(14, 165, 233, 0.25);
+  border: 1px solid rgba(22, 119, 255, 0.25);
 }
 
 .releasesLink {
@@ -69,14 +69,14 @@
   font-weight: 700;
   background: linear-gradient(
     90deg,
-    rgba(14, 165, 233, 0.06),
+    rgba(22, 119, 255, 0.06),
     transparent 80%
   );
   white-space: nowrap;
 }
 
 .rowHighlight td {
-  background: rgba(14, 165, 233, 0.05);
+  background: rgba(22, 119, 255, 0.05);
 }
 
 .badge {
@@ -171,7 +171,7 @@
   padding: 0.12rem 0.45rem;
   border-radius: 999px;
   color: var(--ifm-color-primary-dark);
-  background: rgba(14, 165, 233, 0.12);
+  background: rgba(22, 119, 255, 0.12);
 }
 
 .dockerCmd {

@@ -42,10 +42,6 @@ export function useSidebar() {
         mobileOpen.value = false
     }
 
-    function openMobile() {
-        mobileOpen.value = true
-    }
-
     watch([mobileOpen, isMobile], ([open, mobile]) => {
         document.body.style.overflow = open && mobile ? 'hidden' : ''
     })
@@ -57,6 +53,5 @@ export function useSidebar() {
         desktopCollapsed,
         toggleCollapsed,
         closeMobile,
-        openMobile,
     }
 }

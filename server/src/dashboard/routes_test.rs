@@ -3,7 +3,7 @@
 //! Strategy
 //! --------
 //! * Build the axum `Router` directly via `routes::router()` — no TCP socket.
-//! * Set `WebServerConfig { user: "", password: "" }` so `needs_basic_auth`
+//! * Set `DashboardConfig { user: "", password: "" }` so `needs_basic_auth`
 //!   returns false and the auth middleware passes every request through.
 //! * Use `tower::ServiceExt::oneshot` to drive individual requests.
 //! * All assertions are JSON-level (serde_json), not string-matching.
@@ -27,7 +27,7 @@ mod tests {
         dashboard::{auth::AuthState, routes, DashState},
         service::Service,
     };
-    use orbien_core::config::{ServerConfig, WebServerConfig};
+    use orbien_core::config::{ServerConfig, DashboardConfig};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ mod tests {
     fn make_state() -> Arc<DashState> {
         let cfg = ServerConfig::default();
         let svc = Arc::new(Service::new(cfg).expect("Service::new"));
-        let web_cfg = WebServerConfig {
+        let web_cfg = DashboardConfig {
             addr: "127.0.0.1".into(),
             port: 0,
             user: String::new(),
@@ -219,7 +219,7 @@ mod tests {
     async fn auth_middleware_rejects_when_password_set() {
         let cfg = ServerConfig::default();
         let svc = Arc::new(Service::new(cfg).expect("Service::new"));
-        let web_cfg = WebServerConfig {
+        let web_cfg = DashboardConfig {
             addr: "127.0.0.1".into(),
             port: 0,
             user: "admin".into(),
@@ -243,7 +243,7 @@ mod tests {
         use base64::Engine;
         let cfg = ServerConfig::default();
         let svc = Arc::new(Service::new(cfg).expect("Service::new"));
-        let web_cfg = WebServerConfig {
+        let web_cfg = DashboardConfig {
             addr: "127.0.0.1".into(),
             port: 0,
             user: "admin".into(),

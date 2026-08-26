@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Orbien Desktop</string>
+	<key>CFBundleExecutable</key>
+	<string>orbien-desktop</string>
+	<key>CFBundleIconFile</key>
+	<string>icon.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.orbien.desktop</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Orbien Desktop</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__ORB_VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__ORB_VERSION__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!--
+	  Opt out of macOS heuristic OTP/AutoFill scanning for unmarked text fields.
+	  Prevents orphaned "AutoFill (orbien-desktop)" SafariPlatformSupport helpers
+	  from accumulating across app restarts (especially during development/packaging).
+	  See: NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac
+	-->
+	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
+	<true/>
+</dict>
+</plist>

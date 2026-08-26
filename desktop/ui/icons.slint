@@ -1,0 +1,69 @@
+import { Theme } from "theme.slint";
+
+export component AppIcon inherits Image {
+    in property <color> tint: Theme.nav-idle;
+    in property <length> size: 22px;
+
+    width: root.size;
+    height: root.size;
+    image-fit: contain;
+    colorize: root.tint;
+}
+
+export component IconRocket inherits AppIcon {
+    source: @image-url("../assets/icon/rocket.svg");
+}
+
+export component IconCloud inherits AppIcon {
+    source: @image-url("../assets/icon/cloud.svg");
+}
+
+export component IconSetting inherits AppIcon {
+    source: @image-url("../assets/icon/setting.svg");
+}
+
+export component IconLog inherits AppIcon {
+    source: @image-url("../assets/icon/log.svg");
+}
+
+export component IconAbout inherits AppIcon {
+    source: @image-url("../assets/icon/about.svg");
+}
+
+export component IconGithub inherits AppIcon {
+    source: @image-url("../assets/icon/github.svg");
+}
+
+export component IconBug inherits AppIcon {
+    source: @image-url("../assets/icon/bug.svg");
+}
+
+export component IconDoc inherits AppIcon {
+    source: @image-url("../assets/icon/doc.svg");
+}
+
+export component IconPlus inherits Rectangle {
+    in property <color> tint: white;
+    in property <length> size: 18px;
+    width: root.size;
+    height: root.size;
+    background: transparent;
+
+    Rectangle {
+        x: 3px;
+        y: (parent.height - 2px) / 2;
+        width: parent.width - 6px;
+        height: 2px;
+        border-radius: 1px;
+        background: root.tint;
+    }
+
+    Rectangle {
+        x: (parent.width - 2px) / 2;
+        y: 3px;
+        width: 2px;
+        height: parent.height - 6px;
+        border-radius: 1px;
+        background: root.tint;
+    }
+}

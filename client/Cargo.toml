@@ -3,7 +3,11 @@ name = "orbien-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "orbien client — TCP proxy over TCP/QUIC"
+description = "Orbien client library and CLI"
+
+[lib]
+name = "orbien_client"
+path = "src/lib.rs"
 
 [[bin]]
 name = "orbien"
@@ -12,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 orbien-core = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -24,6 +29,7 @@ tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 httparse = { workspace = true }
 hostname = { workspace = true }
+fast-socks5 = "1.0"
 
 # ── musl cross-compilation ──────────────────────────────────────────────────────────
 # vendored feature builds OpenSSL from source — no pkg-config needed.

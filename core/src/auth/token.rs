@@ -6,11 +6,11 @@ type HmacSha256 = Hmac<Sha256>;
 
 const DEFAULT_MAX_SKEW_SECS: i64 = 15 * 60;
 
-/// Compute the privilege_key as HMAC-SHA256(key=token, msg=timestamp).
+/// Compute the auth_digest as HMAC-SHA256(key=token, msg=timestamp).
 /// The result is lowercase hex-encoded (64 chars).
-pub fn get_auth_key(token: &str, timestamp: i64) -> String {
+pub fn compute_auth_digest(token: &str, timestamp: i64) -> String {
     let mut mac =
-        HmacSha256::new_from_slice(token.as_bytes()).expect("HMAC accepts any key length");
+        HmacSha256::new_from_slice(token.as_bytes()).expect("HMAC-SHA256 accepts any key length");
     mac.update(timestamp.to_string().as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
@@ -22,25 +22,39 @@ pub fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn verify_login(token: &str, privilege_key: &str, timestamp: i64) -> bool {
+pub fn verify_login(token: &str, auth_digest: &str, timestamp: i64) -> bool {
     verify_login_at(
         token,
-        privilege_key,
+        auth_digest,
         timestamp,
         unix_now(),
         DEFAULT_MAX_SKEW_SECS,
     )
 }
 
+/// Alias kept for upstream API compatibility.
+pub fn verify_auth_digest(token: &str, auth_digest: &str, timestamp: i64) -> bool {
+    verify_login(token, auth_digest, timestamp)
+}
+
+/// Verification with injectable clock and skew window (unit-testable).
+///
+/// Security hardening over plain HMAC comparison:
+/// - rejects non-positive timestamps;
+/// - rejects timestamps outside `max_skew_secs` of `now` (replay protection);
+/// - compares digests in constant time (timing side-channel protection).
 pub fn verify_login_at(
     token: &str,
-    privilege_key: &str,
+    auth_digest: &str,
     timestamp: i64,
     now: i64,
     max_skew_secs: i64,
 ) -> bool {
     if token.is_empty() {
         return true;
+    }
+    if auth_digest.is_empty() {
+        return false;
     }
     if timestamp <= 0 {
         return false;
@@ -49,8 +63,8 @@ pub fn verify_login_at(
         return false;
     }
     // Constant-time comparison to prevent timing side-channels.
-    let expected = get_auth_key(token, timestamp);
-    constant_time_eq(expected.as_bytes(), privilege_key.as_bytes())
+    let expected = compute_auth_digest(token, timestamp);
+    constant_time_eq(expected.as_bytes(), auth_digest.as_bytes())
 }
 
 /// Constant-time byte slice comparison (prevents timing oracle).
@@ -71,14 +85,14 @@ mod tests {
     #[test]
     fn accepts_current_timestamp() {
         let ts = 1_700_000_000;
-        let key = get_auth_key("secret", ts);
+        let key = compute_auth_digest("secret", ts);
         assert!(verify_login_at("secret", &key, ts, ts, 900));
     }
 
     #[test]
     fn rejects_stale_timestamp() {
         let ts = 1_700_000_000;
-        let key = get_auth_key("secret", ts);
+        let key = compute_auth_digest("secret", ts);
         assert!(!verify_login_at("secret", &key, ts, ts + 901, 900));
     }
 
@@ -91,7 +105,7 @@ mod tests {
     #[test]
     fn rejects_wrong_key() {
         let ts = 1_700_000_000;
-        let key = get_auth_key("secret", ts);
+        let key = compute_auth_digest("secret", ts);
         // Flip one char — must reject.
         let mut bad = key.clone();
         let idx = bad.len() - 1;
@@ -102,8 +116,14 @@ mod tests {
 
     #[test]
     fn rejects_zero_timestamp() {
-        let key = get_auth_key("secret", 0);
+        let key = compute_auth_digest("secret", 0);
         assert!(!verify_login_at("secret", &key, 0, 0, 900));
+    }
+
+    #[test]
+    fn rejects_empty_digest() {
+        let ts = 1_700_000_000;
+        assert!(!verify_login_at("secret", "", ts, ts, 900));
     }
 
     #[test]

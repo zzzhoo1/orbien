@@ -6,26 +6,29 @@ title: 管理界面
 
 # 管理界面
 
-服务端 Web 管理面板。在 `orbien-server.toml` 中配置 `[webServer]`，且 `port > 0` 时启用。
+服务端 Web 管理面板。 `port > 0` 时启用，启用后 **必须** 配置 `user` 与
+`password`。
+
+![dashboard.png](/img/dashboard.png)
 
 ## 示例
 
 ```toml
 # orbien-server.toml
-bindAddr = "0.0.0.0"
-bindPort = 9527
+listen = "0.0.0.0:9527"
 
-[webServer]
+[dashboard]
 addr = "0.0.0.0"
 port = 8020
 user = "admin"
 password = "123456"
-assetsDir = "/path/to/dist"
 ```
 
-浏览器访问 `http://SERVER_IP:8020`，使用 Basic Auth（`user` / `password`）登录。
+浏览器访问 `http://SERVER_IP:8020`，在弹出框输入用户名和密码登录。
 
-`addr` 默认为 `127.0.0.1`（仅本机）。需远程访问时设为 `0.0.0.0`。`assetsDir` 可省略，省略时使用内置前端。
+:::tip
+`addr` 默认为 `127.0.0.1`（仅本机），需远程访问时设为 `0.0.0.0`
+:::
 
 ## 参数
 

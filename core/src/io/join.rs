@@ -12,11 +12,11 @@ where
     A: AsyncRead + AsyncWrite + Unpin,
     B: AsyncRead + AsyncWrite + Unpin,
 {
-    let (sent, recv, err) = join_counted(a, b).await;
-    match err {
-        None => Ok((sent, recv)),
-        Some(e) => Err(e),
+    let (a_to_b, b_to_a, err) = join_counted(a, b).await;
+    if let Some(e) = err {
+        return Err(e);
     }
+    Ok((a_to_b, b_to_a))
 }
 
 /// Like [`join`] but never fails: returns byte counts regardless of any error.

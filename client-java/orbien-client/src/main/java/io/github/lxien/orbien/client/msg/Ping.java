@@ -5,6 +5,6 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public class Ping {
-    public String privilegeKey = "";
+    public String authDigest = "";
     public long timestamp;
 }

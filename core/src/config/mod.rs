@@ -1,12 +1,15 @@
 mod client;
+mod env;
 mod server;
 
 pub use client::{
-    ClientConfig, ClientTlsConfig, PluginConfig, PluginRequestHeaders, ProxyConfig,
-    ProxyTransportConfig, TransportConfig,
+    ClientConfig, ClientTlsConfig, PluginConfig, PluginRequestHeaders, TransportConfig,
+    TunnelConfig, TunnelTransportConfig,
 };
+pub use env::{contains_env_placeholders, expand_env_placeholders};
 pub use server::{
-    QuicOptions, ServerConfig, ServerTlsConfig, ServerTransportConfig, WebServerConfig,
+    parse_host_port, DashboardConfig, QuicOptions, ServerConfig, ServerTlsConfig,
+    ServerTransportConfig,
 };
 
 use anyhow::Context;
@@ -73,9 +76,4 @@ pub(crate) fn resolve_maybe_relative(base: &Path, p: &str) -> String {
             .to_string_lossy()
             .into_owned()
     }
-}
-
-#[allow(dead_code)]
-pub(crate) fn pathbuf_display(p: PathBuf) -> String {
-    p.to_string_lossy().into_owned()
 }

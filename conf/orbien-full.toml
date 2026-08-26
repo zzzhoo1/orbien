@@ -1,0 +1,106 @@
+server = "127.0.0.1:9527"
+user = "lxien"
+udpPacketSize = 1500
+
+[auth]
+type = "token"
+token = "YOUR_TOKEN"
+
+[transport]
+protocol = "tcp"
+poolCount = 5
+tcpMux = true
+muxKeepaliveSecs = 30
+heartbeatInterval = 30
+heartbeatTimeout = 90
+
+[transport.quic]
+keepalivePeriod = 10
+maxIdleTimeout = 30
+maxIncomingStreams = 100000
+
+[transport.tls]
+enable = true
+serverName = "orbien.example.com"
+trustedCaFile = "./certs/ca.crt"
+certFile = "./certs/client.crt"
+keyFile = "./certs/client.key"
+
+[[tunnels]]
+name = "ssh"
+protocol = "tcp"
+service = "127.0.0.1:22"
+remotePort = 9000
+
+[tunnels.transport]
+bandwidth = 10
+bandwidthLimitSide = "client"
+proxyProtocolVersion = "v2"
+
+[[tunnels]]
+name = "dns"
+protocol = "udp"
+service = "127.0.0.1:53"
+remotePort = 5353
+
+[tunnels.transport]
+bandwidth = 10
+bandwidthLimitSide = "server"
+proxyProtocolVersion = "v1"
+
+[[tunnels]]
+name = "web"
+protocol = "http"
+service = "127.0.0.1:8080"
+domains = ["web", "app.example.com"]
+locations = ["/", "/api"]
+basicAuthUser = "admin"
+basicAuthPassword = "123456"
+hostHeaderRewrite = "127.0.0.1:8080"
+routeByHTTPUser = "lxien"
+
+[tunnels.transport]
+bandwidth = 10
+bandwidthLimitSide = "client"
+proxyProtocolVersion = "v2"
+
+[[tunnels]]
+name = "api-tls"
+protocol = "https"
+service = "127.0.0.1:8080"
+domains = ["api.example.com"]
+
+[tunnels.transport]
+bandwidth = 10
+bandwidthLimitSide = "client"
+proxyProtocolVersion = "v2"
+
+[[tunnels]]
+name = "portal"
+protocol = "https"
+domains = ["portal.example.com"]
+
+[tunnels.transport]
+bandwidth = 10
+bandwidthLimitSide = "client"
+
+[tunnels.plugin]
+type = "tls-term"
+service = "127.0.0.1:8080"
+certFile = "./certs/portal.crt"
+keyFile = "./certs/portal.key"
+hostHeaderRewrite = "127.0.0.1"
+
+[tunnels.plugin.requestHeaders.set]
+X-Forwarded-Proto = "https"
+X-Orbien-Tunnel = "portal"
+
+[[tunnels]]
+name = "socks5"
+protocol = "tcp"
+remotePort = 9002
+
+[tunnels.plugin]
+type = "socks5"
+username = "admin"
+password = "123456"

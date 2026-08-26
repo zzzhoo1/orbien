@@ -5,10 +5,11 @@ export {
     fetchClients,
     fetchClient,
     kickClient,
-    fetchProxies,
-    fetchProxyTraffic,
+    fetchTunnels,
+    fetchTunnelTraffic,
     fetchSystemTraffic,
     fetchSystemTokens,
 } from './client'
-export type {AuthStatus, ProxyListParams, TrafficRange} from './client'
+export type {AuthStatus, TrafficRange} from './client'
+export type {TunnelListParams} from './client'
 export type {TokenMetricItem, TokenMetricsResp} from '@/types/api'

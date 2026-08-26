@@ -1,0 +1,95 @@
+import { Theme } from "theme.slint";
+
+export component ToastHost inherits Rectangle {
+    in-out property <bool> visible-toast: false;
+    in-out property <string> text: "";
+    /// 0 = success / info, 1 = error
+    in-out property <int> kind: 0;
+    in-out property <int> token: 0;
+
+    private property <bool> is-error: root.kind == 1;
+    private property <color> fill-bg: root.is-error ? Theme.toast-error-bg : Theme.toast-ok-bg;
+    private property <color> accent: root.is-error ? Theme.toast-error-fg : Theme.toast-ok-fg;
+    private property <color> bar-border: root.is-error ? Theme.toast-error-border : Theme.toast-ok-border;
+
+    background: transparent;
+    height: bar.preferred-height;
+
+    changed token => {
+        root.restart_dismiss_timer();
+    }
+
+    changed visible-toast => {
+        if root.visible-toast {
+            root.restart_dismiss_timer();
+        } else {
+            dismiss-timer.running = false;
+        }
+    }
+
+    function restart_dismiss_timer() {
+        dismiss-timer.running = false;
+        if root.visible-toast && root.text != "" {
+            dismiss-timer.running = true;
+        }
+    }
+
+    dismiss-timer := Timer {
+        interval: root.is-error ? 2s : 1500ms;
+        running: false;
+        triggered => {
+            root.visible-toast = false;
+            self.running = false;
+        }
+    }
+
+    bar := Rectangle {
+        width: parent.width;
+        height: inner.preferred-height;
+        background: root.fill-bg;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: root.bar-border;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #0f172a28;
+        drop-shadow-offset-y: 4px;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => {
+                root.visible-toast = false;
+                dismiss-timer.running = false;
+            }
+
+            inner := HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                spacing: 10px;
+
+                Rectangle {
+                    width: 4px;
+                    height: 18px;
+                    border-radius: 2px;
+                    background: root.accent;
+                    vertical-stretch: 0;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: root.text;
+                    color: Theme.text;
+                    font-size: 13px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,83 @@
+---
+sidebar_position: 1
+sidebar_label: Spring Boot
+---
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Spring Boot Integration
+
+**Orbien** provides an embeddable Java client for Spring Boot. Current scope:
+
+- Tunnel protocols: **TCP** and **HTTP** only
+- Transport: **TCP** only
+- **No TCP multiplexing**: set `orbien.tcp-mux` to `false`, and set `[transport].tcpMux = false` on the server (multiplexing is on by default; turn it off when using the Java client)
+
+<Tabs>
+    <TabItem value="Maven" label="Maven" default>
+        ```xml
+        <dependency>
+            <groupId>io.github.lxien</groupId>
+            <artifactId>orbien-spring-boot-starter</artifactId>
+            <version>3.2.0</version>
+        </dependency>
+        ```
+    </TabItem>
+    <TabItem value="Gradle" label="Gradle">
+        ```groovy
+        implementation("io.github.lxien:orbien-spring-boot-starter:3.2.0")
+        ```
+    </TabItem>
+</Tabs>
+
+## Minimal configuration
+
+`local-port` and `name` are optional. When omitted, the starter uses the Spring Boot web port and `spring.application.name` (or `orbien-{protocol}`).
+
+```yaml
+# application.yml
+orbien:
+  enabled: true
+  server-addr: 127.0.0.1
+  # token: YOUR_TOKEN # optional
+  tunnel:
+    protocol: http
+    domains:
+      - web.domain.com
+```
+
+Disable multiplexing on the server, for example:
+
+```toml
+# orbien-server.toml
+listen = "0.0.0.0:9527"
+httpGwPort = 80
+
+[transport]
+tcpMux = false # disable TCP multiplexing
+```
+
+## Full reference
+
+```yaml
+# application.yml
+orbien:
+  enabled: true
+  server-addr: 127.0.0.1
+  server-port: 9527
+  token: YOUR_TOKEN
+  tcp-mux: false # must be false and match the server
+  pool-count: 1 # data-connection pool size requested at login
+  heartbeat-interval-secs: 30
+  user: spring-boot-demo # optional; shown on the dashboard
+  # session-id: ""              # optional; if empty, restore from session-id-file or generate
+  # session-id-file: ""         # optional; if empty, use the default path under the user home
+  tunnel:
+    name: web-demo # optional
+    protocol: http # tcp | http
+    local-ip: 127.0.0.1
+    # local-port: 8080         # optional; defaults to the Spring Boot listen port
+    # remote-port: 9000         # required when protocol=tcp
+    domains: # required when protocol=http
+      - web.domain.com
+```

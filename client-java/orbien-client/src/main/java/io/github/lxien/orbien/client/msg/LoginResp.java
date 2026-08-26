@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public class LoginResp {
-    public String version = "";
-    public String runId = "";
+    public String sessionId = "";
     public String error = "";
 }
