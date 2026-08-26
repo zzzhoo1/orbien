@@ -147,8 +147,6 @@ jobs:
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: powershell
         run: |
-          # windows-11-arm runner ships vcpkg; arm64-windows-static-md avoids any
-          # Perl dependency entirely — no vendored source build needed.
           $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
           vcpkg install openssl:arm64-windows-static-md
           Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/arm64-windows-static-md"
@@ -353,7 +351,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: desktop-${{ matrix.os }}-${{ matrix.goarch }}
+          key: desktop-${{ matrix.os }}-${{ matrix.goarch }}-v2
 
       - name: Install Linux GUI deps
         if: matrix.artifact == 'deb'
@@ -363,6 +361,26 @@ jobs:
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libwayland-dev libegl1-mesa-dev \
             libfontconfig1-dev
+
+      - name: Install OpenSSL — Windows x64 (vcpkg)
+        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
+        shell: powershell
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          vcpkg install openssl:x64-windows-static-md
+          Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/x64-windows-static-md"
+          Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
+          Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
+
+      - name: Install OpenSSL — Windows ARM64 (vcpkg)
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        shell: powershell
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          vcpkg install openssl:arm64-windows-static-md
+          Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/arm64-windows-static-md"
+          Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
+          Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
 
       - name: Build orbien-desktop
         shell: bash
@@ -378,120 +396,25 @@ jobs:
             --arch "${{ matrix.goarch }}" \
             --outdir dist/desktop
 
-      - name: Install OpenSSL — Windows x64 desktop (vcpkg)
-        if: matrix.target == 'x86_64-pc-windows-msvc'
-        shell: powershell
-        run: |
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          vcpkg install openssl:x64-windows-static-md
-          Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/x64-windows-static-md"
-          Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
-          Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
-
-      - name: Install OpenSSL — Windows ARM64 desktop (vcpkg)
-        if: matrix.target == 'aarch64-pc-windows-msvc'
-        shell: powershell
-        run: |
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          vcpkg install openssl:arm64-windows-static-md
-          Add-Content $env:GITHUB_ENV "OPENSSL_DIR=$vcpkgRoot/installed/arm64-windows-static-md"
-          Add-Content $env:GITHUB_ENV "OPENSSL_STATIC=1"
-          Add-Content $env:GITHUB_ENV "OPENSSL_NO_VENDOR=1"
-
-      # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: |
-            . -> target
-            desktop/src-tauri -> target
-          key: desktop-${{ matrix.target }}-v2
-
-      # ── Version sync BEFORE npm ci so package-lock.json is consistent ──
-      - name: Sync desktop version
+      - name: Package Windows installer
+        if: matrix.artifact == 'windows'
         shell: bash
         run: |
-          set -euo pipefail
-          VERSION="${{ needs.meta.outputs.version }}"
+          chmod +x scripts/pack-desktop-windows.sh
+          ./scripts/pack-desktop-windows.sh \
+            --version "${{ needs.meta.outputs.version }}" \
+            --arch "${{ matrix.goarch }}" \
+            --outdir dist/desktop
 
-          # TAURI_VERSION: strict X.Y.Z — drop any pre-release suffix entirely.
-          # Tauri 2 rejects anything that isn't a plain semver triple.
-          TAURI_VERSION="${VERSION%%-*}"
-          # Safety: ensure exactly 3 dot-segments
-          DOTS="${TAURI_VERSION//[^.]}"
-          if [ ${#DOTS} -eq 0 ]; then TAURI_VERSION="${TAURI_VERSION}.0.0"
-          elif [ ${#DOTS} -eq 1 ]; then TAURI_VERSION="${TAURI_VERSION}.0"
-          fi
-          if [[ ! "$TAURI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::TAURI_VERSION '${TAURI_VERSION}' is not X.Y.Z" >&2
-            exit 1
-          fi
-
-          export TAURI_VERSION
-          echo "release version : ${VERSION}"
-          echo "tauri version   : ${TAURI_VERSION}"
-
-          # Update tauri.conf.json, package.json, and package-lock.json
-          node - "$TAURI_VERSION" <<'EOF'
-          const fs = require("fs");
-          const version = process.argv[2];
-
-          // tauri.conf.json — must be strict X.Y.Z
-          const confPath = "desktop/src-tauri/tauri.conf.json";
-          const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
-          conf.version = version;
-          fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + "\n");
-
-          // package.json
-          const pkgPath = "desktop/package.json";
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-          pkg.version = version;
-          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-
-          // package-lock.json — keep root + packages[""] in sync so npm ci is happy
-          const lockPath = "desktop/package-lock.json";
-          if (fs.existsSync(lockPath)) {
-            const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-            lock.version = version;
-            if (lock.packages && lock.packages[""]) {
-              lock.packages[""].version = version;
-            }
-            fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
-          }
-          EOF
-
-          # Cargo.toml
-          sed -i.bak -E \
-            "s/^version = \".*\"/version = \"${TAURI_VERSION}\"/" \
-            desktop/src-tauri/Cargo.toml
-          rm -f desktop/src-tauri/Cargo.toml.bak
-
-      - name: Install npm deps
-        working-directory: desktop
-        run: npm ci
-
-      - name: Build orbien CLI sidecar
+      - name: Package Linux deb
+        if: matrix.artifact == 'deb'
         shell: bash
-        env:
-          CI: "true"
         run: |
-          set -euo pipefail
-          chmod +x scripts/prepare-desktop-sidecar.sh
-          TARGET="${{ matrix.target }}"
-          ./scripts/prepare-desktop-sidecar.sh "$TARGET"
-          EXT=""
-          case "$TARGET" in *windows*) EXT=".exe" ;; esac
-          SIDE="desktop/src-tauri/binaries/orbien-${TARGET}${EXT}"
-          if [[ ! -f "$SIDE" ]]; then
-            echo "missing sidecar for Tauri externalBin: $SIDE" >&2
-            ls -la desktop/src-tauri/binaries/ || true
-            exit 1
-          fi
-          ls -lh "$SIDE"
+          chmod +x scripts/pack-desktop-linux-deb.sh
+          ./scripts/pack-desktop-linux-deb.sh \
+            --version "${{ needs.meta.outputs.version }}" \
+            --arch "${{ matrix.goarch }}" \
+            --outdir dist/desktop
 
       - name: Configure Apple code signing
         if: runner.os == 'macOS'
@@ -564,6 +487,71 @@ jobs:
             echo "Developer ID cert exported; notarization secrets incomplete — skip notarization"
           fi
 
+      - name: Sync desktop version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.meta.outputs.version }}"
+
+          # TAURI_VERSION: strict X.Y.Z — drop any pre-release suffix entirely.
+          TAURI_VERSION="${VERSION%%-*}"
+          DOTS="${TAURI_VERSION//[^.]}"
+          if [ ${#DOTS} -eq 0 ]; then TAURI_VERSION="${TAURI_VERSION}.0.0"
+          elif [ ${#DOTS} -eq 1 ]; then TAURI_VERSION="${TAURI_VERSION}.0"
+          fi
+          if [[ ! "$TAURI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::TAURI_VERSION '${TAURI_VERSION}' is not X.Y.Z" >&2
+            exit 1
+          fi
+
+          export TAURI_VERSION
+          echo "release version : ${VERSION}"
+          echo "tauri version   : ${TAURI_VERSION}"
+
+          node - "$TAURI_VERSION" <<'EOF'
+          const fs = require("fs");
+          const version = process.argv[2];
+
+          const confPath = "desktop/src-tauri/tauri.conf.json";
+          const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
+          conf.version = version;
+          fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + "\n");
+
+          const pkgPath = "desktop/package.json";
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          pkg.version = version;
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+          const lockPath = "desktop/package-lock.json";
+          if (fs.existsSync(lockPath)) {
+            const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+            lock.version = version;
+            if (lock.packages && lock.packages[""]) {
+              lock.packages[""].version = version;
+            }
+            fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
+          }
+          EOF
+
+          sed -i.bak -E \
+            "s/^version = \".*\"/version = \"${TAURI_VERSION}\"/" \
+            desktop/src-tauri/Cargo.toml
+          rm -f desktop/src-tauri/Cargo.toml.bak
+
+      - name: Install npm deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build orbien CLI sidecar
+        shell: bash
+        env:
+          CI: "true"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/prepare-desktop-sidecar.sh
+          TARGET="${{ matrix.os }}"
+          ./scripts/prepare-desktop-sidecar.sh "$TARGET"
+
       - name: Validate Tauri version
         working-directory: desktop
         shell: bash
@@ -577,17 +565,6 @@ jobs:
             echo "::error::tauri.conf.json version '$CONF_VER' is not valid X.Y.Z semver" >&2
             exit 1
           fi
-
-      - name: Build Tauri installers
-        working-directory: desktop
-
-        shell: bash
-        run: |
-          chmod +x scripts/pack-desktop-linux-deb.sh
-          ./scripts/pack-desktop-linux-deb.sh \
-            --version "${{ needs.meta.outputs.version }}" \
-            --arch "${{ matrix.goarch }}" \
-            --outdir dist/desktop
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
