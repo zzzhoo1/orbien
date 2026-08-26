@@ -568,7 +568,7 @@ fn copy_to_clipboard(text: &str) -> bool {
                 return false;
             }
         }
-        return child.wait().map(|s| s.success()).unwrap_or(false);
+        child.wait().map(|s| s.success()).unwrap_or(false)
     }
     #[cfg(target_os = "windows")]
     {

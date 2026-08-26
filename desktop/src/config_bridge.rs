@@ -20,7 +20,7 @@ pub fn default_config_path() -> PathBuf {
     {
         let dir = base.join("Library/Application Support/com.orbien.desktop");
         let _ = fs::create_dir_all(&dir);
-        return dir.join("orbien.toml");
+        dir.join("orbien.toml")
     }
     #[cfg(not(target_os = "macos"))]
     {

@@ -108,7 +108,7 @@ fn memory_bytes() -> u64 {
             &mut count,
         );
         if kr == libc::KERN_SUCCESS {
-            info.resident_size as u64
+            info.resident_size
         } else {
             0
         }
