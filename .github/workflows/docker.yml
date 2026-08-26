@@ -44,24 +44,21 @@ jobs:
 
           mkdir -p /tmp/orbien-ci
 
-          # Server config — heredoc body at column 0 to avoid leading-space TOML parse error
+          # Server config — use real orbien TOML schema
           cat > /tmp/orbien-ci/srv.toml <<'EOF'
-          bindAddr = "0.0.0.0"
-          bindPort = 9527
-          EOF
+listen = "0.0.0.0:9527"
+EOF
 
-          # Client config
+          # Client config — use real orbien TOML schema
           cat > /tmp/orbien-ci/cli.toml <<'EOF'
-          serverAddr = "127.0.0.1"
-          serverPort = 9527
+server = "127.0.0.1:9527"
 
-          [[proxies]]
-          name       = "echo"
-          type       = "tcp"
-          localIP    = "127.0.0.1"
-          localPort  = 18000
-          remotePort = 18001
-          EOF
+[[tunnels]]
+name       = "echo"
+protocol   = "tcp"
+service    = "127.0.0.1:18000"
+remotePort = 18001
+EOF
 
           cleanup() {
             set +e
