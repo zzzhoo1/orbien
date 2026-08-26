@@ -16,7 +16,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.88"
+  RUST_VERSION: "1.92"
   CARGO_INCREMENTAL: 0
 
 jobs:
@@ -51,7 +51,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
-          key: ci-${{ matrix.os }}-v1
+          key: ci-${{ matrix.os }}-v2
 
       - name: Install OpenSSL (Windows)
         if: runner.os == 'Windows'
@@ -96,7 +96,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
-          key: ci-ubuntu-release-v1
+          key: ci-ubuntu-release-v2
 
       - name: cargo build --release
         run: cargo build --workspace --release --locked
@@ -116,7 +116,7 @@ jobs:
 
   # ── L2-L7: E2E acceptance suite (Linux, parallel matrix) ──────────────────
   e2e:
-    name: "E2E \u2013 ${{ matrix.name }}"
+    name: "E2E – ${{ matrix.name }}"
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -154,7 +154,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             curl jq openssl netcat-openbsd
 
-      - name: "Run E2E \u2013 ${{ matrix.name }}"
+      - name: "Run E2E – ${{ matrix.name }}"
         env:
           BIN_DIR: ${{ github.workspace }}/target/release
           RUN_DIR: ${{ github.workspace }}/.e2e
