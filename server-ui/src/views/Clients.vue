@@ -7,8 +7,23 @@ import PaginationBar from '@/components/PaginationBar.vue'
 import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
-import {usePresence} from '@/composables/usePresence'
+import {usePresence} from '@/comables/usePresence'
 import signalIcon from '@/assets/icon/signal.svg?raw'
+
+// 临时：简单的内联 toast。后续可抽到全局消息组件。
+const toast = ref<{ type: 'info' | 'error'; message: string } | null>(null)
+let toastTimer: number | null = null
+
+function showToast(type: 'info' | 'error', message: string, duration = 3000) {
+  toast.value = {type, message}
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer)
+  }
+  toastTimer = window.setTimeout(() => {
+    toast.value = null
+    toastTimer = null
+  }, duration)
+}
 
 type StatusFilter = 'all' | 'online' | 'offline'
 
@@ -81,14 +96,15 @@ function onKeyOpen(evt: KeyboardEvent, sessionId: string) {
 async function onKick(sessionId: string, evt: Event) {
   evt.stopPropagation()
   if (kicking.value) return
-  if (!window.confirm(t('clients.kickConfirm'))) return
+
   kicking.value = sessionId
   try {
     await kickClient(sessionId)
     await store.refresh()
+    showToast('info', t('clients.kickSuccess'))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    window.alert(t('clients.kickFailed', {msg}))
+    showToast('error', t('clients.kickFailed', {msg}))
   } finally {
     kicking.value = null
   }
@@ -97,6 +113,16 @@ async function onKick(sessionId: string, evt: Event) {
 
 <template>
   <section class="client-list">
+    <div
+        v-if="toast"
+        class="toast"
+        :class="toast.type"
+        role="status"
+        aria-live="polite"
+    >
+      {{ toast.message }}
+    </div>
+
     <div class="list-toolbar" role="group" :aria-label="t('clients.filter')">
       <button
           v-for="key in FILTERS"
@@ -140,7 +166,7 @@ async function onKick(sessionId: string, evt: Event) {
             <h3 class="client-id">{{ c.sessionId }}</h3>
             <span v-if="c.hostname" class="tag">{{ c.hostname }}</span>
             <span v-if="c.user" class="tag">{{ c.user }}</span>
-            <span v-if="c.version" class="tag version">v{{ c.version }}</span>
+            <span v-if="c.version" class="tag">v{{ c.version }}</span>
             <span class="tag soft">
               {{ t('clients.tunnels') }} {{ c.tunnelCount ?? 0 }}
             </span>
@@ -190,6 +216,24 @@ async function onKick(sessionId: string, evt: Event) {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.toast {
+  align-self: flex-start;
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent-text);
+  box-shadow: var(--shadow);
+}
+
+.toast.error {
+  background: color-mix(in srgb, var(--danger, #ef4444) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
+  color: #fed7d7;
 }
 
 .list-toolbar {
