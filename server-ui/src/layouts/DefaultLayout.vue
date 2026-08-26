@@ -44,7 +44,6 @@ function showToast(type: 'info' | 'error', text: string, duration = 3000) {
 
 // Expose on window for now so views can call window.__orbienToast?.(...)
 // Later this can be refactored into a dedicated composable/store.
-// @ts-expect-error – attach for ad-hoc usage
 window.__orbienToast = showToast
 
 // Re-show the alert whenever a new error arrives
