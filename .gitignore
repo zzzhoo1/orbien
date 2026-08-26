@@ -1,6 +1,7 @@
 # === Rust / Cargo ===
 /target/
 **/target/
+/.e2e/
 /debug/
 **/*.rs.bk
 *.pdb

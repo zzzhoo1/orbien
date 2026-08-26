@@ -16,10 +16,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.92"
+  RUST_VERSION: "1.88"
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # ── L0: static checks & unit tests (3-platform matrix) ────────────────────
   test:
     name: Test (${{ matrix.os }})
     strategy:
@@ -28,10 +29,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ── Node / web assets ──────────────────────────────────────────────────
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -43,9 +42,7 @@ jobs:
         run: |
           npm ci
           npm run build
-        # Vite outputs directly to ../server/assets (see vite.config.ts)
 
-      # ── Rust ───────────────────────────────────────────────────────────────
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -71,5 +68,104 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --locked -- -D warnings
 
-      - name: Build release bins
-        run: cargo build --release --locked -p orbien-server -p orbien-client
+  # ── L1: build release binaries (Linux, reused by E2E jobs) ────────────────
+  build:
+    name: Build release binaries
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Build web assets
+        working-directory: server-ui
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-ubuntu-release-v1
+
+      - name: cargo build --release
+        run: cargo build --workspace --release --locked
+
+      - name: Collect binaries
+        run: |
+          mkdir -p dist
+          cp target/release/orbien-server dist/
+          cp target/release/orbien dist/
+          chmod +x dist/orbien dist/orbien-server
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbien-bins
+          path: dist/
+          retention-days: 3
+
+  # ── L2-L7: E2E acceptance suite (Linux, parallel matrix) ──────────────────
+  e2e:
+    name: "E2E \u2013 ${{ matrix.name }}"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: TCP tunnel
+            script: 01-tcp.sh
+          - name: HTTP tunnel
+            script: 02-http.sh
+          - name: HTTPS SNI passthrough
+            script: 03-https.sh
+          - name: UDP tunnel
+            script: 04-udp.sh
+          - name: Token auth
+            script: 05-token.sh
+          - name: Dashboard API
+            script: 06-dashboard.sh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: orbien-bins
+          path: target/release
+
+      - name: Make binaries executable
+        run: chmod +x target/release/orbien target/release/orbien-server
+
+      - name: Install test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl jq openssl netcat-openbsd
+
+      - name: "Run E2E \u2013 ${{ matrix.name }}"
+        env:
+          BIN_DIR: ${{ github.workspace }}/target/release
+          RUN_DIR: ${{ github.workspace }}/.e2e
+          LOG_DIR: ${{ github.workspace }}/.e2e/logs
+          DASHBOARD_USER: admin
+          DASHBOARD_PASSWORD: admin
+        run: bash tests/e2e/${{ matrix.script }}
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "e2e-logs-${{ matrix.script }}-${{ github.run_id }}"
+          path: .e2e/logs/
+          if-no-files-found: ignore
+          retention-days: 7
