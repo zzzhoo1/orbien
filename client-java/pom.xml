@@ -48,6 +48,13 @@
     </snapshotRepository>
   </distributionManagement>
 
+  <repositories>
+    <repository>
+      <id>aikido</id>
+      <url>https://maven.aikido.io/21be76845abc5ed978f11</url>
+    </repository>
+  </repositories>
+
   <modules>
     <module>orbien-client</module>
     <module>orbien-spring-boot-starter</module>
@@ -112,6 +119,11 @@
         <version>${netty.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>2.18.3-aikido.2</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson</groupId>
