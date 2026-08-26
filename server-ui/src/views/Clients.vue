@@ -7,7 +7,7 @@ import PaginationBar from '@/components/PaginationBar.vue'
 import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
-import {usePresence} from '@/comables/usePresence'
+import {usePresence} from '@/composables/usePresence'
 import signalIcon from '@/assets/icon/signal.svg?raw'
 
 // 临时：简单的内联 toast。后续可抽到全局消息组件。
