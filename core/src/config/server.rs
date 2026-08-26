@@ -66,13 +66,9 @@ pub struct ServerConfig {
     )]
     pub proxy_protocol_timeout_secs: u64,
 
-    /// Seconds before a UDP work-conn read is considered dead.
-    /// 0 = use default (60 s).
     #[serde(default, rename = "udpWorkReadSecs", alias = "udp_work_read_secs")]
     pub udp_work_read_secs: u64,
 
-    /// Seconds to wait for a work-conn to arrive from the client pool.
-    /// 0 = use default (10 s).
     #[serde(
         default,
         rename = "workConnTimeoutSecs",
@@ -80,9 +76,6 @@ pub struct ServerConfig {
     )]
     pub work_conn_timeout_secs: u64,
 
-    /// Allow only one simultaneous control connection per user token.
-    /// When a second login arrives for the same user, the old connection is
-    /// kicked.  Default: false (multiple connections allowed).
     #[serde(
         default,
         rename = "singleClientPerUser",
@@ -90,8 +83,6 @@ pub struct ServerConfig {
     )]
     pub single_client_per_user: bool,
 
-    /// Interval (seconds) for server-initiated Ping on the control channel.
-    /// 0 = use default (30 s).
     #[serde(
         default,
         rename = "ctrlHeartbeatIntervalSecs",
@@ -99,8 +90,6 @@ pub struct ServerConfig {
     )]
     pub ctrl_heartbeat_interval_secs: u64,
 
-    /// Seconds of silence on the control channel before the connection is
-    /// considered dead.  0 = use default (90 s).
     #[serde(
         default,
         rename = "ctrlHeartbeatTimeoutSecs",
@@ -182,9 +171,12 @@ pub struct DashboardConfig {
     pub webauthn_rp_id: String,
     #[serde(default, rename = "webauthnOrigin", alias = "webauthn_origin")]
     pub webauthn_origin: String,
-
     #[serde(default, rename = "staticDir", alias = "static_dir")]
     pub static_dir: String,
+    /// Explicitly disable authentication — for local dev / CI only.
+    /// WARNING: Never set this in production.
+    #[serde(default, rename = "disableAuth", alias = "disable_auth")]
+    pub disable_auth: bool,
 }
 
 impl DashboardConfig {
@@ -204,11 +196,15 @@ impl DashboardConfig {
         if !self.enabled() {
             return Ok(());
         }
+        if self.disable_auth {
+            return Ok(());
+        }
         let user = self.user.trim();
         let pass = self.password.trim();
         if user.is_empty() || pass.is_empty() {
             anyhow::bail!(
-                "dashboard.user and dashboard.password are required when dashboard.port > 0"
+                "dashboard.user and dashboard.password are required when dashboard.port > 0 \
+                 (set dashboard.disableAuth = true to opt out for local dev/testing)"
             );
         }
         Ok(())
@@ -453,7 +449,6 @@ impl ServerConfig {
         if !self.transport.tls.trusted_ca_file.trim().is_empty() {
             self.transport.tls.force = true;
         }
-        // Fill in configurable-timeout defaults
         if self.udp_work_read_secs == 0 {
             self.udp_work_read_secs = 60;
         }
@@ -547,22 +542,18 @@ impl ServerConfig {
         self.https_gw_port != 0
     }
 
-    /// Effective UDP work-conn read deadline.
     pub fn udp_work_read_deadline(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.udp_work_read_secs.max(1))
     }
 
-    /// Effective work-conn wait timeout.
     pub fn work_conn_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.work_conn_timeout_secs.max(1))
     }
 
-    /// Effective control-channel heartbeat interval.
     pub fn ctrl_heartbeat_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.ctrl_heartbeat_interval_secs.max(1))
     }
 
-    /// Effective control-channel heartbeat timeout.
     pub fn ctrl_heartbeat_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.ctrl_heartbeat_timeout_secs.max(1))
     }

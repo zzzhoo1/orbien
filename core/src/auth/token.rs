@@ -40,6 +40,7 @@ pub fn verify_auth_digest(token: &str, auth_digest: &str, timestamp: i64) -> boo
 /// Verification with injectable clock and skew window (unit-testable).
 ///
 /// Security hardening over plain HMAC comparison:
+/// - rejects when token is empty (unconfigured server must deny all);
 /// - rejects non-positive timestamps;
 /// - rejects timestamps outside `max_skew_secs` of `now` (replay protection);
 /// - compares digests in constant time (timing side-channel protection).
@@ -50,8 +51,10 @@ pub fn verify_login_at(
     now: i64,
     max_skew_secs: i64,
 ) -> bool {
+    // Reject when no token is configured — an unconfigured server must not
+    // grant access to any client.
     if token.is_empty() {
-        return true;
+        return false;
     }
     if auth_digest.is_empty() {
         return false;
@@ -97,9 +100,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_token_still_allows() {
-        // Empty token: any privilege_key is accepted (no auth configured).
-        assert!(verify_login_at("", "whatever", 0, 0, 900));
+    fn empty_token_rejects() {
+        // Empty token: authentication must fail (no auth configured = deny all).
+        assert!(!verify_login_at(
+            "",
+            "whatever",
+            1_700_000_000,
+            1_700_000_000,
+            900
+        ));
     }
 
     #[test]

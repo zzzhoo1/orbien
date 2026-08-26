@@ -51,13 +51,10 @@ use webauthn_rs::prelude::Passkey;
 pub struct AuthState {
     /// token → session
     sessions: DashMap<String, Session>,
-    /// username → Vec<Passkey>  (private — access through methods only)
+    /// username → Vec<Passkey>
     passkeys: DashMap<String, Vec<Passkey>>,
-    /// pending registration states keyed by username
     reg_states: DashMap<String, PasskeyRegistration>,
-    /// pending authentication states keyed by a per-request token
     auth_states: DashMap<String, PasskeyAuthentication>,
-    /// failed login attempts keyed by client identity
     login_attempts: DashMap<String, (u32, Instant)>,
     pub webauthn: Option<Webauthn>,
 }
@@ -155,9 +152,6 @@ impl AuthState {
         }
     }
 
-    /// Update the counter for a just-authenticated credential and return the
-    /// username that owns it.  Returns `None` when the credential is not found
-    /// (should not happen in normal flow).
     pub fn apply_auth_result(
         &self,
         auth_result: &webauthn_rs::prelude::AuthenticationResult,
@@ -237,7 +231,7 @@ fn random_token() -> String {
 
 /// Checks for a valid session cookie **or** falls back to HTTP Basic Auth.
 /// The `/api/v1/auth/*` routes and `/healthz` are always public.
-#[allow(clippy::result_large_err)] // axum middleware requires the exact `Response` error type
+#[allow(clippy::result_large_err)]
 pub async fn auth_middleware(
     State(state): State<Arc<DashState>>,
     req: Request<Body>,
@@ -245,17 +239,22 @@ pub async fn auth_middleware(
 ) -> Result<Response, Response> {
     let path = req.uri().path();
 
-    // Always allow auth endpoints and healthz through
+    // Always allow auth endpoints and healthz through.
     if path.starts_with("/api/v1/auth/") || path == "/healthz" {
         return Ok(next.run(req).await);
     }
 
-    // Also allow static assets through (JS/CSS/fonts for the login page)
+    // Allow static assets through (JS/CSS/fonts for the login page).
     if !path.starts_with("/api/") {
         return Ok(next.run(req).await);
     }
 
-    // 1. Try session cookie
+    // Escape hatch: disableAuth = true (local dev / CI only).
+    if state.cfg.disable_auth {
+        return Ok(next.run(req).await);
+    }
+
+    // 1. Try session cookie.
     if let Some(auth) = &state.auth {
         if let Some(token) = extract_cookie(req.headers(), COOKIE_NAME) {
             if auth.validate_session(&token).is_some() {
@@ -264,15 +263,14 @@ pub async fn auth_middleware(
         }
     }
 
-    // 2. Fall back to Basic Auth (for backward compatibility)
-    if !needs_basic_auth(&state) {
-        return Ok(next.run(req).await);
-    }
-    if basic_auth_ok(&state, req.headers()) {
+    // 2. Fall back to Basic Auth (backward compatibility).
+    //    Only attempt if credentials are actually configured; if neither
+    //    user nor password is set and disableAuth is false, reject.
+    if needs_basic_auth(&state) && basic_auth_ok(&state, req.headers()) {
         return Ok(next.run(req).await);
     }
 
-    // 3. Reject
+    // 3. Reject.
     let mut res = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     res.headers_mut().insert(
         header::WWW_AUTHENTICATE,
