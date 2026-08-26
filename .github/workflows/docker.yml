@@ -29,14 +29,14 @@ jobs:
             -t orbien-client:ci \
             .
 
-      # ── Verify binaries exist inside images ────────────────────────────
+      # ── Verify binaries exist inside images ──────────────────────────────────
       - name: Verify server binary
         run: docker run --rm --entrypoint which orbien-server:ci orbien-server
 
       - name: Verify client binary
         run: docker run --rm --entrypoint which orbien-client:ci orbien
 
-      # ── Smoke test: TCP tunnel through Docker ────────────────────────────────────
+      # ── Smoke test: TCP tunnel through Docker ─────────────────────────────────
       - name: TCP tunnel smoke test
         shell: bash
         run: |
@@ -44,21 +44,21 @@ jobs:
 
           mkdir -p /tmp/orbien-ci
 
-          # Server config — use real orbien TOML schema
-          cat > /tmp/orbien-ci/srv.toml <<'EOF'
-listen = "0.0.0.0:9527"
-EOF
+          # Server config — use printf to avoid heredoc/YAML indentation conflict
+          printf '%s\n' \
+            'listen = "0.0.0.0:9527"' \
+            > /tmp/orbien-ci/srv.toml
 
-          # Client config — use real orbien TOML schema
-          cat > /tmp/orbien-ci/cli.toml <<'EOF'
-server = "127.0.0.1:9527"
-
-[[tunnels]]
-name       = "echo"
-protocol   = "tcp"
-service    = "127.0.0.1:18000"
-remotePort = 18001
-EOF
+          # Client config
+          printf '%s\n' \
+            'server = "127.0.0.1:9527"' \
+            '' \
+            '[[tunnels]]' \
+            'name       = "echo"' \
+            'protocol   = "tcp"' \
+            'service    = "127.0.0.1:18000"' \
+            'remotePort = 18001' \
+            > /tmp/orbien-ci/cli.toml
 
           cleanup() {
             set +e
@@ -68,8 +68,8 @@ EOF
           }
           trap cleanup EXIT
 
-          # Echo server on host (localPort 18000)
-          python3 -u - <<'PY' > /tmp/orbien-ci/echo.log 2>&1 &
+          # Echo server on host (port 18000)
+          python3 - > /tmp/orbien-ci/echo.log 2>&1 <<'PYEOF' &
           import socketserver
           class H(socketserver.BaseRequestHandler):
               def handle(self):
@@ -81,10 +81,10 @@ EOF
               allow_reuse_address = True
           with S(("127.0.0.1", 18000), H) as s:
               s.serve_forever()
-          PY
+          PYEOF
           ECHO_PID=$!
 
-          # Start server container (host network so client on host can reach it)
+          # Start server container (host network)
           docker run -d \
             --name orbien-server-ci \
             --network host \
@@ -100,7 +100,7 @@ EOF
           }
           echo "Server container ready"
 
-          # Start client container (host network so it reaches server + echo)
+          # Start client container (host network)
           docker run -d \
             --name orbien-client-ci \
             --network host \
