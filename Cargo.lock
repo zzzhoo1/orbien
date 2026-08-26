@@ -4275,7 +4275,7 @@ dependencies = [
 
 [[package]]
 name = "orbien-client"
-version = "3.2.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4298,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "orbien-core"
-version = "3.2.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4331,7 +4331,7 @@ dependencies = [
 
 [[package]]
 name = "orbien-desktop"
-version = "3.2.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -4349,7 +4349,7 @@ dependencies = [
 
 [[package]]
 name = "orbien-server"
-version = "3.2.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
