@@ -43,12 +43,13 @@ jobs:
           npm ci
           npm run build
 
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           key: ci-${{ matrix.os }}-v1
 
@@ -88,11 +89,12 @@ jobs:
           npm ci
           npm run build
 
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           key: ci-ubuntu-release-v1
 

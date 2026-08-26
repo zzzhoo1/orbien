@@ -97,8 +97,16 @@ pub fn load_pem_cert_key(
     cert_file: &str,
     key_file: &str,
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    // Prevent path traversal: reject paths containing '..' components.
+    let cert_path = Path::new(cert_file);
+    if cert_path
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        bail!("Invalid certFile path (path traversal detected): {}", cert_path.display());
+    }
     let mut cert_reader = BufReader::new(
-        File::open(Path::new(cert_file)).with_context(|| format!("open certFile {cert_file}"))?,
+        File::open(cert_path).with_context(|| format!("open certFile {cert_file}"))?,
     );
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
         .collect::<Result<Vec<_>, _>>()
@@ -109,8 +117,16 @@ pub fn load_pem_cert_key(
         bail!("no certificates in {cert_file}");
     }
 
+    // Prevent path traversal: reject paths containing '..' components.
+    let key_path = Path::new(key_file);
+    if key_path
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        bail!("Invalid keyFile path (path traversal detected): {}", key_path.display());
+    }
     let mut key_reader = BufReader::new(
-        File::open(Path::new(key_file)).with_context(|| format!("open keyFile {key_file}"))?,
+        File::open(key_path).with_context(|| format!("open keyFile {key_file}"))?,
     );
     let key = rustls_pemfile::private_key(&mut key_reader)
         .context("parse private key PEM")?
