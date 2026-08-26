@@ -20,7 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
-use rand::Rng;
+use rand::RngExt;
 use std::{
     net::IpAddr,
     sync::Arc,
@@ -217,7 +217,7 @@ impl AuthState {
 }
 
 fn random_token() -> String {
-    let bytes: [u8; 32] = rand::thread_rng().gen();
+    let bytes: [u8; 32] = rand::rng().random();
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {

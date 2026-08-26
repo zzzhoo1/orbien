@@ -19,7 +19,7 @@ use crate::service::Service;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use orbien_core::config::server::{DashboardConfig, ServerConfig};
+use orbien_core::config::{DashboardConfig, ServerConfig};
 use serde_json::Value;
 use std::sync::Arc;
 use tower::ServiceExt;
