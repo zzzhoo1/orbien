@@ -3,10 +3,13 @@ import {computed, ref, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import PaginationBar from '@/components/PaginationBar.vue'
 import TrafficIO from '@/components/TrafficIO.vue'
+import AppIcon from '@/components/AppIcon.vue'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
+import {useToast} from '@/composables/useToast'
 import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
+import {kickProxy} from '@/api'
 
 type ProtocolFilter = 'all' | 'tcp' | 'udp' | 'http' | 'https'
 
@@ -16,10 +19,12 @@ const store = useDashboardStore()
 const {t} = useLocale()
 const {isOnline, statusLabel} = usePresence()
 const router = useRouter()
+const {show: showToast} = useToast()
 
 const page = ref(1)
 const pageSize = ref(10)
 const protocol = ref<ProtocolFilter>('all')
+const deleting = ref<string | null>(null)
 
 const filtered = computed(() => {
   const list = store.tunnels
@@ -71,6 +76,22 @@ function onKeyOpen(evt: KeyboardEvent, name: string) {
   if (evt.key === 'Enter' || evt.key === ' ') {
     evt.preventDefault()
     openDetail(name)
+  }
+}
+
+async function onDelete(name: string, evt: Event) {
+  evt.stopPropagation()
+  if (deleting.value) return
+  deleting.value = name
+  try {
+    await kickProxy(name)
+    await store.refresh()
+    showToast('info', t('tunnels.deleteSuccess'))
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    showToast('error', msg || t('tunnels.deleteFailed'))
+  } finally {
+    deleting.value = null
   }
 }
 </script>
@@ -138,6 +159,16 @@ function onKeyOpen(evt: KeyboardEvent, name: string) {
         <span class="status-badge" :class="{ online: isOnline(tunnel.status) }">
           {{ statusLabel(tunnel.status) }}
         </span>
+        <button
+            type="button"
+            class="delete-btn"
+            :disabled="deleting === tunnel.name"
+            :title="t('tunnels.delete')"
+            :aria-label="t('tunnels.delete')"
+            @click="onDelete(tunnel.name, $event)"
+        >
+          <AppIcon name="trash"/>
+        </button>
       </div>
     </article>
 
@@ -351,6 +382,31 @@ function onKeyOpen(evt: KeyboardEvent, name: string) {
   color: var(--status-ok);
   background: var(--status-ok-soft);
   border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
+}
+
+.delete-btn {
+  box-sizing: border-box;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, transparent);
+  background: transparent;
+  color: var(--danger, #ef4444);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: border-color 0.15s ease;
+}
+
+.delete-btn:hover:not(:disabled) {
+  border-color: var(--danger, #ef4444);
+}
+
+.delete-btn:disabled {
+  opacity: 0.45;
+  cursor: wait;
 }
 
 @media (max-width: 720px) {
