@@ -4,6 +4,7 @@ import {useRoute, useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
 import TrafficIO from '@/components/TrafficIO.vue'
 import {fetchClient, fetchTunnels, kickClient} from '@/api'
 import {ApiError} from '@/api/errors'
@@ -233,9 +234,10 @@ onUnmounted(() => {
             >
               <AppIcon name="kick"/>
             </button>
-            <span class="status-badge" :class="{ online: isOnline(client.status) }">
-              {{ statusLabel(client.status) }}
-            </span>
+            <StatusBadge
+                :status="isOnline(client.status) ? 'online' : 'offline'"
+                :label="statusLabel(client.status)"
+            />
           </div>
         </div>
 
@@ -325,9 +327,10 @@ onUnmounted(() => {
 
             <div class="tunnel-side">
               <TrafficIO :traffic-in="p.todayTrafficIn" :traffic-out="p.todayTrafficOut"/>
-              <span class="status-badge" :class="{ online: isOnline(p.status) }">
-                {{ statusLabel(p.status) }}
-              </span>
+              <StatusBadge
+                  :status="isOnline(p.status) ? 'online' : 'offline'"
+                  :label="statusLabel(p.status)"
+              />
             </div>
           </article>
         </div>
@@ -759,26 +762,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 1.1rem;
   flex-shrink: 0;
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  min-width: 3.6rem;
-  justify-content: center;
-  padding: 0.28rem 0.75rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.78rem;
-  font-weight: 650;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
-}
-
-.status-badge.online {
-  color: var(--status-ok);
-  background: var(--status-ok-soft);
-  border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
 }
 
 .tunnels-panel :deep(.pagination-bar) {

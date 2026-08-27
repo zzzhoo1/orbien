@@ -3,6 +3,7 @@ import {computed, ref} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import SectionCard from '@/components/SectionCard.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
 import TrafficIO from '@/components/TrafficIO.vue'
 import type {TrafficRange} from '@/api'
@@ -45,9 +46,11 @@ function openClient(sessionId: string) {
             <div class="title-row">
               <h2 class="name">{{ tunnel?.name || name }}</h2>
               <span class="type-badge">{{ (tunnel?.type || '—').toUpperCase() }}</span>
-              <span class="status-badge" :class="{ online: isOnline(tunnel?.status) }">
-                {{ statusLabel(tunnel?.status) }}
-              </span>
+              <StatusBadge
+                  size="sm"
+                  :status="isOnline(tunnel?.status) ? 'online' : 'offline'"
+                  :label="statusLabel(tunnel?.status)"
+              />
             </div>
             <div class="meta">
               <button
@@ -232,8 +235,7 @@ function openClient(sessionId: string) {
   line-height: 1.2;
 }
 
-.type-badge,
-.status-badge {
+.type-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -243,24 +245,9 @@ function openClient(sessionId: string) {
   font-size: 0.72rem;
   font-weight: 650;
   line-height: 1.2;
-}
-
-.type-badge {
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
-}
-
-.status-badge {
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
-}
-
-.status-badge.online {
-  color: var(--status-ok);
-  background: var(--status-ok-soft);
-  border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
 }
 
 .meta {

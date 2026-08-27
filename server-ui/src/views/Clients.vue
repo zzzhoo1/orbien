@@ -4,6 +4,7 @@ import {useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
 import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
@@ -174,9 +175,10 @@ async function onKick(sessionId: string, evt: Event) {
         >
           <AppIcon name="kick"/>
         </button>
-        <span class="status-badge" :class="{ online: isOnline(c.status) }">
-          {{ statusLabel(c.status) }}
-        </span>
+        <StatusBadge
+            :status="isOnline(c.status) ? 'online' : 'offline'"
+            :label="statusLabel(c.status)"
+        />
       </div>
     </article>
 
@@ -382,12 +384,6 @@ async function onKick(sessionId: string, evt: Event) {
   border: 1px solid color-mix(in srgb, var(--muted) 14%, transparent);
 }
 
-.tag.version {
-  color: var(--accent-text);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
 .tag.soft {
   font-weight: 550;
 }
@@ -444,23 +440,6 @@ async function onKick(sessionId: string, evt: Event) {
   flex-shrink: 0;
 }
 
-.status-badge {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 3.8rem;
-  min-height: 1.85rem;
-  padding: 0.28rem 0.75rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.78rem;
-  font-weight: 650;
-  line-height: 1.25;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
-}
-
 .kick-btn {
   box-sizing: border-box;
   width: 1.85rem;
@@ -484,12 +463,6 @@ async function onKick(sessionId: string, evt: Event) {
 .kick-btn:disabled {
   opacity: 0.45;
   cursor: wait;
-}
-
-.status-badge.online {
-  color: var(--status-ok);
-  background: var(--status-ok-soft);
-  border-color: color-mix(in srgb, var(--status-ok) 22%, transparent);
 }
 
 @media (max-width: 720px) {
