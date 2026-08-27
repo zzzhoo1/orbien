@@ -13,7 +13,6 @@ const state = reactive({
     clients: [] as ClientInfo[],
     tunnels: [] as TunnelInfo[],
     tokens: [] as TokenMetricItem[],
-    loading: false,
     error: null as DashboardError,
 })
 
@@ -33,7 +32,6 @@ export function useDashboardStore() {
             state.tokens = tokenMetrics.tokens ?? []
         } catch (e) {
             if (isApiError(e)) {
-                // 401 — session expired; force re-login
                 if (e.code === 'unauthorized') {
                     const auth = useAuthStore()
                     auth.setAuthenticated(false)
@@ -57,14 +55,8 @@ export function useDashboardStore() {
         get tunnels() {
             return state.tunnels
         },
-        get proxies() {
-            return state.tunnels
-        },
         get tokens() {
             return state.tokens
-        },
-        get loading() {
-            return state.loading
         },
         get error() {
             return state.error
