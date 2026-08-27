@@ -122,6 +122,7 @@ const zhCN: MessageSchema = {
         agoDays: '{n} 天前',
         kick: '强制下线',
         kickConfirm: '确认强制下线？',
+        kickSuccess: '客户端已强制下线',
         kickFailed: '强制下线失败，请重试',
         back: '返回客户端列表',
         detail: '客户端详情',

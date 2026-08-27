@@ -10,6 +10,7 @@ import {ApiError} from '@/api/errors'
 import type {ClientInfo, TunnelInfo} from '@/types/api'
 import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
+import {useToast} from '@/composables/useToast'
 import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
 import searchIcon from '@/assets/icon/search.svg?raw'
 
@@ -17,6 +18,7 @@ const route = useRoute()
 const router = useRouter()
 const {t} = useLocale()
 const {isOnline, statusLabel, formatSeen} = usePresence()
+const {show: showToast} = useToast()
 
 const sessionId = computed(() => String(route.params.sessionId || ''))
 
@@ -70,7 +72,6 @@ async function loadClient() {
       notFound.value = true
       return false
     }
-    // Soft-fail refresh: keep previous client if we already have one.
     if (!client.value) notFound.value = true
     return false
   } finally {
@@ -124,9 +125,10 @@ async function onKick() {
   try {
     await kickClient(id)
     await refreshAll()
+    showToast('info', t('clients.kickSuccess'))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    window.alert(t('clients.kickFailed', {msg}))
+    showToast('error', t('clients.kickFailed', {msg}))
   } finally {
     kicking.value = false
   }

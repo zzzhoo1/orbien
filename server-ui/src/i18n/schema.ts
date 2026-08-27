@@ -120,6 +120,7 @@ export interface MessageSchema {
         agoDays: string
         kick: string
         kickConfirm: string
+        kickSuccess: string
         kickFailed: string
         back: string
         detail: string

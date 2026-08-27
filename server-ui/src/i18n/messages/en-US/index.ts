@@ -122,6 +122,7 @@ const enUS: MessageSchema = {
         agoDays: '{n}d ago',
         kick: 'Force kick',
         kickConfirm: 'Confirm kick?',
+        kickSuccess: 'Client was kicked',
         kickFailed: 'Kick failed, please try again',
         back: 'Back to clients',
         detail: 'Client details',
