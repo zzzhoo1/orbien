@@ -36,9 +36,9 @@ const displayLabel = computed(() => props.label ?? '')
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
+  max-width: 100%;
   border-radius: var(--radius-pill);
   font-weight: 650;
-  white-space: nowrap;
   line-height: 1.25;
 }
 
@@ -53,6 +53,13 @@ const displayLabel = computed(() => props.label ?? '')
   padding: 0.18rem 0.65rem;
   min-height: 1.55rem;
   font-size: 0.72rem;
+}
+
+.status-badge__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-badge__dot {
