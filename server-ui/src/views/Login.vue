@@ -4,12 +4,14 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLocale } from '@/composables/useLocale'
 import { useWebAuthn } from '@/composables/useWebAuthn'
+import { useToast } from '@/composables/useToast'
 import logoUrl from '@/assets/images/logo.png'
 
 const { t } = useLocale()
 const router = useRouter()
 const auth = useAuthStore()
 const { supported, registering, authenticating, register, authenticate } = useWebAuthn()
+const { show: showToast } = useToast()
 
 const username = ref('')
 const password = ref('')
@@ -52,6 +54,7 @@ async function loginPassword() {
   error.value = ''
   try {
     await auth.loginWithPassword(username.value, password.value)
+    showToast('info', t('login.submit'))
     router.push('/')
   } catch (e: unknown) {
     error.value = toUserMessage(e, 'login.errorFailed')
@@ -66,6 +69,7 @@ async function loginFingerprint() {
     const ok = await authenticate()
     if (ok) {
       auth.setAuthenticated(true)
+      showToast('info', t('login.scanFingerprint'))
       router.push('/')
     } else {
       error.value = t('login.errorWebAuthn')
@@ -85,6 +89,7 @@ async function registerFingerprint() {
     await register(username.value)
     error.value = ''
     mode.value = 'webauthn'
+    showToast('info', t('login.registerFingerprint'))
   } catch (e: unknown) {
     error.value = toUserMessage(e, 'login.errorRegister')
   }
@@ -197,7 +202,7 @@ async function registerFingerprint() {
 </template>
 
 <style scoped>
-.login-bg {
+login-bg {
   min-height: 100dvh;
   display: flex;
   align-items: center;
