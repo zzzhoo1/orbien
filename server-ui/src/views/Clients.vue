@@ -8,15 +8,8 @@ import {kickClient} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
+import {useToast} from '@/composables/useToast'
 import signalIcon from '@/assets/icon/signal.svg?raw'
-
-// 全局 toast：由 DefaultLayout 提供 window.__orbienToast
-// 这里声明类型以便 TypeScript 识别。
-declare global {
-  interface Window {
-    __orbienToast?: (type: 'info' | 'error', text: string, duration?: number) => void
-  }
-}
 
 type StatusFilter = 'all' | 'online' | 'offline'
 
@@ -26,6 +19,7 @@ const store = useDashboardStore()
 const router = useRouter()
 const {t} = useLocale()
 const {isOnline, statusLabel, formatSeen} = usePresence()
+const {show: showToast} = useToast()
 
 const page = ref(1)
 const pageSize = ref(10)
@@ -94,10 +88,10 @@ async function onKick(sessionId: string, evt: Event) {
   try {
     await kickClient(sessionId)
     await store.refresh()
-    window.__orbienToast?.('info', t('clients.kickSuccess'))
+    showToast('info', t('clients.kickSuccess'))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    window.__orbienToast?.('error', t('clients.kickFailed', {msg}))
+    showToast('error', t('clients.kickFailed', {msg}))
   } finally {
     kicking.value = null
   }
