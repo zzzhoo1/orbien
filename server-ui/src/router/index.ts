@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Monitor from '@/views/Monitor.vue'
 import Tunnels from '@/views/Tunnels.vue'
@@ -7,7 +7,7 @@ import Clients from '@/views/Clients.vue'
 import ClientDetail from '@/views/ClientDetail.vue'
 import Login from '@/views/Login.vue'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
   { path: '/', name: 'monitor', component: Monitor },
   { path: '/tunnels', name: 'tunnels', component: Tunnels },
