@@ -39,6 +39,10 @@ export interface SystemStatus {
     totalTrafficOut: number
 }
 
+/** Known values: 'online' | 'offline'. The union with `string & {}` keeps
+ *  the type open for future server additions while surfacing completions. */
+export type PresenceStatus = 'online' | 'offline' | (string & {})
+
 export interface ClientInfo {
     sessionId: string
     user: string
@@ -50,7 +54,7 @@ export interface ClientInfo {
     tunnelCount: number
     activeConnections: number
     connectedSecs: number
-    status: string
+    status: PresenceStatus
     totalTrafficIn?: number
     totalTrafficOut?: number
 }
@@ -61,7 +65,7 @@ export interface TunnelInfo {
     remoteAddr: string
     localAddr: string
     sessionId: string
-    status: string
+    status: PresenceStatus
     todayTrafficIn: number
     todayTrafficOut: number
     activeConnections: number
