@@ -145,6 +145,9 @@ const enUS: MessageSchema = {
         back: 'Back to tunnels',
         lastStarted: 'Last Started {time}',
         openClient: 'Open client details',
+        delete: 'Delete tunnel',
+        deleteSuccess: 'Tunnel {name} deleted',
+        deleteFailed: 'Failed to delete tunnel {name}',
     },
     traffic: {
         in: 'Inbound',

@@ -86,10 +86,10 @@ async function onDelete(name: string, evt: Event) {
   try {
     await kickProxy(name)
     await store.refresh()
-    showToast('info', `Tunnel ${name} deleted`)
+    showToast('info', t('tunnels.deleteSuccess', {name}))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    showToast('error', msg || `Failed to delete tunnel ${name}`)
+    showToast('error', msg || t('tunnels.deleteFailed', {name}))
   } finally {
     deleting.value = null
   }
@@ -163,8 +163,8 @@ async function onDelete(name: string, evt: Event) {
             type="button"
             class="delete-btn"
             :disabled="deleting === tunnel.name"
-            aria-label="Delete tunnel"
-            title="Delete tunnel"
+            :title="t('tunnels.delete')"
+            :aria-label="t('tunnels.delete')"
             @click="onDelete(tunnel.name, $event)"
         >
           <AppIcon name="kick"/>

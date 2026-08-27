@@ -143,6 +143,9 @@ export interface MessageSchema {
         back: string
         lastStarted: string
         openClient: string
+        delete: string
+        deleteSuccess: string
+        deleteFailed: string
     }
     traffic: {
         in: string
