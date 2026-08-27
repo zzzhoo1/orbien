@@ -6,6 +6,7 @@ export {
     fetchClient,
     kickClient,
     fetchTunnels,
+    kickProxy,
     fetchTunnelTraffic,
     fetchSystemTraffic,
     fetchSystemTokens,

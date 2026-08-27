@@ -9,7 +9,7 @@ import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
 import {useToast} from '@/composables/useToast'
 import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
-import {kickProxy} from '@/api/client'
+import {kickProxy} from '@/api'
 
 type ProtocolFilter = 'all' | 'tcp' | 'udp' | 'http' | 'https'
 
