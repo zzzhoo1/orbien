@@ -9,7 +9,7 @@ import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
 import {useToast} from '@/composables/useToast'
 import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
-import {kickProxy} from '@/api'
+import {kickProxy} from '@/api/client'
 
 type ProtocolFilter = 'all' | 'tcp' | 'udp' | 'http' | 'https'
 
@@ -86,10 +86,10 @@ async function onDelete(name: string, evt: Event) {
   try {
     await kickProxy(name)
     await store.refresh()
-    showToast('info', t('tunnels.deleteSuccess'))
+    showToast('info', `Tunnel ${name} deleted`)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    showToast('error', msg || t('tunnels.deleteFailed'))
+    showToast('error', msg || `Failed to delete tunnel ${name}`)
   } finally {
     deleting.value = null
   }
@@ -163,11 +163,11 @@ async function onDelete(name: string, evt: Event) {
             type="button"
             class="delete-btn"
             :disabled="deleting === tunnel.name"
-            :title="t('tunnels.delete')"
-            :aria-label="t('tunnels.delete')"
+            aria-label="Delete tunnel"
+            title="Delete tunnel"
             @click="onDelete(tunnel.name, $event)"
         >
-          <AppIcon name="trash"/>
+          <AppIcon name="kick"/>
         </button>
       </div>
     </article>
