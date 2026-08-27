@@ -7,10 +7,12 @@ import InlineAlert from '@/components/InlineAlert.vue'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 import {useSidebar} from '@/composables/useSidebar'
+import {useToast} from '@/composables/useToast'
 
 const store = useDashboardStore()
 const {t} = useLocale()
 const {desktopCollapsed, isMobile} = useSidebar()
+const {message} = useToast()
 
 const dismissed = ref(false)
 
@@ -26,26 +28,6 @@ const errorText = computed(() => {
   return t(`errors.${err.code}`)
 })
 
-// Global toast/message bus
-const toast = ref<{ id: number; type: 'info' | 'error'; text: string } | null>(null)
-let toastTimer: number | null = null
-let nextToastId = 1
-
-function showToast(type: 'info' | 'error', text: string, duration = 3000) {
-  toast.value = {id: nextToastId++, type, text}
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer)
-  }
-  toastTimer = window.setTimeout(() => {
-    toast.value = null
-    toastTimer = null
-  }, duration)
-}
-
-// Expose on window for now so views can call window.__orbienToast?.(...)
-// Later this can be refactored into a dedicated composable/store.
-window.__orbienToast = showToast
-
 // Re-show the alert whenever a new error arrives
 watch(() => store.error, (e) => { if (e) dismissed.value = false })
 
@@ -58,10 +40,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer)
-    toastTimer = null
-  }
 })
 </script>
 
@@ -86,13 +64,13 @@ onUnmounted(() => {
       />
 
       <div
-          v-if="toast"
+          v-if="message"
           class="global-toast"
-          :class="toast.type"
+          :class="message.type"
           role="status"
           aria-live="polite"
       >
-        {{ toast.text }}
+        {{ message.text }}
       </div>
 
       <RouterView/>
