@@ -28,7 +28,27 @@ const FALLBACK_COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#818cf8', 
 
 const cfg = computed(() => store.info?.config)
 const status = computed(() => store.info?.status)
-const tokenMetrics = computed(() => store.tokens ?? [])
+const tokenMetricsRaw = computed(() => store.tokens ?? [])
+
+const tokenSortKey = ref<'activeConns' | 'token'>('activeConns')
+const tokenSortDir = ref<'desc' | 'asc'>('desc')
+
+const tokenMetrics = computed(() => {
+  const list = [...tokenMetricsRaw.value]
+  const key = tokenSortKey.value
+  const dir = tokenSortDir.value
+  list.sort((a, b) => {
+    if (key === 'activeConns') {
+      const av = a.activeConns ?? 0
+      const bv = b.activeConns ?? 0
+      return dir === 'desc' ? bv - av : av - bv
+    }
+    const at = a.token || ''
+    const bt = b.token || ''
+    return dir === 'desc' ? bt.localeCompare(at) : at.localeCompare(bt)
+  })
+  return list
+})
 
 const trafficIn = computed(() => status.value?.totalTrafficIn ?? 0)
 const trafficOut = computed(() => status.value?.totalTrafficOut ?? 0)
@@ -231,13 +251,28 @@ const configFields = computed<ConfigField[]>(() => {
 
       <SectionCard class="token-panel" :title="t('monitor.tokenConns')">
         <template #extra>
-          <span class="badge">{{ tokenMetrics.length }}</span>
+          <span class="badge">{{ tokenMetricsRaw.length }}</span>
         </template>
-        <div v-if="tokenMetrics.length" class="token-table-wrap">
+        <div v-if="tokenMetricsRaw.length" class="token-table-wrap">
           <div class="token-table-head token-grid">
             <span>{{ t('monitor.token') }}</span>
-            <span>{{ t('monitor.activeConns') }}</span>
-            <span>{{ t('monitor.allowedTunnels') }}</span>
+            <span class="sort-cell">
+              {{ t('monitor.activeConns') }}
+              <button
+                  type="button"
+                  class="sort-btn"
+                  :aria-label="t('monitor.sortByConns')"
+                  @click="() => {
+                    tokenSortKey = 'activeConns'
+                    tokenSortDir = tokenSortDir === 'desc' ? 'asc' : 'desc'
+                  }"
+              >
+                <span class="sort-icon" :class="tokenSortKey === 'activeConns' ? tokenSortDir : ''">⇅</span>
+              </button>
+            </span>
+            <span class="sort-cell">
+              {{ t('monitor.allowedTunnels') }}
+            </span>
             <span>{{ t('monitor.allowedProtocols') }}</span>
             <span>{{ t('monitor.allowedRemotePorts') }}</span>
           </div>
@@ -393,6 +428,28 @@ const configFields = computed<ConfigField[]>(() => {
 .token-row:last-child { border-bottom: none; }
 .token-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 600; color: var(--text); }
 .token-count { display: inline-flex; align-items: center; justify-content: center; min-width: 2rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.sort-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.sort-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.sort-icon {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.sort-icon.asc { transform: rotate(180deg); }
+.sort-icon.desc { transform: rotate(0deg); }
 
 /* Responsive */
 @media (max-width: 1200px) {
