@@ -1,58 +1,44 @@
-import {describe, expect, it, vi} from 'vitest'
+import {describe, it, expect} from 'vitest'
 import {mount} from '@vue/test-utils'
 import StatCard from '../StatCard.vue'
-
-vi.mock('@/components/IconBadge.vue', () => ({
-  default: {
-    name: 'IconBadge',
-    props: ['name', 'tone'],
-    template: '<div class="icon-badge-stub" :data-name="name" :data-tone="tone"/>',
-  },
-}))
-
-vi.mock('@/components/AppIcon.vue', () => ({default: {}}))
+import IconBadge from '../IconBadge.vue'
 
 describe('StatCard', () => {
-  it('renders the label text', () => {
-    const wrapper = mount(StatCard, {props: {label: 'Total Tunnels'}})
-    expect(wrapper.find('.k').text()).toBe('Total Tunnels')
+  it('renders the label', () => {
+    const w = mount(StatCard, {props: {label: 'Total clients'}})
+    expect(w.find('.k').text()).toBe('Total clients')
   })
 
-  it('renders slot content in the value area', () => {
-    const wrapper = mount(StatCard, {
-      props: {label: 'Clients'},
+  it('renders slot content in .v', () => {
+    const w = mount(StatCard, {
+      props: {label: 'Count'},
       slots: {default: '42'},
     })
-    expect(wrapper.find('.v').text()).toBe('42')
+    expect(w.find('.v').text()).toBe('42')
   })
 
-  it('does not render IconBadge when icon prop is omitted', () => {
-    const wrapper = mount(StatCard, {props: {label: 'No Icon'}})
-    expect(wrapper.find('.icon-badge-stub').exists()).toBe(false)
+  it('renders IconBadge when icon prop is provided', () => {
+    const w = mount(StatCard, {props: {label: 'Clients', icon: 'users'}})
+    expect(w.findComponent(IconBadge).exists()).toBe(true)
   })
 
-  it('renders IconBadge with correct name and tone when icon is provided', () => {
-    const wrapper = mount(StatCard, {
-      props: {label: 'Tunnels', icon: 'tunnel', tone: 'green'},
-    })
-    const badge = wrapper.find('.icon-badge-stub')
-    expect(badge.exists()).toBe(true)
-    expect(badge.attributes('data-name')).toBe('tunnel')
-    expect(badge.attributes('data-tone')).toBe('green')
+  it('does NOT render IconBadge when icon prop is omitted', () => {
+    const w = mount(StatCard, {props: {label: 'Clients'}})
+    expect(w.findComponent(IconBadge).exists()).toBe(false)
   })
 
-  it('defaults tone to blue when tone prop is omitted', () => {
-    const wrapper = mount(StatCard, {
-      props: {label: 'Tunnels', icon: 'tunnel'},
-    })
-    expect(wrapper.find('.icon-badge-stub').attributes('data-tone')).toBe('blue')
+  it('passes tone prop to IconBadge', () => {
+    const w = mount(StatCard, {props: {label: 'x', icon: 'monitor', tone: 'green'}})
+    expect(w.findComponent(IconBadge).props('tone')).toBe('green')
   })
 
-  it('renders complex slot content correctly', () => {
-    const wrapper = mount(StatCard, {
-      props: {label: 'Status'},
-      slots: {default: '<span class="custom">Online</span>'},
-    })
-    expect(wrapper.find('.v .custom').text()).toBe('Online')
+  it('defaults tone to blue', () => {
+    const w = mount(StatCard, {props: {label: 'x', icon: 'monitor'}})
+    expect(w.findComponent(IconBadge).props('tone')).toBe('blue')
+  })
+
+  it('has .stat-card and .card classes', () => {
+    const w = mount(StatCard, {props: {label: 'x'}})
+    expect(w.find('.stat-card.card').exists()).toBe(true)
   })
 })

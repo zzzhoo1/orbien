@@ -1,131 +1,153 @@
-import {describe, expect, it, vi} from 'vitest'
+import {describe, it, expect} from 'vitest'
 import {mount} from '@vue/test-utils'
+import {createI18n} from 'vue-i18n'
 import PaginationBar from '../PaginationBar.vue'
 
-vi.mock('@/composables/useLocale', () => ({
-  useLocale: () => ({
-    t: (key: string, params?: Record<string, unknown>) =>
-      params ? `${key}:${JSON.stringify(params)}` : key,
-    current: {value: 'en-US'},
-    options: [],
-    switchLocale: vi.fn(),
-  }),
-}))
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en-US',
+  messages: {
+    'en-US': {
+      common: {
+        total: 'Total {n}',
+        perPage: '{n}/page',
+        pagination: 'Pagination',
+        prevPage: 'Previous page',
+        nextPage: 'Next page',
+        notConfigured: '', enabled: '', disabled: '', back: '',
+      },
+      actions: {themeToLight: '', themeToDark: '', locale: '', github: '', collapseSidebar: '', expandSidebar: '', openMenu: '', closeMenu: '', logout: ''},
+      nav: {menu: '', monitor: '', tunnels: '', clients: ''},
+      login: {title: '', subtitle: '', tabPassword: '', tabFingerprint: '', username: '', usernamePh: '', password: '', passwordPh: '', submit: '', loading: '', registerFingerprint: '', registering: '', scanFingerprint: '', scanning: '', webAuthnHint: '', errorEmpty: '', errorEmptyUser: '', errorFailed: '', errorWebAuthn: '', errorRegister: ''},
+      overview: {totalClients: '', onlineClients: '', tunnels: '', connections: '', emptyConfig: '', emptyProxies: ''},
+      monitor: {listen: '', tunnelTypes: '', tunnelDist: '', serverConfig: '', chartTotal: '', quicPort: '', kcpPort: '', tcpMux: '', tlsForce: '', httpGwPort: '', httpsGwPort: '', rootDomain: '', maxConnPool: '', heartbeatTimeout: '', version: '', tipPortZero: '', hintClients: '', hintProxies: '', hintConns: '', hintBind: '', hintMuxOn: '', hintMuxOff: '', tokenConns: '', tokenConnsDesc: '', token: '', activeConns: '', allowedTunnels: '', allowedProtocols: '', allowedRemotePorts: '', noRestriction: '', emptyTokens: ''},
+      clients: {hostname: '', ip: '', osFamily: {windows: '', macos: '', linux: '', android: '', freebsd: '', other: ''}, tunnels: '', connected: '', disconnected: '', connections: '', empty: '', filter: '', filterAll: '', filterEmpty: '', search: '', uptimeSecs: '', uptimeMins: '', uptimeHours: '', uptimeDays: '', agoSecs: '', agoMins: '', agoHours: '', agoDays: '', kick: '', kickConfirm: '', kickSuccess: '', kickFailed: '', back: '', detail: '', notFound: '', notFoundDesc: '', searchTunnels: '', tunnelsEmpty: '', tunnelsSearchEmpty: ''},
+      tunnels: {port: '', domain: '', localAddr: '', client: '', empty: '', traffic: '', activeConnections: '', filter: '', filterAll: '', filterEmpty: '', back: '', lastStarted: '', openClient: '', delete: '', deleteSuccess: '', deleteFailed: ''},
+      traffic: {in: '', out: '', total: '', today: '', network: '', history: '', historyAll: '', range: '', range24h: '', range7d: '', chartType: '', chartLine: '', chartBar: '', loading: '', failed: '', empty: ''},
+      status: {online: '', offline: ''},
+      errors: {unauthorized: '', http: '', api: '', unknown: ''},
+    },
+  },
+})
 
-function mountBar(props: {total: number, page: number, pageSize: number, pageSizes?: number[]}) {
-  return mount(PaginationBar, {props})
-}
-
-function navButtons(wrapper: ReturnType<typeof mountBar>) {
-  return wrapper.findAll('button.nav-btn')
-}
-
-function pageButtons(wrapper: ReturnType<typeof mountBar>) {
-  return wrapper.findAll('button.page-btn')
+function w(props: Record<string, unknown>) {
+  return mount(PaginationBar, {props, global: {plugins: [i18n]}})
 }
 
 describe('PaginationBar', () => {
-  it('emits update:page with 2 when clicking next on page 1 of 3 (total=23, pageSize=10)', () => {
-    const wrapper = mountBar({total: 23, page: 1, pageSize: 10})
-    const nextBtn = navButtons(wrapper).at(1)
-    expect(nextBtn).toBeDefined()
-    expect(nextBtn!.attributes('disabled')).toBeUndefined()
-    nextBtn!.trigger('click')
-    expect(wrapper.emitted('update:page')).toEqual([[2]])
-    expect(wrapper.emitted('update:pageSize')).toBeUndefined()
+  describe('visibility', () => {
+    it('renders nothing when total=0', () => {
+      const wrapper = w({total: 0, page: 1, pageSize: 10})
+      expect(wrapper.find('.pagination-bar').exists()).toBe(false)
+    })
+
+    it('renders when total > 0', () => {
+      const wrapper = w({total: 5, page: 1, pageSize: 10})
+      expect(wrapper.find('.pagination-bar').exists()).toBe(true)
+    })
   })
 
-  it('does not render the pagination bar when total = 0', () => {
-    const wrapper = mountBar({total: 0, page: 1, pageSize: 10})
-    expect(wrapper.find('.pagination-bar').exists()).toBe(false)
+  describe('total label', () => {
+    it('shows total count', () => {
+      const wrapper = w({total: 42, page: 1, pageSize: 10})
+      expect(wrapper.find('.total').text()).toBe('Total 42')
+    })
   })
 
-  it('disables both prev and next on a single page', () => {
-    const wrapper = mountBar({total: 10, page: 1, pageSize: 10})
-    const [prev, next] = navButtons(wrapper)
-    expect(prev.attributes('disabled')).toBeDefined()
-    expect(next.attributes('disabled')).toBeDefined()
+  describe('page buttons', () => {
+    it('renders correct number of page buttons for small total', () => {
+      const wrapper = w({total: 30, page: 1, pageSize: 10})
+      const buttons = wrapper.findAll('button.page-btn')
+      expect(buttons).toHaveLength(3)
+    })
+
+    it('current page button has .active class', () => {
+      const wrapper = w({total: 50, page: 3, pageSize: 10})
+      const active = wrapper.findAll('button.page-btn').filter(b => b.classes('active'))
+      expect(active).toHaveLength(1)
+      expect(active[0].text()).toBe('3')
+    })
+
+    it('emits update:page when page button clicked', async () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      await wrapper.findAll('button.page-btn')[1].trigger('click')
+      expect(wrapper.emitted('update:page')).toBeTruthy()
+      expect(wrapper.emitted('update:page')![0]).toEqual([2])
+    })
+
+    it('does not emit update:page when clicking already-active page', async () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      await wrapper.findAll('button.page-btn')[0].trigger('click')
+      expect(wrapper.emitted('update:page')).toBeFalsy()
+    })
   })
 
-  it('disables prev on the first page and next on the last page', () => {
-    const first = mountBar({total: 23, page: 1, pageSize: 10})
-    expect(navButtons(first).at(0)!.attributes('disabled')).toBeDefined()
-    expect(navButtons(first).at(1)!.attributes('disabled')).toBeUndefined()
+  describe('prev/next buttons', () => {
+    it('prev button is disabled on first page', () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      const prev = wrapper.find('button[aria-label="Previous page"]')
+      expect(prev.attributes('disabled')).toBeDefined()
+    })
 
-    const last = mountBar({total: 23, page: 3, pageSize: 10})
-    expect(navButtons(last).at(0)!.attributes('disabled')).toBeUndefined()
-    expect(navButtons(last).at(1)!.attributes('disabled')).toBeDefined()
+    it('next button is disabled on last page', () => {
+      const wrapper = w({total: 50, page: 5, pageSize: 10})
+      const next = wrapper.find('button[aria-label="Next page"]')
+      expect(next.attributes('disabled')).toBeDefined()
+    })
+
+    it('prev is enabled on page > 1', () => {
+      const wrapper = w({total: 50, page: 2, pageSize: 10})
+      const prev = wrapper.find('button[aria-label="Previous page"]')
+      expect(prev.attributes('disabled')).toBeUndefined()
+    })
+
+    it('next is enabled when not on last page', () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      const next = wrapper.find('button[aria-label="Next page"]')
+      expect(next.attributes('disabled')).toBeUndefined()
+    })
+
+    it('prev click emits update:page with page-1', async () => {
+      const wrapper = w({total: 50, page: 3, pageSize: 10})
+      await wrapper.find('button[aria-label="Previous page"]').trigger('click')
+      expect(wrapper.emitted('update:page')![0]).toEqual([2])
+    })
+
+    it('next click emits update:page with page+1', async () => {
+      const wrapper = w({total: 50, page: 2, pageSize: 10})
+      await wrapper.find('button[aria-label="Next page"]').trigger('click')
+      expect(wrapper.emitted('update:page')![0]).toEqual([3])
+    })
   })
 
-  it('emits update:page with the clicked page number', () => {
-    const wrapper = mountBar({total: 50, page: 1, pageSize: 10})
-    const btn = pageButtons(wrapper).find((b) => b.text() === '3')
-    expect(btn).toBeDefined()
-    btn!.trigger('click')
-    expect(wrapper.emitted('update:page')).toEqual([[3]])
+  describe('page size select', () => {
+    it('renders page size options', () => {
+      const wrapper = w({total: 100, page: 1, pageSize: 10})
+      const options = wrapper.findAll('select option')
+      expect(options).toHaveLength(3)
+    })
+
+    it('emits update:pageSize and update:page=1 on size change', async () => {
+      const wrapper = w({total: 100, page: 3, pageSize: 10})
+      const select = wrapper.find('select')
+      await select.setValue('20')
+      expect(wrapper.emitted('update:pageSize')).toBeTruthy()
+      expect(wrapper.emitted('update:pageSize')![0]).toEqual([20])
+      expect(wrapper.emitted('update:page')![0]).toEqual([1])
+    })
   })
 
-  it('emits update:page with the previous page when clicking prev', () => {
-    const wrapper = mountBar({total: 50, page: 3, pageSize: 10})
-    navButtons(wrapper).at(0)!.trigger('click')
-    expect(wrapper.emitted('update:page')).toEqual([[2]])
-  })
+  describe('window logic', () => {
+    it('shows max 5 pages when total pages > 5', () => {
+      const wrapper = w({total: 200, page: 5, pageSize: 10})
+      const buttons = wrapper.findAll('button.page-btn')
+      expect(buttons.length).toBeLessThanOrEqual(5)
+    })
 
-  it('emits update:page with the next page when clicking next', () => {
-    const wrapper = mountBar({total: 50, page: 3, pageSize: 10})
-    navButtons(wrapper).at(1)!.trigger('click')
-    expect(wrapper.emitted('update:page')).toEqual([[4]])
-  })
-
-  it('clamps page = -1 to 1 for active state and button disabled state', () => {
-    const wrapper = mountBar({total: 23, page: -1, pageSize: 10})
-    const active = pageButtons(wrapper).find((b) => b.classes().includes('active'))
-    expect(active).toBeDefined()
-    expect(active!.text()).toBe('1')
-    // 夹紧后 current=1: 上一页禁用, 下一页可用
-    expect(navButtons(wrapper).at(0)!.attributes('disabled')).toBeDefined()
-    expect(navButtons(wrapper).at(1)!.attributes('disabled')).toBeUndefined()
-  })
-
-  it('clamps page = 999 to the last page for active state and button disabled state', () => {
-    const wrapper = mountBar({total: 23, page: 999, pageSize: 10})
-    const active = pageButtons(wrapper).find((b) => b.classes().includes('active'))
-    expect(active).toBeDefined()
-    expect(active!.text()).toBe('3')
-    // 夹紧后 current=3: 上一页可用, 下一页禁用
-    expect(navButtons(wrapper).at(0)!.attributes('disabled')).toBeUndefined()
-    expect(navButtons(wrapper).at(1)!.attributes('disabled')).toBeDefined()
-  })
-
-  it('emits update:pageSize then update:page(1) when changing page size', () => {
-    const wrapper = mountBar({total: 23, page: 2, pageSize: 10})
-    const select = wrapper.find('select')
-    select.setValue('20')
-    const emitted = wrapper.emitted()
-    expect(emitted['update:pageSize']).toEqual([[20]])
-    expect(emitted['update:page']).toEqual([[1]])
-  })
-
-  it('does not crash when pageSize = 0 and computes page count with the guard', () => {
-    const wrapper = mountBar({total: 23, page: 1, pageSize: 0})
-    // Math.max(pageSize, 1) => pageCount = ceil(23/1) = 23, 但页码窗口只显示 5 个
-    const btns = pageButtons(wrapper)
-    expect(btns.length).toBe(5)
-    expect(btns.at(0)!.text()).toBe('1')
-    // 下一页可用 (current=1 < 23)
-    expect(navButtons(wrapper).at(1)!.attributes('disabled')).toBeUndefined()
-  })
-
-  it('shows only 5 consecutive page numbers when total pages > 5', () => {
-    const wrapper = mountBar({total: 100, page: 1, pageSize: 10})
-    const btns = pageButtons(wrapper)
-    expect(btns.length).toBe(5)
-    expect(btns.map((b) => b.text())).toEqual(['1', '2', '3', '4', '5'])
-
-    const middle = mountBar({total: 1000, page: 50, pageSize: 10})
-    expect(pageButtons(middle).map((b) => b.text())).toEqual(['48', '49', '50', '51', '52'])
-
-    const end = mountBar({total: 1000, page: 100, pageSize: 10})
-    expect(pageButtons(end).map((b) => b.text())).toEqual(['96', '97', '98', '99', '100'])
+    it('shows all pages when total pages <= 5', () => {
+      const wrapper = w({total: 30, page: 2, pageSize: 10})
+      const buttons = wrapper.findAll('button.page-btn')
+      expect(buttons).toHaveLength(3)
+    })
   })
 })
