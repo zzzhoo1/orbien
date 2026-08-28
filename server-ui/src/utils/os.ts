@@ -3,8 +3,9 @@ export type OsFamily = 'windows' | 'macos' | 'linux' | 'android' | 'freebsd' | '
 export function normalizeOsFamily(raw?: string | null): OsFamily {
     const s = (raw || '').trim().toLowerCase()
     if (!s) return 'other'
-    if (s.includes('win')) return 'windows'
+    // Check macos/darwin before windows to avoid 'darwin' matching 'win'
     if (s.includes('mac') || s.includes('darwin') || s === 'osx') return 'macos'
+    if (s.includes('win')) return 'windows'
     if (s.includes('android')) return 'android'
     if (s.includes('freebsd')) return 'freebsd'
     if (s.includes('linux') || s.includes('ubuntu') || s.includes('debian') || s.includes('centos')) {

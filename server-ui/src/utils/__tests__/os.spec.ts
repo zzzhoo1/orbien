@@ -1,0 +1,35 @@
+import {describe, expect, it} from 'vitest'
+import {normalizeOsFamily, formatArch} from '../os'
+
+describe('normalizeOsFamily', () => {
+  it('windows from "windows"', () => expect(normalizeOsFamily('windows')).toBe('windows'))
+  it('windows from "Windows 11"', () => expect(normalizeOsFamily('Windows 11')).toBe('windows'))
+  it('windows from "win32"', () => expect(normalizeOsFamily('win32')).toBe('windows'))
+  it('macos from "macos"', () => expect(normalizeOsFamily('macos')).toBe('macos'))
+  it('macos from "darwin"', () => expect(normalizeOsFamily('darwin')).toBe('macos'))
+  it('macos from "osx"', () => expect(normalizeOsFamily('osx')).toBe('macos'))
+  it('macos from "macOS 14"', () => expect(normalizeOsFamily('macOS 14')).toBe('macos'))
+  it('android from "android"', () => expect(normalizeOsFamily('android')).toBe('android'))
+  it('freebsd from "freebsd"', () => expect(normalizeOsFamily('freebsd')).toBe('freebsd'))
+  it('linux from "linux"', () => expect(normalizeOsFamily('linux')).toBe('linux'))
+  it('linux from "ubuntu"', () => expect(normalizeOsFamily('ubuntu')).toBe('linux'))
+  it('linux from "debian"', () => expect(normalizeOsFamily('debian')).toBe('linux'))
+  it('linux from "centos"', () => expect(normalizeOsFamily('centos')).toBe('linux'))
+  it('other for empty string', () => expect(normalizeOsFamily('')).toBe('other'))
+  it('other for null', () => expect(normalizeOsFamily(null)).toBe('other'))
+  it('other for unknown', () => expect(normalizeOsFamily('plan9')).toBe('other'))
+})
+
+describe('formatArch', () => {
+  it('arm64 from "aarch64"', () => expect(formatArch('aarch64')).toBe('arm64'))
+  it('arm64 from "arm64"', () => expect(formatArch('arm64')).toBe('arm64'))
+  it('x64 from "x86_64"', () => expect(formatArch('x86_64')).toBe('x64'))
+  it('x64 from "amd64"', () => expect(formatArch('amd64')).toBe('x64'))
+  it('x64 from "x64"', () => expect(formatArch('x64')).toBe('x64'))
+  it('x86 from "i386"', () => expect(formatArch('i386')).toBe('x86'))
+  it('x86 from "i686"', () => expect(formatArch('i686')).toBe('x86'))
+  it('x86 from "x86"', () => expect(formatArch('x86')).toBe('x86'))
+  it('returns raw for unknown arch', () => expect(formatArch('mips64')).toBe('mips64'))
+  it('returns empty string for null', () => expect(formatArch(null)).toBe(''))
+  it('returns empty string for empty', () => expect(formatArch('')).toBe(''))
+})
