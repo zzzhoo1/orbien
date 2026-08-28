@@ -14,11 +14,13 @@ const state = reactive({
     tunnels: [] as TunnelInfo[],
     tokens: [] as TokenMetricItem[],
     error: null as DashboardError,
+    loading: false,
 })
 
 export function useDashboardStore() {
     async function refresh() {
         state.error = null
+        state.loading = true
         try {
             const [sys, cli, tun, tokenMetrics] = await Promise.all([
                 fetchSystemInfo(),
@@ -42,6 +44,8 @@ export function useDashboardStore() {
             } else {
                 state.error = {code: 'unknown'}
             }
+        } finally {
+            state.loading = false
         }
     }
 
@@ -57,6 +61,12 @@ export function useDashboardStore() {
         },
         get tokens() {
             return state.tokens
+        },
+        get proxies() {
+            return state.tunnels
+        },
+        get loading() {
+            return state.loading
         },
         get error() {
             return state.error
