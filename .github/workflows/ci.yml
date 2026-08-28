@@ -37,11 +37,17 @@ jobs:
           cache: "npm"
           cache-dependency-path: server-ui/package-lock.json
 
+      - name: Install web dependencies
+        working-directory: server-ui
+        run: npm ci
+
+      - name: Typecheck web UI
+        working-directory: server-ui
+        run: npm run typecheck
+
       - name: Build web assets
         working-directory: server-ui
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       - name: Unit tests (vitest)
         working-directory: server-ui
@@ -102,11 +108,17 @@ jobs:
           cache: "npm"
           cache-dependency-path: server-ui/package-lock.json
 
+      - name: Install web dependencies
+        working-directory: server-ui
+        run: npm ci
+
+      - name: Typecheck web UI
+        working-directory: server-ui
+        run: npm run typecheck
+
       - name: Build web assets
         working-directory: server-ui
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       # Pinned to commit SHA to prevent supply-chain attacks via mutable ref
       - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
