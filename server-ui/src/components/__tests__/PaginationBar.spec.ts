@@ -45,12 +45,32 @@ describe('PaginationBar', () => {
       const wrapper = w({total: 5, page: 1, pageSize: 10})
       expect(wrapper.find('.pagination-bar').exists()).toBe(true)
     })
+
+    it('renders when total equals pageSize exactly (one full page)', () => {
+      const wrapper = w({total: 10, page: 1, pageSize: 10})
+      expect(wrapper.find('.pagination-bar').exists()).toBe(true)
+    })
+
+    it('renders when total=1', () => {
+      const wrapper = w({total: 1, page: 1, pageSize: 10})
+      expect(wrapper.find('.pagination-bar').exists()).toBe(true)
+    })
   })
 
   describe('total label', () => {
-    it('shows total count', () => {
+    it('shows total count 42', () => {
       const wrapper = w({total: 42, page: 1, pageSize: 10})
       expect(wrapper.find('.total').text()).toBe('Total 42')
+    })
+
+    it('shows total count 1', () => {
+      const wrapper = w({total: 1, page: 1, pageSize: 10})
+      expect(wrapper.find('.total').text()).toBe('Total 1')
+    })
+
+    it('shows total count 1000', () => {
+      const wrapper = w({total: 1000, page: 1, pageSize: 10})
+      expect(wrapper.find('.total').text()).toBe('Total 1000')
     })
   })
 
@@ -61,11 +81,23 @@ describe('PaginationBar', () => {
       expect(buttons).toHaveLength(3)
     })
 
+    it('renders 1 page button when total <= pageSize', () => {
+      const wrapper = w({total: 5, page: 1, pageSize: 10})
+      const buttons = wrapper.findAll('button.page-btn')
+      expect(buttons).toHaveLength(1)
+    })
+
     it('current page button has .active class', () => {
       const wrapper = w({total: 50, page: 3, pageSize: 10})
       const active = wrapper.findAll('button.page-btn').filter(b => b.classes('active'))
       expect(active).toHaveLength(1)
       expect(active[0].text()).toBe('3')
+    })
+
+    it('page 1 is active when page=1', () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      const active = wrapper.findAll('button.page-btn').filter(b => b.classes('active'))
+      expect(active[0].text()).toBe('1')
     })
 
     it('emits update:page when page button clicked', async () => {
@@ -95,6 +127,12 @@ describe('PaginationBar', () => {
       expect(next.attributes('disabled')).toBeDefined()
     })
 
+    it('both prev and next are disabled when total=1 page', () => {
+      const wrapper = w({total: 5, page: 1, pageSize: 10})
+      expect(wrapper.find('button[aria-label="Previous page"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('button[aria-label="Next page"]').attributes('disabled')).toBeDefined()
+    })
+
     it('prev is enabled on page > 1', () => {
       const wrapper = w({total: 50, page: 2, pageSize: 10})
       const prev = wrapper.find('button[aria-label="Previous page"]')
@@ -118,6 +156,12 @@ describe('PaginationBar', () => {
       await wrapper.find('button[aria-label="Next page"]').trigger('click')
       expect(wrapper.emitted('update:page')![0]).toEqual([3])
     })
+
+    it('next from page 1 goes to page 2', async () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      await wrapper.find('button[aria-label="Next page"]').trigger('click')
+      expect(wrapper.emitted('update:page')![0]).toEqual([2])
+    })
   })
 
   describe('page size select', () => {
@@ -135,6 +179,12 @@ describe('PaginationBar', () => {
       expect(wrapper.emitted('update:pageSize')![0]).toEqual([20])
       expect(wrapper.emitted('update:page')![0]).toEqual([1])
     })
+
+    it('emits update:page=1 whenever pageSize changes, regardless of current page', async () => {
+      const wrapper = w({total: 100, page: 5, pageSize: 10})
+      await wrapper.find('select').setValue('50')
+      expect(wrapper.emitted('update:page')![0]).toEqual([1])
+    })
   })
 
   describe('window logic', () => {
@@ -148,6 +198,20 @@ describe('PaginationBar', () => {
       const wrapper = w({total: 30, page: 2, pageSize: 10})
       const buttons = wrapper.findAll('button.page-btn')
       expect(buttons).toHaveLength(3)
+    })
+
+    it('page window includes current page when on last page', () => {
+      const wrapper = w({total: 200, page: 20, pageSize: 10})
+      const buttons = wrapper.findAll('button.page-btn')
+      const texts = buttons.map(b => b.text())
+      expect(texts).toContain('20')
+    })
+
+    it('page window includes current page when on first page of large set', () => {
+      const wrapper = w({total: 200, page: 1, pageSize: 10})
+      const buttons = wrapper.findAll('button.page-btn')
+      const texts = buttons.map(b => b.text())
+      expect(texts).toContain('1')
     })
   })
 })
