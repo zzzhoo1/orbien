@@ -61,6 +61,18 @@ describe('api internals – fetch integration', () => {
       expect.objectContaining({credentials: 'include'}),
     )
   })
+
+  it('throws ApiError(http) on 403 with correct status', async () => {
+    vi.stubGlobal('fetch', mockFetch(403, null, false))
+    const {fetchSystemInfo} = await importClient()
+    await expect(fetchSystemInfo()).rejects.toMatchObject({code: 'http', params: {status: 403}})
+  })
+
+  it('throws ApiError(http) on 503 with correct status', async () => {
+    vi.stubGlobal('fetch', mockFetch(503, null, false))
+    const {fetchSystemInfo} = await importClient()
+    await expect(fetchSystemInfo()).rejects.toMatchObject({code: 'http', params: {status: 503}})
+  })
 })
 
 describe('fetchAuthStatus', () => {
@@ -78,6 +90,18 @@ describe('fetchAuthStatus', () => {
 
   it('returns safe defaults on 401', async () => {
     vi.stubGlobal('fetch', mockFetch(401, null, false))
+    const {fetchAuthStatus} = await importClient()
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
+  })
+
+  it('returns safe defaults on 500', async () => {
+    vi.stubGlobal('fetch', mockFetch(500, null, false))
+    const {fetchAuthStatus} = await importClient()
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
+  })
+
+  it('returns safe defaults when server returns api error code', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, {code: 403, msg: 'forbidden', data: null}))
     const {fetchAuthStatus} = await importClient()
     await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
   })
@@ -118,6 +142,13 @@ describe('fetchClient', () => {
       expect.anything(),
     )
   })
+
+  it('returns client data on success', async () => {
+    const data = {sessionId: 'abc', user: 'alice'}
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data}))
+    const {fetchClient} = await importClient()
+    await expect(fetchClient('abc')).resolves.toMatchObject({sessionId: 'abc'})
+  })
 })
 
 describe('kickClient', () => {
@@ -130,6 +161,14 @@ describe('kickClient', () => {
       '/api/v1/clients/sess-1/kick',
       expect.objectContaining({method: 'POST'}),
     )
+  })
+
+  it('encodes special characters in sessionId', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: null})
+    vi.stubGlobal('fetch', spy)
+    const {kickClient} = await importClient()
+    await kickClient('sess/1').catch(() => {})
+    expect(spy.mock.calls[0][0]).toContain('sess%2F1')
   })
 })
 
@@ -163,6 +202,16 @@ describe('fetchTunnels', () => {
     expect(url).not.toContain('sessionId')
     expect(url).not.toContain('&q=')
   })
+
+  it('uses default page=1 pageSize=200 when called with no args', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {items: [], total: 0, page: 1, pageSize: 200}})
+    vi.stubGlobal('fetch', spy)
+    const {fetchTunnels} = await importClient()
+    await fetchTunnels().catch(() => {})
+    const url = spy.mock.calls[0][0] as string
+    expect(url).toContain('page=1')
+    expect(url).toContain('pageSize=200')
+  })
 })
 
 describe('kickProxy', () => {
@@ -175,6 +224,14 @@ describe('kickProxy', () => {
       '/api/v1/proxies/my-proxy',
       expect.objectContaining({method: 'DELETE'}),
     )
+  })
+
+  it('encodes proxy name with slashes', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: null})
+    vi.stubGlobal('fetch', spy)
+    const {kickProxy} = await importClient()
+    await kickProxy('my/proxy').catch(() => {})
+    expect(spy.mock.calls[0][0]).toContain('my%2Fproxy')
   })
 })
 
@@ -202,6 +259,13 @@ describe('fetchTunnelTraffic', () => {
     await fetchTunnelTraffic('my/tunnel').catch(() => {})
     expect(spy.mock.calls[0][0]).toContain('my%2Ftunnel')
   })
+
+  it('returns traffic data on success', async () => {
+    const data = {name: 't1', unit: 'bytes', granularity: 'day', history: []}
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data}))
+    const {fetchTunnelTraffic} = await importClient()
+    await expect(fetchTunnelTraffic('t1')).resolves.toMatchObject({name: 't1'})
+  })
 })
 
 describe('fetchSystemTraffic', () => {
@@ -220,14 +284,29 @@ describe('fetchSystemTraffic', () => {
     await fetchSystemTraffic('24h').catch(() => {})
     expect(spy.mock.calls[0][0]).toContain('range=24h')
   })
+
+  it('hits /api/v1/system/traffic endpoint', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {}})
+    vi.stubGlobal('fetch', spy)
+    const {fetchSystemTraffic} = await importClient()
+    await fetchSystemTraffic().catch(() => {})
+    expect(spy.mock.calls[0][0]).toContain('/api/v1/system/traffic')
+  })
 })
 
 describe('fetchSystemTokens', () => {
   it('calls correct endpoint', async () => {
-    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {}})
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {tokens: []}})
     vi.stubGlobal('fetch', spy)
     const {fetchSystemTokens} = await importClient()
     await fetchSystemTokens().catch(() => {})
     expect(spy.mock.calls[0][0]).toBe('/api/v1/system/tokens')
+  })
+
+  it('returns token metrics data on success', async () => {
+    const data = {tokens: [{token: 'tok1', activeConns: 2, allowedTunnels: [], allowedProtocols: [], allowedRemotePorts: []}]}
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data}))
+    const {fetchSystemTokens} = await importClient()
+    await expect(fetchSystemTokens()).resolves.toMatchObject({tokens: [{token: 'tok1'}]})
   })
 })
