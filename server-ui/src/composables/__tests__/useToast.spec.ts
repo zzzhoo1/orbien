@@ -60,6 +60,13 @@ describe('useToast', () => {
     expect(message.value).toBeNull()
   })
 
+  it('message is not cleared before default duration elapses', () => {
+    const {show, message} = mountToast()
+    show('info', 'persistent')
+    vi.advanceTimersByTime(2999)
+    expect(message.value).not.toBeNull()
+  })
+
   it('calling show twice resets the timer', () => {
     const {show, message} = mountToast()
     show('info', 'first', 3000)
@@ -79,5 +86,24 @@ describe('useToast', () => {
     show('info', 'b')
     const id2 = message.value!.id
     expect(id2).toBeGreaterThan(id1)
+  })
+
+  it('message has correct text field', () => {
+    const {show, message} = mountToast()
+    show('error', 'something went wrong')
+    expect(message.value!.text).toBe('something went wrong')
+  })
+
+  it('duration=0 clears message immediately', () => {
+    const {show, message} = mountToast()
+    show('info', 'instant', 0)
+    vi.advanceTimersByTime(0)
+    expect(message.value).toBeNull()
+  })
+
+  it('message id is a positive number', () => {
+    const {show, message} = mountToast()
+    show('info', 'test')
+    expect(message.value!.id).toBeGreaterThan(0)
   })
 })
