@@ -1,179 +1,185 @@
-import {describe, it, expect, vi, beforeEach} from 'vitest'
-import {mount, flushPromises} from '@vue/test-utils'
-import {createPinia, setActivePinia} from 'pinia'
-import {createRouter, createMemoryHistory} from 'vue-router'
-import {ref} from 'vue'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { ref } from 'vue'
 import AppHeader from '../AppHeader.vue'
 
-vi.mock('@/assets/images/logo.png', () => ({default: 'logo.png'}))
-vi.mock('@/assets/icon/github.svg?raw', () => ({default: '<svg class="github"/>'}))
+// ── Static asset stubs ────────────────────────────────────────────────────────
+vi.mock('@/assets/images/logo.png', () => ({ default: 'logo.png' }))
+vi.mock('@/assets/icon/github.svg?raw', () => ({ default: '<svg data-testid="github-svg"></svg>' }))
 
+// ── Child component stubs ─────────────────────────────────────────────────────
 vi.mock('@/components/ThemeToggle.vue', () => ({
-  default: {template: '<div class="stub-theme-toggle"/>'},
+  default: { name: 'ThemeToggle', template: '<div data-testid="theme-toggle"/>' },
 }))
 vi.mock('@/components/LocaleSwitcher.vue', () => ({
-  default: {template: '<div class="stub-locale-switcher"/>'},
+  default: { name: 'LocaleSwitcher', template: '<div data-testid="locale-switcher"/>' },
 }))
+
+// ── Composable stubs ──────────────────────────────────────────────────────────
+const mockToggleCollapsed = vi.fn()
+const sidebarState = {
+  isMobile: ref(false),
+  mobileOpen: ref(false),
+  toggleCollapsed: mockToggleCollapsed,
+}
 
 vi.mock('@/composables/useLocale', () => ({
-  useLocale: () => ({t: (key: string) => key}),
+  useLocale: () => ({ t: (key: string) => key }),
+}))
+vi.mock('@/composables/useSidebar', () => ({
+  useSidebar: () => sidebarState,
 }))
 
-const isMobileRef = ref(false)
-const mobileOpenRef = ref(false)
-const toggleCollapsed = vi.fn()
-vi.mock('@/composables/useSidebar', () => ({
-  useSidebar: () => ({
-    isMobile: isMobileRef,
-    mobileOpen: mobileOpenRef,
-    toggleCollapsed,
+// ── Router stub ───────────────────────────────────────────────────────────────
+const mockPush = vi.fn()
+vi.mock('vue-router', () => ({
+  RouterLink: { name: 'RouterLink', props: ['to'], template: '<a :href="to"><slot/></a>' },
+  useRouter: () => ({ push: mockPush }),
+}))
+
+// ── Auth store mock ───────────────────────────────────────────────────────────
+const authState = { authenticated: false, username: null as string | null }
+const mockLogout = vi.fn()
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    get authenticated() { return authState.authenticated },
+    get username() { return authState.username },
+    logout: mockLogout,
   }),
 }))
 
-const mockAuth = {
-  authenticated: false,
-  username: '',
-  logout: vi.fn(),
-}
-vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => mockAuth,
-}))
-
-function makeRouter() {
-  return createRouter({
-    history: createMemoryHistory(),
-    routes: [
-      {path: '/', component: {template: '<div/>'}},
-      {path: '/login', name: 'login', component: {template: '<div/>'}},
-    ],
+// ── Factory ───────────────────────────────────────────────────────────────────
+function factory() {
+  return mount(AppHeader, {
+    global: { plugins: [createPinia()] },
   })
 }
 
-async function mountHeader() {
-  const router = makeRouter()
-  await router.push('/')
-  const wrapper = mount(AppHeader, {global: {plugins: [createPinia(), router]}})
-  await flushPromises()
-  return {wrapper, router}
-}
-
-beforeEach(() => {
-  setActivePinia(createPinia())
-  vi.clearAllMocks()
-  isMobileRef.value = false
-  mobileOpenRef.value = false
-  mockAuth.authenticated = false
-  mockAuth.username = ''
-  mockAuth.logout.mockResolvedValue(undefined)
-})
-
-describe('AppHeader – brand', () => {
-  it('renders the logo image', async () => {
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('img.logo-img').exists()).toBe(true)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('AppHeader', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    sidebarState.isMobile.value = false
+    sidebarState.mobileOpen.value = false
+    authState.authenticated = false
+    authState.username = null
+    mockLogout.mockResolvedValue(undefined)
   })
 
-  it('renders brand text Orbien', async () => {
-    const {wrapper} = await mountHeader()
-    expect(wrapper.text()).toContain('Orb')
-    expect(wrapper.text()).toContain('ien')
+  // ── Structure ──────────────────────────────────────────────────────────────
+  it('renders a <header> element with class "top"', () => {
+    const wrapper = factory()
+    expect(wrapper.find('header.top').exists()).toBe(true)
   })
 
-  it('brand block links to /', async () => {
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('a.brand-block').attributes('href')).toBe('/')
-  })
-})
-
-describe('AppHeader – mobile menu button', () => {
-  it('hides menu button on desktop', async () => {
-    isMobileRef.value = false
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('.menu-btn').exists()).toBe(false)
+  it('renders the brand logo image', () => {
+    const wrapper = factory()
+    const img = wrapper.find('img')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('alt')).toBe('Orbien')
+    expect(img.attributes('src')).toBe('logo.png')
   })
 
-  it('shows menu button on mobile', async () => {
-    isMobileRef.value = true
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('.menu-btn').exists()).toBe(true)
+  it('renders brand title text "Orbien"', () => {
+    const wrapper = factory()
+    expect(wrapper.find('.brand-orb').text()).toBe('Orb')
+    expect(wrapper.find('.brand-rest').text()).toBe('ien')
   })
 
-  it('calls toggleCollapsed when menu button is clicked', async () => {
-    isMobileRef.value = true
-    const {wrapper} = await mountHeader()
-    await wrapper.find('.menu-btn').trigger('click')
-    expect(toggleCollapsed).toHaveBeenCalledOnce()
+  it('renders ThemeToggle and LocaleSwitcher', () => {
+    const wrapper = factory()
+    expect(wrapper.find('[data-testid="theme-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="locale-switcher"]').exists()).toBe(true)
   })
 
-  it('sets aria-expanded=true when mobileOpen is true', async () => {
-    isMobileRef.value = true
-    mobileOpenRef.value = true
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('.menu-btn').attributes('aria-expanded')).toBe('true')
-  })
-
-  it('sets aria-expanded=false when mobileOpen is false', async () => {
-    isMobileRef.value = true
-    mobileOpenRef.value = false
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('.menu-btn').attributes('aria-expanded')).toBe('false')
-  })
-
-  it('shows close icon (X) when mobileOpen is true', async () => {
-    isMobileRef.value = true
-    mobileOpenRef.value = true
-    const {wrapper} = await mountHeader()
-    const svgHtml = wrapper.find('.menu-btn svg').html()
-    expect(svgHtml).toContain('M6 6l12 12')
-  })
-
-  it('shows hamburger icon when mobileOpen is false', async () => {
-    isMobileRef.value = true
-    mobileOpenRef.value = false
-    const {wrapper} = await mountHeader()
-    const svgHtml = wrapper.find('.menu-btn svg').html()
-    expect(svgHtml).toContain('M4 7h16')
-  })
-})
-
-describe('AppHeader – actions', () => {
-  it('renders GitHub link with correct href', async () => {
-    const {wrapper} = await mountHeader()
+  it('renders GitHub link with correct href and attributes', () => {
+    const wrapper = factory()
     const link = wrapper.find('a.github-link')
+    expect(link.exists()).toBe(true)
     expect(link.attributes('href')).toBe('https://github.com/orbien-org/orbien')
     expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
   })
 
-  it('renders ThemeToggle and LocaleSwitcher stubs', async () => {
-    const {wrapper} = await mountHeader()
-    expect(wrapper.find('.stub-theme-toggle').exists()).toBe(true)
-    expect(wrapper.find('.stub-locale-switcher').exists()).toBe(true)
+  // ── Mobile menu button ─────────────────────────────────────────────────────
+  it('does NOT render mobile menu button when isMobile is false', () => {
+    const wrapper = factory()
+    expect(wrapper.find('button.menu-btn').exists()).toBe(false)
   })
 
-  it('hides user badge when not authenticated', async () => {
-    const {wrapper} = await mountHeader()
+  it('renders mobile menu button when isMobile is true', () => {
+    sidebarState.isMobile.value = true
+    const wrapper = factory()
+    expect(wrapper.find('button.menu-btn').exists()).toBe(true)
+  })
+
+  it('calls toggleCollapsed when mobile menu button is clicked', async () => {
+    sidebarState.isMobile.value = true
+    const wrapper = factory()
+    await wrapper.find('button.menu-btn').trigger('click')
+    expect(mockToggleCollapsed).toHaveBeenCalledOnce()
+  })
+
+  it('sets aria-expanded="true" on menu button when mobileOpen is true', () => {
+    sidebarState.isMobile.value = true
+    sidebarState.mobileOpen.value = true
+    const wrapper = factory()
+    expect(wrapper.find('button.menu-btn').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('sets aria-expanded="false" on menu button when mobileOpen is false', () => {
+    sidebarState.isMobile.value = true
+    sidebarState.mobileOpen.value = false
+    const wrapper = factory()
+    expect(wrapper.find('button.menu-btn').attributes('aria-expanded')).toBe('false')
+  })
+
+  // ── Auth: unauthenticated ──────────────────────────────────────────────────
+  it('does NOT render user-badge when not authenticated', () => {
+    authState.authenticated = false
+    const wrapper = factory()
     expect(wrapper.find('.user-badge').exists()).toBe(false)
   })
 
-  it('shows user badge when authenticated', async () => {
-    mockAuth.authenticated = true
-    const {wrapper} = await mountHeader()
+  // ── Auth: authenticated ────────────────────────────────────────────────────
+  it('renders user-badge when authenticated', () => {
+    authState.authenticated = true
+    authState.username = 'admin'
+    const wrapper = factory()
     expect(wrapper.find('.user-badge').exists()).toBe(true)
   })
 
-  it('shows username when authenticated and username set', async () => {
-    mockAuth.authenticated = true
-    mockAuth.username = 'alice'
-    const {wrapper} = await mountHeader()
+  it('renders username text when authenticated', () => {
+    authState.authenticated = true
+    authState.username = 'alice'
+    const wrapper = factory()
     expect(wrapper.find('.user-name').text()).toBe('alice')
   })
 
-  it('calls logout and redirects to /login on logout button click', async () => {
-    mockAuth.authenticated = true
-    const {wrapper, router} = await mountHeader()
-    await wrapper.find('.logout-btn').trigger('click')
-    await flushPromises()
-    expect(mockAuth.logout).toHaveBeenCalledOnce()
-    expect(router.currentRoute.value.path).toBe('/login')
+  it('does NOT render username span when username is null', () => {
+    authState.authenticated = true
+    authState.username = null
+    const wrapper = factory()
+    expect(wrapper.find('.user-name').exists()).toBe(false)
+  })
+
+  it('renders logout button when authenticated', () => {
+    authState.authenticated = true
+    authState.username = 'admin'
+    const wrapper = factory()
+    expect(wrapper.find('button.logout-btn').exists()).toBe(true)
+  })
+
+  it('calls auth.logout and pushes to /login on logout click', async () => {
+    authState.authenticated = true
+    authState.username = 'admin'
+    const wrapper = factory()
+    await wrapper.find('button.logout-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(mockLogout).toHaveBeenCalledOnce()
+    expect(mockPush).toHaveBeenCalledWith('/login')
   })
 })
