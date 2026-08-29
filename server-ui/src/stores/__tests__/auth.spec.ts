@@ -35,12 +35,33 @@ describe('useAuthStore – setAuthenticated', () => {
     expect(store.authenticated).toBe(true)
     expect(store.username).toBe('alice')
   })
+
   it('clears authenticated and username', () => {
     const store = useAuthStore()
     store.setAuthenticated(true, 'bob')
     store.setAuthenticated(false)
     expect(store.authenticated).toBe(false)
     expect(store.username).toBe('')
+  })
+
+  it('username defaults to empty string when not passed', () => {
+    const store = useAuthStore()
+    store.setAuthenticated(true)
+    expect(store.username).toBe('')
+  })
+
+  it('username defaults to empty string when false passed without name', () => {
+    const store = useAuthStore()
+    store.setAuthenticated(true, 'charlie')
+    store.setAuthenticated(false)
+    expect(store.username).toBe('')
+  })
+
+  it('overwrites previous username', () => {
+    const store = useAuthStore()
+    store.setAuthenticated(true, 'alice')
+    store.setAuthenticated(true, 'bob')
+    expect(store.username).toBe('bob')
   })
 })
 
@@ -60,6 +81,23 @@ describe('useAuthStore – loadCapabilities', () => {
     await store.loadCapabilities()
     await store.loadCapabilities()
     expect(mockFetchAuthStatus).toHaveBeenCalledOnce()
+  })
+
+  it('capabilitiesLoaded becomes true after load', async () => {
+    mockFetchAuthStatus.mockResolvedValue({webauthn: false, password: true})
+    const store = useAuthStore()
+    expect(store.capabilitiesLoaded).toBe(false)
+    await store.loadCapabilities()
+    expect(store.capabilitiesLoaded).toBe(true)
+  })
+
+  it('preserves capabilities between calls when already loaded', async () => {
+    mockFetchAuthStatus.mockResolvedValue({webauthn: true, password: true})
+    const store = useAuthStore()
+    await store.loadCapabilities()
+    mockFetchAuthStatus.mockResolvedValue({webauthn: false, password: false})
+    await store.loadCapabilities()
+    expect(store.capabilities).toEqual({webauthn: true, password: true})
   })
 })
 
@@ -87,6 +125,13 @@ describe('useAuthStore – fetchStatus', () => {
     expect(result).toBe(false)
     expect(store.authenticated).toBe(false)
   })
+
+  it('returns boolean true/false strictly', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: true})
+    const store = useAuthStore()
+    const result = await store.fetchStatus()
+    expect(typeof result).toBe('boolean')
+  })
 })
 
 describe('useAuthStore – loginWithPassword', () => {
@@ -109,6 +154,19 @@ describe('useAuthStore – loginWithPassword', () => {
     ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: false, status: 500})
     const store = useAuthStore()
     await expect(store.loginWithPassword('alice', 'pass')).rejects.toThrow('HTTP_500')
+  })
+
+  it('does not set authenticated=true on 401', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: false, status: 401})
+    const store = useAuthStore()
+    try { await store.loginWithPassword('alice', 'wrong') } catch {}
+    expect(store.authenticated).toBe(false)
+  })
+
+  it('throws on network error', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('net'))
+    const store = useAuthStore()
+    await expect(store.loginWithPassword('alice', 'pass')).rejects.toThrow()
   })
 })
 
@@ -136,5 +194,25 @@ describe('useAuthStore – logout', () => {
     ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('net'))
     const store = useAuthStore()
     await expect(store.logout()).resolves.toBeUndefined()
+  })
+
+  it('authenticated remains false if already false before logout', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: true})
+    const store = useAuthStore()
+    await store.logout()
+    expect(store.authenticated).toBe(false)
+  })
+
+  it('can login again after logout', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: true, status: 200})
+    const store = useAuthStore()
+    await store.loginWithPassword('alice', 'pass')
+    expect(store.authenticated).toBe(true)
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: true})
+    await store.logout()
+    expect(store.authenticated).toBe(false)
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ok: true, status: 200})
+    await store.loginWithPassword('alice', 'pass')
+    expect(store.authenticated).toBe(true)
   })
 })
