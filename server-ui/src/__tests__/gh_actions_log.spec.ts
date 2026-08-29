@@ -1,3 +1,3 @@
 import {describe} from 'vitest'
-// Temporary CI log fetcher – removed after use
-describe.skip('gh_actions_log (removed)', () => {})
+// Temporary CI log fetcher – retired. File kept to avoid git conflicts.
+describe.skip('gh_actions_log (retired)', () => {})
