@@ -41,4 +41,50 @@ describe('StatCard', () => {
     const w = mount(StatCard, {props: {label: 'x'}})
     expect(w.find('.stat-card.card').exists()).toBe(true)
   })
+
+  it('passes icon name to IconBadge', () => {
+    const w = mount(StatCard, {props: {label: 'x', icon: 'users'}})
+    expect(w.findComponent(IconBadge).props('name')).toBe('users')
+  })
+
+  it('renders .stat-top and .stat-copy containers', () => {
+    const w = mount(StatCard, {props: {label: 'x'}})
+    expect(w.find('.stat-top').exists()).toBe(true)
+    expect(w.find('.stat-copy').exists()).toBe(true)
+  })
+
+  it('renders empty .v when default slot is omitted', () => {
+    const w = mount(StatCard, {props: {label: 'x'}})
+    expect(w.find('.v').text()).toBe('')
+  })
+
+  it('updates label when props change', async () => {
+    const w = mount(StatCard, {props: {label: 'Old'}})
+    await w.setProps({label: 'New'})
+    expect(w.find('.k').text()).toBe('New')
+  })
+
+  it('updates slot content when remounted with different slot', () => {
+    const w = mount(StatCard, {
+      props: {label: 'Count'},
+      slots: {default: '42'},
+    })
+    expect(w.find('.v').text()).toBe('42')
+    w.unmount()
+    const w2 = mount(StatCard, {
+      props: {label: 'Count'},
+      slots: {default: '99'},
+    })
+    expect(w2.find('.v').text()).toBe('99')
+  })
+
+  it('does not render stat-icon class element when icon is omitted', () => {
+    const w = mount(StatCard, {props: {label: 'x'}})
+    expect(w.find('.stat-icon').exists()).toBe(false)
+  })
+
+  it('renders stat-icon class element when icon is provided', () => {
+    const w = mount(StatCard, {props: {label: 'x', icon: 'monitor'}})
+    expect(w.find('.stat-icon').exists()).toBe(true)
+  })
 })

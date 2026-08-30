@@ -35,4 +35,46 @@ describe('SectionCard', () => {
     expect(root.classes()).toContain('section-card')
     expect(root.classes()).toContain('card')
   })
+
+  it('renders section-head and section-body containers', () => {
+    const w = mount(SectionCard, {props: {title: 'T'}})
+    expect(w.find('.section-head').exists()).toBe(true)
+    expect(w.find('.section-body').exists()).toBe(true)
+  })
+
+  it('renders both default and extra slots together', () => {
+    const w = mount(SectionCard, {
+      props: {title: 'Both'},
+      slots: {
+        default: '<div class="main-slot">Main</div>',
+        extra: '<span class="extra-slot">Extra</span>',
+      },
+    })
+    expect(w.find('.section-body .main-slot').text()).toBe('Main')
+    expect(w.find('.section-extra .extra-slot').text()).toBe('Extra')
+  })
+
+  it('updates title when props change', async () => {
+    const w = mount(SectionCard, {props: {title: 'Old'}})
+    await w.setProps({title: 'New'})
+    expect(w.find('.section-title').text()).toBe('New')
+  })
+
+  it('renders empty section-body when default slot is omitted', () => {
+    const w = mount(SectionCard, {props: {title: 'T'}})
+    expect(w.find('.section-body').text()).toBe('')
+  })
+
+  it('root element is a section tag', () => {
+    const w = mount(SectionCard, {props: {title: 'T'}})
+    expect(w.find('section').exists()).toBe(true)
+  })
+
+  it('does not render extra slot content inside section-body', () => {
+    const w = mount(SectionCard, {
+      props: {title: 'T'},
+      slots: {extra: '<button class="extra-btn">Action</button>'},
+    })
+    expect(w.find('.section-body .extra-btn').exists()).toBe(false)
+  })
 })
