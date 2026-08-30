@@ -89,7 +89,6 @@ describe('DonutChart', () => {
       },
     })
     expect(wrapper.find('path').attributes('stroke')).toBe('#3b82f6')
-    // jsdom normalises hex to rgb(...)
     expect(wrapper.find('.swatch').attributes('style')).toContain('rgb(59, 130, 246)')
   })
 
@@ -108,5 +107,73 @@ describe('DonutChart', () => {
       props: {slices: makeSlices([{value: 50}])},
     })
     expect(wrapper.find('svg').attributes('viewBox')).toBe('0 0 200 200')
+  })
+
+  it('legend renders label text for each slice', () => {
+    const slices: ChartSlice[] = [
+      {key: 'tcp', label: 'TCP', value: 30, color: '#f00'},
+      {key: 'udp', label: 'UDP', value: 70, color: '#0f0'},
+    ]
+    const wrapper = mount(DonutChart, {props: {slices}})
+    const names = wrapper.findAll('.name').map(n => n.text())
+    expect(names).toContain('TCP')
+    expect(names).toContain('UDP')
+  })
+
+  it('legend renders value count for each slice', () => {
+    const slices: ChartSlice[] = [
+      {key: 'tcp', label: 'TCP', value: 42, color: '#f00'},
+    ]
+    const wrapper = mount(DonutChart, {props: {slices}})
+    expect(wrapper.find('.count').text()).toBe('42')
+  })
+
+  it('renders arc paths in slice key order (first stroke = first slice color)', () => {
+    const slices: ChartSlice[] = [
+      {key: 'a', label: 'A', value: 25, color: '#ff0000'},
+      {key: 'b', label: 'B', value: 75, color: '#00ff00'},
+    ]
+    const wrapper = mount(DonutChart, {props: {slices}})
+    const paths = wrapper.findAll('path')
+    expect(paths[0].attributes('stroke')).toBe('#ff0000')
+    expect(paths[1].attributes('stroke')).toBe('#00ff00')
+  })
+
+  it('total correctly sums three positive slices', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: makeSlices([{value: 10}, {value: 20}, {value: 30}])},
+    })
+    expect(wrapper.find('.donut-total').text()).toBe('60')
+  })
+
+  it('no arc rendered when single slice has value = 0', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: [{key: 'x', label: 'X', value: 0, color: '#red'}]},
+    })
+    expect(wrapper.findAll('path').length).toBe(0)
+    expect(wrapper.find('circle.donut-empty-ring').exists()).toBe(true)
+  })
+
+  it('size=50 produces viewBox 0 0 50 50', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: makeSlices([{value: 1}]), size: 50},
+    })
+    expect(wrapper.find('svg').attributes('viewBox')).toBe('0 0 50 50')
+  })
+
+  it('arc path starts with M (valid SVG path)', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: makeSlices([{value: 30}, {value: 70}])},
+    })
+    wrapper.findAll('path').forEach(p => {
+      expect(p.attributes('d')).toMatch(/^M/)
+    })
+  })
+
+  it('svg has role="img" attribute', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: makeSlices([{value: 10}])},
+    })
+    expect(wrapper.find('svg').attributes('role')).toBe('img')
   })
 })
