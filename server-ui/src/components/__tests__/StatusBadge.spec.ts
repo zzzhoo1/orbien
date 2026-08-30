@@ -60,4 +60,49 @@ describe('StatusBadge', () => {
     expect(wrapper.text()).toContain('离线')
     expect(wrapper.classes()).toContain('status-badge--offline')
   })
+
+  // ── additional coverage ─────────────────────────────────────────────────────
+
+  it('has status-badge base class always', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'running'}})
+    expect(wrapper.classes()).toContain('status-badge')
+  })
+
+  it('root element is a span', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'online'}})
+    expect(wrapper.element.tagName.toLowerCase()).toBe('span')
+  })
+
+  it('renders status-badge__label span', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'running', label: 'OK'}})
+    expect(wrapper.find('.status-badge__label').exists()).toBe(true)
+    expect(wrapper.find('.status-badge__label').text()).toBe('OK')
+  })
+
+  it('dot has aria-hidden=true', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'online', dot: true}})
+    expect(wrapper.find('.status-badge__dot').attributes('aria-hidden')).toBe('true')
+  })
+
+  it('updates label when props change', async () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'online', label: 'Old'}})
+    await wrapper.setProps({label: 'New'})
+    expect(wrapper.find('.status-badge__label').text()).toBe('New')
+  })
+
+  it('applies both status and size classes simultaneously', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'error', size: 'sm'}})
+    expect(wrapper.classes()).toContain('status-badge--error')
+    expect(wrapper.classes()).toContain('status-badge--sm')
+  })
+
+  it('dot is not rendered when dot=false explicitly', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'running', dot: false}})
+    expect(wrapper.find('.status-badge__dot').exists()).toBe(false)
+  })
+
+  it('label is empty string when omitted (no visible text)', () => {
+    const wrapper = mount(StatusBadge, {props: {status: 'pending'}})
+    expect(wrapper.find('.status-badge__label').text()).toBe('')
+  })
 })
