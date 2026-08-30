@@ -1,7 +1,6 @@
 import {describe, it, expect, vi, beforeEach} from 'vitest'
 import {setActivePinia, createPinia} from 'pinia'
 
-// ── mock @/api ──────────────────────────────────────────────────────────────────
 const mockFetchSystemInfo = vi.fn()
 const mockFetchClients = vi.fn()
 const mockFetchTunnels = vi.fn()
@@ -25,18 +24,15 @@ vi.mock('@/api', () => ({
   },
 }))
 
-// ── mock @/api/client (used by auth store) ────────────────────────────────────────
 vi.mock('@/api/client', () => ({
   fetchAuthStatus: vi.fn().mockResolvedValue({webauthn: false, password: true}),
 }))
 
-// ── mock @/router ─────────────────────────────────────────────────────────────────
 const mockRouterPush = vi.fn()
 vi.mock('@/router', () => ({
   router: {push: (...a: unknown[]) => mockRouterPush(...a)},
 }))
 
-// ── fixtures ──────────────────────────────────────────────────────────────────────
 const SYS_INFO = {version: '1.0', os: 'linux'}
 const CLIENTS = {items: [{id: 'c1'}, {id: 'c2'}]}
 const TUNNELS = {items: [{name: 't1'}]}
@@ -55,10 +51,8 @@ beforeEach(() => {
   globalThis.fetch = vi.fn().mockResolvedValue({ok: true})
 })
 
-// ── static import (mock closures must stay intact — no resetModules) ──────────────
 import {useDashboardStore} from '../dashboard'
 
-// ── initial state ─────────────────────────────────────────────────────────────────
 describe('useDashboardStore – initial state', () => {
   it('info is null', () => {
     expect(useDashboardStore().info).toBeNull()
@@ -78,9 +72,11 @@ describe('useDashboardStore – initial state', () => {
   it('loading is false', () => {
     expect(useDashboardStore().loading).toBe(false)
   })
+  it('proxies getter returns empty array initially', () => {
+    expect(useDashboardStore().proxies).toEqual([])
+  })
 })
 
-// ── refresh success ───────────────────────────────────────────────────────────────
 describe('useDashboardStore – refresh success', () => {
   it('populates info after refresh', async () => {
     successMocks()
@@ -110,6 +106,13 @@ describe('useDashboardStore – refresh success', () => {
     expect(store.proxies).toEqual(TUNNELS.items)
   })
 
+  it('proxies getter is identical reference to tunnels', async () => {
+    successMocks()
+    const store = useDashboardStore()
+    await store.refresh()
+    expect(store.proxies).toBe(store.tunnels)
+  })
+
   it('populates tokens after refresh', async () => {
     successMocks()
     const store = useDashboardStore()
@@ -124,6 +127,13 @@ describe('useDashboardStore – refresh success', () => {
     expect(store.error).toBeNull()
   })
 
+  it('loading is false after refresh completes', async () => {
+    successMocks()
+    const store = useDashboardStore()
+    await store.refresh()
+    expect(store.loading).toBe(false)
+  })
+
   it('handles missing items/tokens keys gracefully (defaults to [])', async () => {
     mockFetchSystemInfo.mockResolvedValue(SYS_INFO)
     mockFetchClients.mockResolvedValue({})
@@ -135,9 +145,18 @@ describe('useDashboardStore – refresh success', () => {
     expect(store.tunnels).toEqual([])
     expect(store.tokens).toEqual([])
   })
+
+  it('second consecutive refresh re-populates data', async () => {
+    successMocks()
+    const store = useDashboardStore()
+    await store.refresh()
+    const CLIENTS2 = {items: [{id: 'c3'}]}
+    mockFetchClients.mockResolvedValue(CLIENTS2)
+    await store.refresh()
+    expect(store.clients).toEqual(CLIENTS2.items)
+  })
 })
 
-// ── error handling ────────────────────────────────────────────────────────────────
 describe('useDashboardStore – refresh error handling', () => {
   it('sets error.code on ApiError', async () => {
     const {ApiError} = await import('@/api')
@@ -160,6 +179,16 @@ describe('useDashboardStore – refresh error handling', () => {
     const store = useDashboardStore()
     await store.refresh()
     expect(store.error).toEqual({code: 'unknown'})
+  })
+
+  it('loading is false after refresh errors', async () => {
+    mockFetchSystemInfo.mockRejectedValue(new Error('net'))
+    mockFetchClients.mockResolvedValue(CLIENTS)
+    mockFetchTunnels.mockResolvedValue(TUNNELS)
+    mockFetchSystemTokens.mockResolvedValue(TOKENS)
+    const store = useDashboardStore()
+    await store.refresh()
+    expect(store.loading).toBe(false)
   })
 
   it('clears previous error at the start of a new refresh', async () => {
@@ -189,5 +218,23 @@ describe('useDashboardStore – refresh error handling', () => {
     await store.refresh()
     expect(auth.authenticated).toBe(false)
     expect(mockRouterPush).toHaveBeenCalledWith({name: 'login'})
+  })
+
+  it('error is null before any refresh', () => {
+    const store = useDashboardStore()
+    expect(store.error).toBeNull()
+  })
+
+  it('multiple consecutive errors keep last error', async () => {
+    mockFetchSystemInfo.mockRejectedValue(new Error('fail1'))
+    mockFetchClients.mockResolvedValue(CLIENTS)
+    mockFetchTunnels.mockResolvedValue(TUNNELS)
+    mockFetchSystemTokens.mockResolvedValue(TOKENS)
+    const store = useDashboardStore()
+    await store.refresh()
+    expect(store.error).toEqual({code: 'unknown'})
+    mockFetchSystemInfo.mockRejectedValue(new Error('fail2'))
+    await store.refresh()
+    expect(store.error).toEqual({code: 'unknown'})
   })
 })
