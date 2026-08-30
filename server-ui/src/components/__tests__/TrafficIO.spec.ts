@@ -55,6 +55,16 @@ describe('TrafficIO', () => {
       const wrapper = w({layout: 'stack'})
       expect(wrapper.find('.sep').exists()).toBe(false)
     })
+
+    it('applies .stack class by default', () => {
+      const wrapper = w()
+      expect(wrapper.find('.traffic-io').classes()).toContain('stack')
+    })
+
+    it('applies .plain class by default', () => {
+      const wrapper = w()
+      expect(wrapper.find('.traffic-io').classes()).toContain('plain')
+    })
   })
 
   describe('inline layout', () => {
@@ -67,12 +77,28 @@ describe('TrafficIO', () => {
       const wrapper = w({layout: 'inline'})
       expect(wrapper.find('.traffic-io').classes()).toContain('inline')
     })
+
+    it('.sep text is "/"', () => {
+      const wrapper = w({layout: 'inline'})
+      expect(wrapper.find('.sep').text()).toBe('/')
+    })
+
+    it('.sep has aria-hidden="true"', () => {
+      const wrapper = w({layout: 'inline'})
+      expect(wrapper.find('.sep').attributes('aria-hidden')).toBe('true')
+    })
   })
 
   describe('chip variant', () => {
     it('applies .chip class', () => {
       const wrapper = w({variant: 'chip'})
       expect(wrapper.find('.traffic-io').classes()).toContain('chip')
+    })
+
+    it('chip+inline: both classes present', () => {
+      const wrapper = w({variant: 'chip', layout: 'inline'})
+      expect(wrapper.find('.traffic-io').classes()).toContain('chip')
+      expect(wrapper.find('.traffic-io').classes()).toContain('inline')
     })
   })
 
@@ -90,6 +116,12 @@ describe('TrafficIO', () => {
       expect(title).toContain('1.00 KB')
       expect(title).toContain('512 B')
     })
+
+    it('title format is "Outbound: X · Inbound: Y"', () => {
+      const wrapper = w({trafficIn: 0, trafficOut: 0})
+      const title = wrapper.find('.traffic-io').attributes('title') ?? ''
+      expect(title).toMatch(/Outbound.*Inbound/)
+    })
   })
 
   describe('large values', () => {
@@ -101,6 +133,23 @@ describe('TrafficIO', () => {
     it('formats GB correctly', () => {
       const wrapper = w({trafficIn: 1024 * 1024 * 1024})
       expect(wrapper.find('.row.in .val').text()).toBe('1.00 GB')
+    })
+
+    it('formats TB correctly', () => {
+      const wrapper = w({trafficOut: 1024 ** 4})
+      expect(wrapper.find('.row.out .val').text()).toBe('1.00 TB')
+    })
+  })
+
+  describe('arrow icons', () => {
+    it('.row.out .arrow has aria-hidden="true"', () => {
+      const wrapper = w()
+      expect(wrapper.find('.row.out .arrow').attributes('aria-hidden')).toBe('true')
+    })
+
+    it('.row.in .arrow has aria-hidden="true"', () => {
+      const wrapper = w()
+      expect(wrapper.find('.row.in .arrow').attributes('aria-hidden')).toBe('true')
     })
   })
 })
