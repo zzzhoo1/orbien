@@ -116,4 +116,41 @@ describe('TrafficSummary', () => {
     const outPct = pct(w.find('.leg.out').text())
     expect(inPct + outPct).toBe(100)
   })
+
+  it('total-label uses t("traffic.total") i18n key', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: 0, trafficOut: 0}})
+    expect(w.find('.total-label').text()).toBe('traffic.total')
+  })
+
+  it('in traffic-label uses t("traffic.in") i18n key', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: 0, trafficOut: 0}})
+    expect(w.find('.traffic-item.in .traffic-label').text()).toBe('traffic.in')
+  })
+
+  it('out traffic-label uses t("traffic.out") i18n key', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: 0, trafficOut: 0}})
+    expect(w.find('.traffic-item.out .traffic-label').text()).toBe('traffic.out')
+  })
+
+  it('traffic-bar has role="img"', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: 0, trafficOut: 0}})
+    expect(w.find('.traffic-bar').attributes('role')).toBe('img')
+  })
+
+  it('traffic-bar aria-label uses t("traffic.total")', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: 0, trafficOut: 0}})
+    expect(w.find('.traffic-bar').attributes('aria-label')).toBe('traffic.total')
+  })
+
+  it('null trafficIn only: outbound rendered correctly', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: null, trafficOut: 800}})
+    expect(w.find('.traffic-item.out .traffic-value').text()).toBe('800B')
+    expect(w.find('.traffic-item.in .traffic-value').text()).toBe('0B')
+  })
+
+  it('null trafficOut only: inbound rendered correctly', () => {
+    const w = mount(TrafficSummary, {props: {trafficIn: 800, trafficOut: null}})
+    expect(w.find('.traffic-item.in .traffic-value').text()).toBe('800B')
+    expect(w.find('.traffic-item.out .traffic-value').text()).toBe('0B')
+  })
 })
