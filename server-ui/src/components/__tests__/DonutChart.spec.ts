@@ -176,4 +176,23 @@ describe('DonutChart', () => {
     })
     expect(wrapper.find('svg').attributes('role')).toBe('img')
   })
+
+  it('svg aria-label is set from t("monitor.tunnelTypes")', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: makeSlices([{value: 10}])},
+    })
+    expect(wrapper.find('svg').attributes('aria-label')).toBe('monitor.tunnelTypes')
+  })
+
+  it('donut-total-label text is set from t("monitor.chartTotal")', () => {
+    const wrapper = mount(DonutChart, {
+      props: {slices: makeSlices([{value: 10}])},
+    })
+    expect(wrapper.find('.donut-total-label').text()).toBe('monitor.chartTotal')
+  })
+
+  it('donut-empty text is set from t("common.notConfigured") when slices is empty', () => {
+    const wrapper = mount(DonutChart, {props: {slices: []}})
+    expect(wrapper.find('.donut-empty').text()).toBe('common.notConfigured')
+  })
 })

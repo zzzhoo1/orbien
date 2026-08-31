@@ -162,6 +162,16 @@ describe('PaginationBar', () => {
       await wrapper.find('button[aria-label="Next page"]').trigger('click')
       expect(wrapper.emitted('update:page')![0]).toEqual([2])
     })
+
+    it('sequential next clicks emit incrementing page values', async () => {
+      const wrapper = w({total: 50, page: 1, pageSize: 10})
+      await wrapper.find('button[aria-label="Next page"]').trigger('click')
+      await wrapper.setProps({page: 2})
+      await wrapper.find('button[aria-label="Next page"]').trigger('click')
+      const emitted = wrapper.emitted('update:page') as number[][]
+      expect(emitted[0]).toEqual([2])
+      expect(emitted[1]).toEqual([3])
+    })
   })
 
   describe('page size select', () => {
