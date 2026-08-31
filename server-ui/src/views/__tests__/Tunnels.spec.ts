@@ -103,9 +103,9 @@ describe('Tunnels – empty state', () => {
 
 // ── filter chips ─────────────────────────────────────────────────────────────────
 describe('Tunnels – filter chips', () => {
-  it('renders 5 protocol filter chips (all,tcp,udp,http,https)', async () => {
+  it('renders 6 protocol filter chips (all,tcp,udp,http,https,socks5)', async () => {
     const {wrapper} = await mountTunnels()
-    expect(wrapper.findAll('.filter-chip')).toHaveLength(5)
+    expect(wrapper.findAll('.filter-chip')).toHaveLength(6)
   })
 
   it('all chip is active by default', async () => {
@@ -154,6 +154,21 @@ describe('Tunnels – filter chips', () => {
     await wrapper.findAll('.filter-chip')[2].trigger('click') // udp
     await flushPromises()
     expect(vm.page).toBe(1)
+  })
+
+  it('filters to socks5 tunnels when socks5 chip clicked', async () => {
+    mockStore.tunnels = [
+      makeTunnel({name: 'tun-socks5', type: 'socks5'}),
+      makeTunnel({name: 'tun-tcp', type: 'tcp'}),
+    ]
+    const {wrapper} = await mountTunnels()
+    const chips = wrapper.findAll('.filter-chip')
+    await chips[5].trigger('click') // socks5
+    await flushPromises()
+    expect(chips[5].classes()).toContain('active')
+    expect(wrapper.findAll('.tunnel-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('tun-socks5')
+    expect(wrapper.text()).not.toContain('tun-tcp')
   })
 })
 
