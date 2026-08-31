@@ -12,9 +12,9 @@ import {useToast} from '@/composables/useToast'
 import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
 import {kickProxy} from '@/api'
 
-type ProtocolFilter = 'all' | 'tcp' | 'udp' | 'http' | 'https'
+type ProtocolFilter = 'all' | 'tcp' | 'udp' | 'http' | 'https' | 'socks5'
 
-const PROTOCOLS: ProtocolFilter[] = ['all', 'tcp', 'udp', 'http', 'https']
+const PROTOCOLS: ProtocolFilter[] = ['all', 'tcp', 'udp', 'http', 'https', 'socks5']
 
 const store = useDashboardStore()
 const {t} = useLocale()
@@ -47,6 +47,7 @@ const typeCounts = computed(() => {
     udp: 0,
     http: 0,
     https: 0,
+    socks5: 0,
   }
   for (const tunnel of store.tunnels) {
     const ty = (tunnel.type || '').toLowerCase() as ProtocolFilter
