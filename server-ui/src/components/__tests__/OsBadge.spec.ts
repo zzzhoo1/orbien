@@ -104,4 +104,24 @@ describe('OsBadge', () => {
     expect(title).toContain('linux')
     expect(title).toContain('arm64')
   })
+
+  it('applies md size class when size=md', () => {
+    const w = mount(OsBadge, {props: {os: 'linux', size: 'md'}})
+    expect(w.find('.os-badge').classes()).toContain('md')
+  })
+
+  it('applies sm size class when size=sm (default)', () => {
+    const w = mount(OsBadge, {props: {os: 'linux'}})
+    expect(w.find('.os-badge').classes()).toContain('sm')
+  })
+
+  it('applies icon-only class when iconOnly=true', () => {
+    const w = mount(OsBadge, {props: {os: 'linux', iconOnly: true}})
+    expect(w.find('.os-badge').classes()).toContain('icon-only')
+  })
+
+  it('applies text-only class when textOnly=true', () => {
+    const w = mount(OsBadge, {props: {os: 'linux', textOnly: true}})
+    expect(w.find('.os-badge').classes()).toContain('text-only')
+  })
 })

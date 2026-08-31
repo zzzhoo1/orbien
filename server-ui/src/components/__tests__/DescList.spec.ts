@@ -54,4 +54,30 @@ describe('DescList', () => {
     const w = mount(DescList, {props: {items: []}})
     expect(w.findAll('.desc-item').length).toBe(0)
   })
+
+  it('does not set title attribute when tip is absent', () => {
+    const items: DescItem[] = [{key: 'x', label: 'X'}]
+    const w = mount(DescList, {props: {items}})
+    const title = w.find('.desc-item').attributes('title')
+    expect(title === undefined || title === '').toBe(true)
+  })
+
+  it('multiple named slots render into their own dd without cross-contamination', () => {
+    const items: DescItem[] = [
+      {key: 'alpha', label: 'Alpha'},
+      {key: 'beta', label: 'Beta'},
+    ]
+    const w = mount(DescList, {
+      props: {items},
+      slots: {
+        alpha: '<span class="a-val">ValueA</span>',
+        beta: '<span class="b-val">ValueB</span>',
+      },
+    })
+    const dds = w.findAll('dd.desc-value')
+    expect(dds[0].find('.a-val').text()).toBe('ValueA')
+    expect(dds[0].find('.b-val').exists()).toBe(false)
+    expect(dds[1].find('.b-val').text()).toBe('ValueB')
+    expect(dds[1].find('.a-val').exists()).toBe(false)
+  })
 })
