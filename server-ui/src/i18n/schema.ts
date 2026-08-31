@@ -148,6 +148,10 @@ export interface MessageSchema {
         lastStarted: string
         openClient: string
         delete: string
+        deleteConfirm: string
+        deleteOk: string
+        deleteCancel: string
+        deleting: string
         deleteSuccess: string
         deleteFailed: string
     }
