@@ -73,7 +73,7 @@ beforeEach(() => {
   mockStore.tunnels = []
 })
 
-// ── tunnel not found ───────────────────────────────────────────────────────────────
+// ── tunnel not found ────────────────────────────────────────────────────────────────
 describe('TunnelDetail – tunnel not found', () => {
   it('renders without crashing when tunnel is not in store', async () => {
     const {wrapper} = await mountDetail()
@@ -165,9 +165,29 @@ describe('TunnelDetail – summary card', () => {
     const {wrapper} = await mountDetail()
     expect(wrapper.text()).toContain('tunnels.domain')
   })
+
+  it('shows tunnels.port label for socks5 type (not domain)', async () => {
+    mockStore.tunnels = [makeTunnel({type: 'socks5', remoteAddr: '0.0.0.0:1080'})]
+    const {wrapper} = await mountDetail()
+    expect(wrapper.text()).toContain('tunnels.port')
+    expect(wrapper.text()).not.toContain('tunnels.domain')
+  })
+
+  it('renders SOCKS5 type badge in uppercase for socks5 tunnel', async () => {
+    mockStore.tunnels = [makeTunnel({type: 'socks5'})]
+    const {wrapper} = await mountDetail()
+    expect(wrapper.find('.type-badge').text()).toBe('SOCKS5')
+  })
+
+  it('formats socks5 remoteAddr port correctly (strips leading colon)', async () => {
+    mockStore.tunnels = [makeTunnel({type: 'socks5', remoteAddr: ':1080'})]
+    const {wrapper} = await mountDetail()
+    expect(wrapper.text()).toContain('1080')
+    expect(wrapper.text()).not.toContain(':1080')
+  })
 })
 
-// ── openClient navigation ────────────────────────────────────────────────────────────
+// ── openClient navigation ────────────────────────────────────────────────────────────────
 describe('TunnelDetail – openClient navigation', () => {
   it('navigates to client-detail on sessionId click', async () => {
     mockStore.tunnels = [makeTunnel()]
