@@ -26,12 +26,21 @@ const page = ref(1)
 const pageSize = ref(10)
 const statusFilter = ref<StatusFilter>('all')
 const kicking = ref<string | null>(null)
+const searchQuery = ref('')
 
 const filtered = computed(() => {
-  const list = store.clients
-  if (statusFilter.value === 'all') return list
-  if (statusFilter.value === 'online') return list.filter((c) => isOnline(c.status))
-  return list.filter((c) => !isOnline(c.status))
+  let list = store.clients
+  if (statusFilter.value === 'online') list = list.filter((c) => isOnline(c.status))
+  else if (statusFilter.value === 'offline') list = list.filter((c) => !isOnline(c.status))
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter(
+    (c) =>
+      c.sessionId?.toLowerCase().includes(q) ||
+      c.hostname?.toLowerCase().includes(q) ||
+      c.clientIP?.toLowerCase().includes(q) ||
+      c.user?.toLowerCase().includes(q),
+  )
 })
 
 const total = computed(() => filtered.value.length)
@@ -61,6 +70,10 @@ watch([total, pageSize, statusFilter], () => {
 })
 
 watch(statusFilter, () => {
+  page.value = 1
+})
+
+watch(searchQuery, () => {
   page.value = 1
 })
 
@@ -113,10 +126,45 @@ async function onKick(sessionId: string, evt: Event) {
         <span>{{ filterLabel(key) }}</span>
         <em>{{ statusCounts[key] }}</em>
       </button>
+
+      <div class="search-wrap">
+        <span class="search-icon" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </span>
+        <input
+            v-model="searchQuery"
+            type="search"
+            class="search-input"
+            :placeholder="t('clients.search')"
+            :aria-label="t('clients.search')"
+        />
+        <button
+            v-if="searchQuery"
+            type="button"
+            class="search-clear"
+            :aria-label="t('clients.searchClear')"
+            @click="searchQuery = ''"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div v-if="!store.clients.length" class="empty-card">
       {{ t('clients.empty') }}
+    </div>
+    <div v-else-if="!filtered.length && searchQuery" class="empty-card">
+      {{ t('clients.searchEmpty') }}
     </div>
     <div v-else-if="!filtered.length" class="empty-card">
       {{ t('clients.filterEmpty') }}
@@ -201,6 +249,7 @@ async function onKick(sessionId: string, evt: Event) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+  align-items: center;
 }
 
 .filter-chip {
@@ -249,6 +298,76 @@ async function onKick(sessionId: string, evt: Event) {
 .filter-chip.active em {
   color: var(--accent-text);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* ── search box ── */
+.search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.search-icon {
+  position: absolute;
+  left: 0.55rem;
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  pointer-events: none;
+  line-height: 0;
+}
+
+.search-input {
+  height: 2rem;
+  width: 13rem;
+  padding: 0 1.8rem 0 1.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  box-shadow: var(--shadow);
+  transition: width 0.2s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: none;
+}
+
+.search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-input::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.search-input:focus {
+  outline: none;
+  width: 16rem;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.search-clear {
+  position: absolute;
+  right: 0.45rem;
+  display: inline-grid;
+  place-items: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.search-clear:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
 }
 
 .empty-card {
@@ -473,6 +592,21 @@ async function onKick(sessionId: string, evt: Event) {
 
   .client-right {
     align-self: flex-end;
+  }
+}
+
+@media (max-width: 560px) {
+  .search-wrap {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .search-input {
+    width: 100%;
+  }
+
+  .search-input:focus {
+    width: 100%;
   }
 }
 </style>
