@@ -3,6 +3,7 @@ import {mount, flushPromises} from '@vue/test-utils'
 import {createPinia, setActivePinia} from 'pinia'
 import {createRouter, createMemoryHistory} from 'vue-router'
 import TunnelDetail from '../TunnelDetail.vue'
+import * as api from '@/api'
 
 // ── stub child components ──────────────────────────────────────────────────────
 vi.mock('@/components/AppIcon.vue',     () => ({default: {template: '<span class="stub-icon"/>',          props: ['name']}}))
@@ -23,6 +24,15 @@ vi.mock('@/composables/usePresence', () => ({
     statusLabel: (s: unknown) => String(s ?? ''),
   }),
 }))
+
+// ── mock useToast ─────────────────────────────────────────────────────────────
+const mockShowToast = vi.fn()
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({show: mockShowToast}),
+}))
+
+// ── mock @/api ────────────────────────────────────────────────────────────────
+vi.mock('@/api', () => ({kickProxy: vi.fn()}))
 
 // ── mock dashboard store ─────────────────────────────────────────────────────────
 const mockStore = {tunnels: [] as unknown[]}
@@ -71,6 +81,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   mockStore.tunnels = []
+  vi.mocked(api.kickProxy).mockResolvedValue(undefined)
 })
 
 // ── tunnel not found ────────────────────────────────────────────────────────────────
@@ -234,5 +245,88 @@ describe('TunnelDetail – chart toolbar', () => {
     mockStore.tunnels = [makeTunnel()]
     const {wrapper} = await mountDetail('my-tunnel')
     expect(wrapper.find('.stub-traffic-chart').exists()).toBe(true)
+  })
+})
+
+// ── delete ────────────────────────────────────────────────────────────────────────
+describe('TunnelDetail – delete', () => {
+  it('renders delete button', async () => {
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    expect(wrapper.find('.delete-btn').exists()).toBe(true)
+  })
+
+  it('clicking delete button shows confirm bar', async () => {
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    expect(wrapper.find('.confirm-bar').exists()).toBe(false)
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.confirm-bar').exists()).toBe(true)
+    expect(wrapper.find('.delete-btn').exists()).toBe(false)
+  })
+
+  it('cancel button hides confirm bar and shows delete button again', async () => {
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.confirm-cancel').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.confirm-bar').exists()).toBe(false)
+    expect(wrapper.find('.delete-btn').exists()).toBe(true)
+  })
+
+  it('ok button calls kickProxy with tunnel name', async () => {
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(api.kickProxy).toHaveBeenCalledWith('my-tunnel')
+  })
+
+  it('shows success toast after deletion', async () => {
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(mockShowToast).toHaveBeenCalledWith('info', 'tunnels.deleteSuccess')
+  })
+
+  it('navigates back to tunnels list after successful deletion', async () => {
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper, router} = await mountDetail()
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('tunnels')
+  })
+
+  it('shows error toast when kickProxy throws', async () => {
+    vi.mocked(api.kickProxy).mockRejectedValue(new Error('connection refused'))
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(mockShowToast).toHaveBeenCalledWith('error', 'connection refused')
+  })
+
+  it('hides confirm bar and re-shows delete button after failed deletion', async () => {
+    vi.mocked(api.kickProxy).mockRejectedValue(new Error('fail'))
+    mockStore.tunnels = [makeTunnel()]
+    const {wrapper} = await mountDetail()
+    await wrapper.find('.delete-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.confirm-bar').exists()).toBe(false)
+    expect(wrapper.find('.delete-btn').exists()).toBe(true)
   })
 })

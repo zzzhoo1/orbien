@@ -7,9 +7,11 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
 import TrafficIO from '@/components/TrafficIO.vue'
 import type {TrafficRange} from '@/api'
+import {kickProxy} from '@/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
+import {useToast} from '@/composables/useToast'
 import {formatTunnelEndpoint, isHttpTunnelType} from '@/utils/format'
 
 const route = useRoute()
@@ -17,10 +19,15 @@ const router = useRouter()
 const store = useDashboardStore()
 const {t} = useLocale()
 const {isOnline, statusLabel} = usePresence()
+const {show: showToast} = useToast()
 const trafficRange = ref<TrafficRange>('24h')
 const chartVariant = ref<'bar' | 'line'>('bar')
 const name = computed(() => String(route.params.name || ''))
 const tunnel = computed(() => store.tunnels.find((t) => t.name === name.value) || null)
+
+// ── delete state ────────────────────────────────────────────────────────────────
+const confirmDelete = ref(false)
+const deleting = ref(false)
 
 function goBack() {
   router.push({name: 'tunnels'})
@@ -29,6 +36,30 @@ function goBack() {
 function openClient(sessionId: string) {
   if (!sessionId) return
   router.push({name: 'client-detail', params: {sessionId}})
+}
+
+function requestDelete() {
+  confirmDelete.value = true
+}
+
+function cancelDelete() {
+  confirmDelete.value = false
+}
+
+async function confirmAndDelete() {
+  if (deleting.value) return
+  deleting.value = true
+  try {
+    await kickProxy(name.value)
+    showToast('info', t('tunnels.deleteSuccess', {name: name.value}))
+    router.push({name: 'tunnels'})
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    showToast('error', msg || t('tunnels.deleteFailed', {name: name.value}))
+    confirmDelete.value = false
+  } finally {
+    deleting.value = false
+  }
 }
 </script>
 
@@ -76,6 +107,41 @@ function openClient(sessionId: string) {
               </template>
             </div>
           </div>
+        </div>
+
+        <!-- delete action -->
+        <div class="head-right">
+          <Transition name="confirm">
+            <div v-if="confirmDelete" class="confirm-bar">
+              <span class="confirm-label">{{ t('tunnels.deleteConfirm') }}</span>
+              <button
+                  type="button"
+                  class="confirm-ok"
+                  :disabled="deleting"
+                  @click="confirmAndDelete"
+              >
+                {{ deleting ? t('tunnels.deleting') : t('tunnels.deleteOk') }}
+              </button>
+              <button
+                  type="button"
+                  class="confirm-cancel"
+                  :disabled="deleting"
+                  @click="cancelDelete"
+              >
+                {{ t('tunnels.deleteCancel') }}
+              </button>
+            </div>
+          </Transition>
+          <button
+              v-if="!confirmDelete"
+              type="button"
+              class="delete-btn"
+              :title="t('tunnels.delete')"
+              :aria-label="t('tunnels.delete')"
+              @click="requestDelete"
+          >
+            <AppIcon name="kick"/>
+          </button>
         </div>
       </div>
 
@@ -309,6 +375,109 @@ function openClient(sessionId: string) {
   word-break: break-all;
 }
 
+/* ── delete / confirm ── */
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.delete-btn {
+  box-sizing: border-box;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, transparent);
+  background: transparent;
+  color: var(--danger, #ef4444);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.delete-btn:hover {
+  border-color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 8%, transparent);
+}
+
+.confirm-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
+}
+
+.confirm-label {
+  font-size: 0.8rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.confirm-ok {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.22rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent);
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+  color: var(--danger, #ef4444);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.confirm-ok:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #ef4444) 20%, transparent);
+}
+
+.confirm-ok:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.confirm-cancel {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 0.22rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.confirm-cancel:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.confirm-cancel:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* transition */
+.confirm-enter-active,
+.confirm-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.confirm-enter-from,
+.confirm-leave-to {
+  opacity: 0;
+  transform: translateX(6px);
+}
+
+/* ── metrics ── */
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -367,6 +536,7 @@ function openClient(sessionId: string) {
   height: 1rem;
 }
 
+/* ── chart toolbar ── */
 .chart-toolbar {
   display: inline-flex;
   flex-wrap: wrap;
@@ -413,6 +583,14 @@ function openClient(sessionId: string) {
 @media (max-width: 520px) {
   .metrics {
     grid-template-columns: 1fr;
+  }
+
+  .confirm-bar {
+    flex-wrap: wrap;
+  }
+
+  .confirm-label {
+    width: 100%;
   }
 }
 </style>
