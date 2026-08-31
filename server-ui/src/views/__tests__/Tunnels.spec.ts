@@ -172,6 +172,68 @@ describe('Tunnels – filter chips', () => {
   })
 })
 
+// ── search box ───────────────────────────────────────────────────────────────────
+describe('Tunnels – search box', () => {
+  it('renders a search input', async () => {
+    const {wrapper} = await mountTunnels()
+    expect(wrapper.find('.search-input').exists()).toBe(true)
+  })
+
+  it('filters tunnels by name when typing in search box', async () => {
+    mockStore.tunnels = [
+      makeTunnel({name: 'web-frontend', type: 'tcp'}),
+      makeTunnel({name: 'db-backup', type: 'tcp'}),
+    ]
+    const {wrapper} = await mountTunnels()
+    await wrapper.find('.search-input').setValue('web')
+    await flushPromises()
+    expect(wrapper.findAll('.tunnel-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('web-frontend')
+    expect(wrapper.text()).not.toContain('db-backup')
+  })
+
+  it('shows tunnels.searchEmpty when no tunnel matches search query', async () => {
+    mockStore.tunnels = [makeTunnel({name: 'my-tunnel'})]
+    const {wrapper} = await mountTunnels()
+    await wrapper.find('.search-input').setValue('zzznomatch')
+    await flushPromises()
+    expect(wrapper.text()).toContain('tunnels.searchEmpty')
+    expect(wrapper.findAll('.tunnel-card')).toHaveLength(0)
+  })
+
+  it('resets page to 1 when search query changes', async () => {
+    mockStore.tunnels = Array.from({length: 12}, (_, i) =>
+      makeTunnel({name: `web-${i}`, sessionId: `s${i}`}),
+    )
+    const {wrapper} = await mountTunnels()
+    const vm = wrapper.vm as unknown as {page: number}
+    vm.page = 2
+    await flushPromises()
+    await wrapper.find('.search-input').setValue('web')
+    await flushPromises()
+    expect(vm.page).toBe(1)
+  })
+
+  it('search and protocol filter work together (intersection)', async () => {
+    mockStore.tunnels = [
+      makeTunnel({name: 'web-tcp',  type: 'tcp'}),
+      makeTunnel({name: 'web-http', type: 'http'}),
+      makeTunnel({name: 'api-tcp',  type: 'tcp'}),
+    ]
+    const {wrapper} = await mountTunnels()
+    // activate tcp chip
+    await wrapper.findAll('.filter-chip')[1].trigger('click')
+    await flushPromises()
+    // then search for 'web'
+    await wrapper.find('.search-input').setValue('web')
+    await flushPromises()
+    expect(wrapper.findAll('.tunnel-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('web-tcp')
+    expect(wrapper.text()).not.toContain('web-http')
+    expect(wrapper.text()).not.toContain('api-tcp')
+  })
+})
+
 // ── tunnel cards ──────────────────────────────────────────────────────────────────
 describe('Tunnels – tunnel cards', () => {
   it('renders tunnel name and type', async () => {

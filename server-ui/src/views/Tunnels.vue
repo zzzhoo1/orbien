@@ -25,12 +25,24 @@ const {show: showToast} = useToast()
 const page = ref(1)
 const pageSize = ref(10)
 const protocol = ref<ProtocolFilter>('all')
+const searchQuery = ref('')
 const deleting = ref<string | null>(null)
 
 const filtered = computed(() => {
-  const list = store.tunnels
-  if (protocol.value === 'all') return list
-  return list.filter((p) => (p.type || '').toLowerCase() === protocol.value)
+  let list = store.tunnels
+  if (protocol.value !== 'all') {
+    list = list.filter((p) => (p.type || '').toLowerCase() === protocol.value)
+  }
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((p) => {
+      const name = (p.name || '').toLowerCase()
+      const endpoint = (p.remoteAddr || '').toLowerCase()
+      const local = (p.localAddr || '').toLowerCase()
+      return name.includes(q) || endpoint.includes(q) || local.includes(q)
+    })
+  }
+  return list
 })
 
 const total = computed(() => filtered.value.length)
@@ -62,6 +74,10 @@ watch([total, pageSize, protocol], () => {
 })
 
 watch(protocol, () => {
+  page.value = 1
+})
+
+watch(searchQuery, () => {
   page.value = 1
 })
 
@@ -112,10 +128,44 @@ async function onDelete(name: string, evt: Event) {
         <span>{{ protocolLabel(key) }}</span>
         <em>{{ typeCounts[key] }}</em>
       </button>
+
+      <div class="search-wrap">
+        <span class="search-icon" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35"/>
+          </svg>
+        </span>
+        <input
+            v-model="searchQuery"
+            type="search"
+            class="search-input"
+            :placeholder="t('tunnels.searchPlaceholder')"
+            :aria-label="t('tunnels.searchPlaceholder')"
+        />
+        <button
+            v-if="searchQuery"
+            type="button"
+            class="search-clear"
+            :aria-label="t('tunnels.searchClear')"
+            @click="searchQuery = ''"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div v-if="!store.tunnels.length" class="empty-card">
       {{ t('tunnels.empty') }}
+    </div>
+    <div v-else-if="searchQuery && !filtered.length" class="empty-card">
+      {{ t('tunnels.searchEmpty') }}
     </div>
     <div v-else-if="!filtered.length" class="empty-card">
       {{ t('tunnels.filterEmpty') }}
@@ -194,6 +244,7 @@ async function onDelete(name: string, evt: Event) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+  align-items: center;
 }
 
 .filter-chip {
@@ -244,6 +295,80 @@ async function onDelete(name: string, evt: Event) {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* ── Search ── */
+.search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.search-icon {
+  position: absolute;
+  left: 0.6rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  line-height: 1;
+}
+
+.search-input {
+  height: 2rem;
+  padding: 0 2rem 0 2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow);
+  width: 13rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, width 0.2s ease;
+  /* remove native search cancel button */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-input::-webkit-search-cancel-button { display: none; }
+
+.search-input::placeholder { color: var(--muted); }
+
+.search-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  width: 16rem;
+}
+
+.search-clear {
+  position: absolute;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--muted) 20%, transparent);
+  color: var(--muted);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.search-clear:hover {
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+  color: var(--text);
+}
+
+@media (max-width: 560px) {
+  .search-wrap { margin-left: 0; width: 100%; }
+  .search-input { width: 100%; }
+  .search-input:focus { width: 100%; }
+}
+
+/* ── Cards ── */
 .empty-card {
   padding: 2.5rem 1rem;
   text-align: center;
