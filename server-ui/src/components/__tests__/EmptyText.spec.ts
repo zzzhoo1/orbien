@@ -22,6 +22,26 @@ describe('EmptyText', () => {
     expect(wrapper.text()).toContain('Nothing here')
   })
 
+  it('uses the localized fallback title when no title or title slot is supplied', () => {
+    const wrapper = mount(EmptyText)
+    expect(wrapper.find('.empty-state__title').text()).toBe('common.notConfigured')
+  })
+
+  it('prefers the title slot over the title prop', () => {
+    const wrapper = mount(EmptyText, {
+      props: { title: 'Prop title' },
+      slots: { title: 'Slot title' },
+    })
+    expect(wrapper.find('.empty-state__title').text()).toBe('Slot title')
+  })
+
+  it('renders the description prop', () => {
+    const wrapper = mount(EmptyText, {
+      props: { title: 'T', description: 'Description from prop' },
+    })
+    expect(wrapper.find('.empty-state__description').text()).toBe('Description from prop')
+  })
+
   it('renders icon when provided', () => {
     const wrapper = mount(EmptyText, { props: { icon: '⊕', title: 'Empty' } })
     expect(wrapper.find('.empty-state__icon').exists()).toBe(true)

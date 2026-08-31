@@ -29,4 +29,11 @@ describe('AppIcon', () => {
     const after = w.find('span.app-icon-asset').element.innerHTML
     expect(before).not.toBe(after)
   })
+
+  it('keeps the asset wrapper when the icon name changes', async () => {
+    const w = mount(AppIcon, {props: {name: 'user'}})
+    await w.setProps({name: 'tunnels'})
+    expect(w.findAll('span.app-icon-asset')).toHaveLength(1)
+    expect(w.find('span.app-icon-asset').attributes('aria-hidden')).toBe('true')
+  })
 })

@@ -12,24 +12,31 @@ vi.mock('@/components/AppIcon.vue', () => ({
 
 describe('IconBadge', () => {
   it('applies tone-blue class by default', () => {
-    const w = mount(IconBadge, {props: {name: 'tunnel'}})
+    const w = mount(IconBadge, {props: {name: 'tunnels'}})
     expect(w.find('.icon-badge').classes()).toContain('tone-blue')
   })
 
   it('applies the specified tone class', () => {
     for (const tone of ['blue', 'green', 'violet', 'orange'] as const) {
-      const w = mount(IconBadge, {props: {name: 'tunnel', tone}})
+      const w = mount(IconBadge, {props: {name: 'tunnels', tone}})
       expect(w.find('.icon-badge').classes()).toContain(`tone-${tone}`)
     }
   })
 
+  it('updates the tone class when the tone prop changes', async () => {
+    const w = mount(IconBadge, {props: {name: 'monitor', tone: 'green'}})
+    await w.setProps({tone: 'orange'})
+    expect(w.find('.icon-badge').classes()).toContain('tone-orange')
+    expect(w.find('.icon-badge').classes()).not.toContain('tone-green')
+  })
+
   it('passes the name prop through to AppIcon', () => {
-    const w = mount(IconBadge, {props: {name: 'client'}})
-    expect(w.find('.app-icon-stub').attributes('data-name')).toBe('client')
+    const w = mount(IconBadge, {props: {name: 'users'}})
+    expect(w.find('.app-icon-stub').attributes('data-name')).toBe('users')
   })
 
   it('has aria-hidden on the wrapper span', () => {
-    const w = mount(IconBadge, {props: {name: 'tunnel'}})
+    const w = mount(IconBadge, {props: {name: 'tunnels'}})
     expect(w.find('.icon-badge').attributes('aria-hidden')).toBe('true')
   })
 })
