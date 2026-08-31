@@ -1,4 +1,4 @@
-import {describe, expect, it, vi} from 'vitest'
+import {describe, expect, it, vi, beforeEach} from 'vitest'
 import {mount} from '@vue/test-utils'
 import LocaleSwitcher from '../LocaleSwitcher.vue'
 
@@ -15,6 +15,10 @@ vi.mock('@/composables/useLocale', () => ({
     switchLocale: mockSwitchLocale,
   }),
 }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('LocaleSwitcher', () => {
   it('renders an option for each locale', () => {
@@ -52,8 +56,6 @@ describe('LocaleSwitcher', () => {
     const w = mount(LocaleSwitcher)
     expect(w.find('.sr-only').text()).toBe('actions.locale')
   })
-
-  // ── additional coverage ──────────────────────────────────────────────────
 
   it('root element is a label', () => {
     const w = mount(LocaleSwitcher)
@@ -93,5 +95,13 @@ describe('LocaleSwitcher', () => {
   it('does not render extra option elements beyond options list', () => {
     const w = mount(LocaleSwitcher)
     expect(w.findAll('option').length).toBe(2)
+  })
+
+  it('calls switchLocale with the correct value on each change', async () => {
+    const w = mount(LocaleSwitcher)
+    await w.find('select').setValue('zh-CN')
+    await w.find('select').setValue('en-US')
+    expect(mockSwitchLocale).toHaveBeenNthCalledWith(1, 'zh-CN')
+    expect(mockSwitchLocale).toHaveBeenNthCalledWith(2, 'en-US')
   })
 })

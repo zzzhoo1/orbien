@@ -4,8 +4,8 @@ import ThemeToggle from '../ThemeToggle.vue'
 
 const mockToggle = vi.fn()
 
-vi.mock('@/assets/icon/sun.svg?raw', () => ({default: '<svg id="sun"/>'}))  
-vi.mock('@/assets/icon/moon.svg?raw', () => ({default: '<svg id="moon"/>'})) 
+vi.mock('@/assets/icon/sun.svg?raw', () => ({default: '<svg id="sun"/>'}))
+vi.mock('@/assets/icon/moon.svg?raw', () => ({default: '<svg id="moon"/>'}))
 
 vi.mock('@/composables/useTheme')
 
@@ -110,5 +110,15 @@ describe('ThemeToggle – structure & accessibility', () => {
     await w.find('button').trigger('click')
     await w.find('button').trigger('click')
     expect(mockToggle).toHaveBeenCalledTimes(2)
+  })
+
+  it('aria-label and title are always identical', () => {
+    for (const isDark of [true, false]) {
+      setupTheme(isDark)
+      const w = mount(ThemeToggle)
+      const ariaLabel = w.find('button').attributes('aria-label')
+      const title = w.find('button').attributes('title')
+      expect(ariaLabel).toBe(title)
+    }
   })
 })
