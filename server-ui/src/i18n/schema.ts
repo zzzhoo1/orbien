@@ -141,6 +141,9 @@ export interface MessageSchema {
         filter: string
         filterAll: string
         filterEmpty: string
+        searchPlaceholder: string
+        searchEmpty: string
+        searchClear: string
         back: string
         lastStarted: string
         openClient: string
