@@ -112,6 +112,8 @@ const enUS: MessageSchema = {
         filterAll: 'All',
         filterEmpty: 'No clients in this status',
         search: 'Search clients…',
+        searchEmpty: 'No clients match your search',
+        searchClear: 'Clear search',
         uptimeSecs: 'Connected {n}s',
         uptimeMins: 'Connected {n}m',
         uptimeHours: 'Connected {n}h',

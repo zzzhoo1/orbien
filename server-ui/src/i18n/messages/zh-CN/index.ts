@@ -112,6 +112,8 @@ const zhCN: MessageSchema = {
         filterAll: '全部',
         filterEmpty: '该状态下暂无客户端',
         search: '搜索客户端…',
+        searchEmpty: '没有匹配的客户端',
+        searchClear: '清除搜索',
         uptimeSecs: '已连接 {n} 秒',
         uptimeMins: '已连接 {n} 分钟',
         uptimeHours: '已连接 {n} 小时',

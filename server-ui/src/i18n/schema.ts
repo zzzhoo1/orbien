@@ -110,6 +110,8 @@ export interface MessageSchema {
         filterAll: string
         filterEmpty: string
         search: string
+        searchEmpty: string
+        searchClear: string
         uptimeSecs: string
         uptimeMins: string
         uptimeHours: string
