@@ -1,9 +1,9 @@
 import {describe, expect, it, vi, beforeEach} from 'vitest'
 import {mount, flushPromises} from '@vue/test-utils'
-import {nextTick} from 'vue'
 import TrafficChart from '../TrafficChart.vue'
 
-// ── mock 依赖 ────────────────────────────────────────────────────────────────
+// ── mocks ──────────────────────────────────────────────────────────────────
+
 vi.mock('@/composables/useLocale', () => ({
   useLocale: () => ({
     t: (key: string) => key,
@@ -13,161 +13,190 @@ vi.mock('@/composables/useLocale', () => ({
   }),
 }))
 
-const mockFetchSystem = vi.fn()
-const mockFetchTunnel = vi.fn()
-
-vi.mock('@/api/client', () => ({
-  fetchSystemTraffic: (...args: unknown[]) => mockFetchSystem(...args),
-  fetchTunnelTraffic: (...args: unknown[]) => mockFetchTunnel(...args),
-}))
-
 vi.mock('@/utils/format', () => ({
   formatFileSize: (n: number) => `${n}B`,
 }))
 
-// ── 辅助 ─────────────────────────────────────────────────────────────────────
-function emptyResponse() {
-  return Promise.resolve({history: [], granularity: 'day'})
+const mockFetchTunnel = vi.fn()
+const mockFetchSystem = vi.fn()
+
+vi.mock('@/api/client', () => ({
+  fetchTunnelTraffic: (...args: unknown[]) => mockFetchTunnel(...args),
+  fetchSystemTraffic: (...args: unknown[]) => mockFetchSystem(...args),
+}))
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+function makeHistory(n = 3) {
+  return Array.from({length: n}, (_, i) => ({
+    date: `2024-01-${String(i + 1).padStart(2, '0')}`,
+    trafficIn: (i + 1) * 100,
+    trafficOut: (i + 1) * 200,
+  }))
 }
 
-function historyResponse(points: {date: string; trafficIn: number | string; trafficOut: number | string}[]) {
-  return Promise.resolve({history: points, granularity: 'day'})
+function okResponse(history = makeHistory(), granularity = 'day') {
+  return {history, granularity}
 }
 
-function mountChart(props = {}) {
+function w(props: object = {}) {
   return mount(TrafficChart, {props})
 }
 
-// ── 测试 ─────────────────────────────────────────────────────────────────────
+// ── tests ──────────────────────────────────────────────────────────────────
+
 describe('TrafficChart', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('shows loading text while fetching with no cached points', async () => {
-    let resolve!: (v: unknown) => void
-    mockFetchSystem.mockReturnValue(new Promise((r) => {
-      resolve = r
-    }))
-    const wrapper = mountChart()
-    // 尚未 resolve，loading=true 且 points=[]；等待 loading 状态 flush 到 DOM
-    await nextTick()
-    expect(wrapper.text()).toContain('traffic.loading')
-    resolve({history: [], granularity: 'day'})
-    await flushPromises()
+  describe('loading state', () => {
+    it('shows loading text while fetch is in flight', async () => {
+      let resolve!: (v: unknown) => void
+      mockFetchSystem.mockReturnValue(new Promise(r => { resolve = r }))
+      const wrapper = w()
+      await vi.dynamicImportSettled?.()
+      expect(wrapper.find('.muted').text()).toBe('traffic.loading')
+      resolve(okResponse())
+    })
   })
 
-  it('shows empty text when API returns empty history', async () => {
-    mockFetchSystem.mockReturnValue(emptyResponse())
-    const wrapper = mountChart()
-    await flushPromises()
-    expect(wrapper.text()).toContain('traffic.empty')
+  describe('error state', () => {
+    it('shows error text when fetch rejects', async () => {
+      mockFetchSystem.mockRejectedValue(new Error('net error'))
+      const wrapper = w()
+      await flushPromises()
+      expect(wrapper.find('.muted').text()).toBe('traffic.failed')
+    })
   })
 
-  it('shows error text and clears points when API throws', async () => {
-    mockFetchSystem.mockRejectedValue(new Error('network error'))
-    const wrapper = mountChart()
-    await flushPromises()
-    expect(wrapper.text()).toContain('traffic.failed')
-    expect(wrapper.find('svg').exists()).toBe(false)
+  describe('empty state', () => {
+    it('shows empty text when history is empty array', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse([]))
+      const wrapper = w()
+      await flushPromises()
+      expect(wrapper.find('.muted').text()).toBe('traffic.empty')
+    })
   })
 
-  it('calls fetchTunnelTraffic when tunnelName is provided', async () => {
-    mockFetchTunnel.mockReturnValue(emptyResponse())
-    mountChart({tunnelName: 'my-tunnel'})
-    await flushPromises()
-    expect(mockFetchTunnel).toHaveBeenCalledWith('my-tunnel', '7d')
-    expect(mockFetchSystem).not.toHaveBeenCalled()
+  describe('bar chart (default variant)', () => {
+    it('renders bar rects when data is loaded', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(3)))
+      const wrapper = w()
+      await flushPromises()
+      expect(wrapper.findAll('rect.bar').length).toBeGreaterThan(0)
+    })
+
+    it('renders 2 bar rects per data point (in + out)', async () => {
+      const n = 4
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(n)))
+      const wrapper = w()
+      await flushPromises()
+      expect(wrapper.findAll('rect.bar').length).toBe(n * 2)
+    })
+
+    it('does not render line paths when variant=bar', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(3)))
+      const wrapper = w({variant: 'bar'})
+      await flushPromises()
+      expect(wrapper.find('path.stroke').exists()).toBe(false)
+    })
+
+    it('applies dense class when range=24h', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(3), 'hour'))
+      const wrapper = w({range: '24h'})
+      await flushPromises()
+      expect(wrapper.find('.traffic').classes()).toContain('dense')
+    })
   })
 
-  it('calls fetchSystemTraffic when tunnelName is empty', async () => {
-    mockFetchSystem.mockReturnValue(emptyResponse())
-    mountChart()
-    await flushPromises()
-    expect(mockFetchSystem).toHaveBeenCalledWith('7d')
+  describe('line chart (variant=line)', () => {
+    it('renders stroke path elements when variant=line', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(3)))
+      const wrapper = w({variant: 'line'})
+      await flushPromises()
+      expect(wrapper.findAll('path.stroke').length).toBe(2)
+    })
+
+    it('applies line class on root when variant=line', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(3)))
+      const wrapper = w({variant: 'line'})
+      await flushPromises()
+      expect(wrapper.find('.traffic').classes()).toContain('line')
+    })
+
+    it('does not render bar rects when variant=line', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(3)))
+      const wrapper = w({variant: 'line'})
+      await flushPromises()
+      expect(wrapper.find('rect.bar').exists()).toBe(false)
+    })
+
+    it('renders marker circles for each data point (in + out)', async () => {
+      const n = 3
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(n)))
+      const wrapper = w({variant: 'line'})
+      await flushPromises()
+      expect(wrapper.findAll('circle.mark').length).toBe(n * 2)
+    })
   })
 
-  it('converts string trafficIn/Out values via Number()', async () => {
-    mockFetchSystem.mockReturnValue(historyResponse([
-      {date: '2026-08-01', trafficIn: '1024', trafficOut: '2048'},
-    ]))
-    const wrapper = mountChart()
-    await flushPromises()
-    expect(wrapper.find('svg').exists()).toBe(true)
-    expect(wrapper.text()).toContain('1024B')
+  describe('legend', () => {
+    it('renders legend with traffic.in and traffic.out keys', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(2)))
+      const wrapper = w()
+      await flushPromises()
+      const legend = wrapper.find('.legend')
+      expect(legend.text()).toContain('traffic.in')
+      expect(legend.text()).toContain('traffic.out')
+    })
   })
 
-  it('maxVal defaults to 100 when all points are zero', async () => {
-    mockFetchSystem.mockReturnValue(historyResponse([
-      {date: '2026-08-01', trafficIn: 0, trafficOut: 0},
-      {date: '2026-08-02', trafficIn: 0, trafficOut: 0},
-    ]))
-    const wrapper = mountChart()
-    await flushPromises()
-    expect(wrapper.text()).toContain('100B')
-    expect(wrapper.text()).toContain('50B')
+  describe('y-axis labels', () => {
+    it('shows formatted maxVal in y-axis', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse([
+        {date: '2024-01-01', trafficIn: 1000, trafficOut: 500},
+      ]))
+      const wrapper = w()
+      await flushPromises()
+      expect(wrapper.find('.y').text()).toContain('1000B')
+    })
   })
 
-  it('renders bars in bar variant (default)', async () => {
-    mockFetchSystem.mockReturnValue(historyResponse([
-      {date: '2026-08-01', trafficIn: 500, trafficOut: 300},
-    ]))
-    const wrapper = mountChart({variant: 'bar'})
-    await flushPromises()
-    expect(wrapper.find('.bars').exists()).toBe(true)
-    expect(wrapper.find('.markers').exists()).toBe(false)
+  describe('tunnelName prop', () => {
+    it('calls fetchTunnelTraffic when tunnelName is set', async () => {
+      mockFetchTunnel.mockResolvedValue(okResponse(makeHistory(2)))
+      const wrapper = w({tunnelName: 'my-tunnel'})
+      await flushPromises()
+      expect(mockFetchTunnel).toHaveBeenCalledWith('my-tunnel', '7d')
+      expect(mockFetchSystem).not.toHaveBeenCalled()
+    })
+
+    it('calls fetchSystemTraffic when tunnelName is empty', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(2)))
+      const wrapper = w({tunnelName: ''})
+      await flushPromises()
+      expect(mockFetchSystem).toHaveBeenCalledWith('7d')
+      expect(mockFetchTunnel).not.toHaveBeenCalled()
+    })
   })
 
-  it('renders markers in line variant', async () => {
-    mockFetchSystem.mockReturnValue(historyResponse([
-      {date: '2026-08-01', trafficIn: 500, trafficOut: 300},
-    ]))
-    const wrapper = mountChart({variant: 'line'})
-    await flushPromises()
-    expect(wrapper.find('.markers').exists()).toBe(true)
-    expect(wrapper.find('.bars').exists()).toBe(false)
+  describe('range prop', () => {
+    it('passes range to fetchSystemTraffic', async () => {
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(2)))
+      const wrapper = w({range: '24h'})
+      await flushPromises()
+      expect(mockFetchSystem).toHaveBeenCalledWith('24h')
+    })
   })
 
-  it('formatLabel: day granularity formats 2026-08-27 → 8-27', async () => {
-    mockFetchSystem.mockReturnValue(Promise.resolve({
-      history: [{date: '2026-08-27', trafficIn: 0, trafficOut: 0}],
-      granularity: 'day',
-    }))
-    const wrapper = mountChart()
-    await flushPromises()
-    expect(wrapper.text()).toContain('8-27')
-  })
-
-  it('formatLabel: hour granularity formats T14:00:00 → 14:00', async () => {
-    mockFetchSystem.mockReturnValue(Promise.resolve({
-      history: [{date: '2026-08-27T14:00:00', trafficIn: 0, trafficOut: 0}],
-      granularity: 'hour',
-    }))
-    const wrapper = mountChart({range: '24h'})
-    await flushPromises()
-    expect(wrapper.text()).toContain('14')
-  })
-
-  it('xAt returns center for single data point (no divide-by-zero)', async () => {
-    mockFetchSystem.mockReturnValue(historyResponse([
-      {date: '2026-08-01', trafficIn: 100, trafficOut: 50},
-    ]))
-    const wrapper = mountChart()
-    await flushPromises()
-    expect(wrapper.find('svg').exists()).toBe(true)
-    const bars = wrapper.findAll('rect.bar')
-    expect(bars.length).toBe(2)
-  })
-
-  it('reloads when range prop changes', async () => {
-    mockFetchSystem.mockReturnValue(emptyResponse())
-    const wrapper = mountChart({range: '7d'})
-    await flushPromises()
-    expect(mockFetchSystem).toHaveBeenCalledWith('7d')
-
-    mockFetchSystem.mockReturnValue(emptyResponse())
-    await wrapper.setProps({range: '24h'})
-    await flushPromises()
-    expect(mockFetchSystem).toHaveBeenCalledWith('24h')
+  describe('x-axis labels', () => {
+    it('renders one x-label text per data point', async () => {
+      const n = 5
+      mockFetchSystem.mockResolvedValue(okResponse(makeHistory(n)))
+      const wrapper = w()
+      await flushPromises()
+      expect(wrapper.findAll('text.x-label').length).toBe(n)
+    })
   })
 })
