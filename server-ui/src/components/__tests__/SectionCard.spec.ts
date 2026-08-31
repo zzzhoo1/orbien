@@ -77,4 +77,19 @@ describe('SectionCard', () => {
     })
     expect(w.find('.section-body .extra-btn').exists()).toBe(false)
   })
+
+  it('section-head contains an h2 element', () => {
+    const w = mount(SectionCard, {props: {title: 'T'}})
+    expect(w.find('.section-head h2').exists()).toBe(true)
+  })
+
+  it('updating title does not affect extra slot content', async () => {
+    const w = mount(SectionCard, {
+      props: {title: 'Before'},
+      slots: {extra: '<span class="e">Extra</span>'},
+    })
+    await w.setProps({title: 'After'})
+    expect(w.find('.section-title').text()).toBe('After')
+    expect(w.find('.section-extra .e').text()).toBe('Extra')
+  })
 })

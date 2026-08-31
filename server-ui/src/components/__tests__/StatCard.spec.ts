@@ -87,4 +87,17 @@ describe('StatCard', () => {
     const w = mount(StatCard, {props: {label: 'x', icon: 'monitor'}})
     expect(w.find('.stat-icon').exists()).toBe(true)
   })
+
+  it('IconBadge appears when icon prop is added dynamically', async () => {
+    const w = mount(StatCard, {props: {label: 'x'}})
+    expect(w.findComponent(IconBadge).exists()).toBe(false)
+    await w.setProps({icon: 'users'})
+    expect(w.findComponent(IconBadge).exists()).toBe(true)
+  })
+
+  it('updates tone on IconBadge when tone prop changes', async () => {
+    const w = mount(StatCard, {props: {label: 'x', icon: 'monitor', tone: 'blue'}})
+    await w.setProps({tone: 'violet'})
+    expect(w.findComponent(IconBadge).props('tone')).toBe('violet')
+  })
 })
