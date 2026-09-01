@@ -39,7 +39,7 @@ struct Session {
     created: Instant,
 }
 
-const SESSION_TTL: Duration = Duration::from_secs(8 * 3600); // 8 h
+const SESSION_TTL: Duration = Duration::from_secs(8 * 3600);
 const COOKIE_NAME: &str = "orbien_session";
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const LOGIN_MAX_ATTEMPTS: u32 = 8;
@@ -49,9 +49,7 @@ use webauthn_rs::prelude::Passkey;
 // ── public AuthState shared via DashState ────────────────────────────────────
 
 pub struct AuthState {
-    /// token → session
     sessions: DashMap<String, Session>,
-    /// username → Vec<Passkey>
     passkeys: DashMap<String, Vec<Passkey>>,
     reg_states: DashMap<String, PasskeyRegistration>,
     auth_states: DashMap<String, PasskeyAuthentication>,
@@ -128,16 +126,18 @@ impl AuthState {
     }
 
     pub fn passkeys_for(&self, username: &str) -> Vec<Passkey> {
+        // clippy::map_clone: use .cloned() on the inner iterator
         self.passkeys
             .get(username)
-            .map(|v| v.clone())
+            .map(|v| v.value().clone())
             .unwrap_or_default()
     }
 
     pub fn all_passkeys(&self) -> Vec<Passkey> {
+        // clippy::map_clone: use iter().cloned() instead of .clone() on the value
         self.passkeys
             .iter()
-            .flat_map(|e| e.value().clone())
+            .flat_map(|e| e.value().iter().cloned())
             .collect()
     }
 
@@ -229,8 +229,6 @@ fn random_token() -> String {
 
 // ── Axum middleware ───────────────────────────────────────────────────────────
 
-/// Checks for a valid session cookie **or** falls back to HTTP Basic Auth.
-/// The `/api/v1/auth/*` routes and `/healthz` are always public.
 #[allow(clippy::result_large_err)]
 pub async fn auth_middleware(
     State(state): State<Arc<DashState>>,
@@ -239,22 +237,18 @@ pub async fn auth_middleware(
 ) -> Result<Response, Response> {
     let path = req.uri().path();
 
-    // Always allow auth endpoints and healthz through.
     if path.starts_with("/api/v1/auth/") || path == "/healthz" {
         return Ok(next.run(req).await);
     }
 
-    // Allow static assets through (JS/CSS/fonts for the login page).
     if !path.starts_with("/api/") {
         return Ok(next.run(req).await);
     }
 
-    // Escape hatch: disableAuth = true (local dev / CI only).
     if state.cfg.disable_auth {
         return Ok(next.run(req).await);
     }
 
-    // 1. Try session cookie.
     if let Some(auth) = &state.auth {
         if let Some(token) = extract_cookie(req.headers(), COOKIE_NAME) {
             if auth.validate_session(&token).is_some() {
@@ -263,14 +257,10 @@ pub async fn auth_middleware(
         }
     }
 
-    // 2. Fall back to Basic Auth (backward compatibility).
-    //    Only attempt if credentials are actually configured; if neither
-    //    user nor password is set and disableAuth is false, reject.
     if needs_basic_auth(&state) && basic_auth_ok(&state, req.headers()) {
         return Ok(next.run(req).await);
     }
 
-    // 3. Reject.
     let mut res = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     res.headers_mut().insert(
         header::WWW_AUTHENTICATE,
@@ -292,11 +282,6 @@ pub fn extract_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
     None
 }
 
-/// Determine whether cookies should carry the `Secure` flag.
-///
-/// Uses the **rightmost** (last) value of `X-Forwarded-Proto` so that a
-/// client-injected leftmost `"http"` entry cannot suppress the flag when
-/// the actual proxy hop is HTTPS.
 pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
     if let Some(proto) = headers
         .get("x-forwarded-proto")
@@ -392,11 +377,6 @@ fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
     credentials_match(&state.cfg.user, &state.cfg.password, u, p)
 }
 
-/// Extract a client identifier for rate-limiting.
-///
-/// Uses the **rightmost** (last) IP in `X-Forwarded-For` — the most recent
-/// proxy hop — so an attacker cannot bypass rate limits by prepending
-/// arbitrary IPs to the left side of the chain.
 pub fn client_key(headers: &axum::http::HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
@@ -429,7 +409,6 @@ mod tests {
     #[test]
     fn client_key_multi_hop_uses_rightmost() {
         let mut h = HeaderMap::new();
-        // Attacker prepends "1.2.3.4"; proxy appends "203.0.113.5".
         h.insert("x-forwarded-for", "1.2.3.4, 203.0.113.5".parse().unwrap());
         assert_eq!(client_key(&h), "203.0.113.5");
     }
@@ -445,7 +424,6 @@ mod tests {
 
     #[test]
     fn client_key_rightmost_invalid_falls_back() {
-        // Rightmost is invalid → filter rejects it → falls back to "direct".
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "203.0.113.5, invalid".parse().unwrap());
         assert_eq!(client_key(&h), "direct");
@@ -480,7 +458,6 @@ mod tests {
     #[test]
     fn cookie_secure_uses_rightmost_proto() {
         let mut h = HeaderMap::new();
-        // Client sends "http"; trusted proxy appends "https".
         h.insert("x-forwarded-proto", "http, https".parse().unwrap());
         assert!(cookie_secure(&h, "http://example.com"));
     }
@@ -488,7 +465,6 @@ mod tests {
     #[test]
     fn cookie_secure_attacker_cannot_downgrade() {
         let mut h = HeaderMap::new();
-        // Attacker injects "http" at leftmost; proxy appends "https".
         h.insert("x-forwarded-proto", "http, https".parse().unwrap());
         assert!(cookie_secure(&h, "http://example.com"));
     }

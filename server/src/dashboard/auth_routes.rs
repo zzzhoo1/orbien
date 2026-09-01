@@ -39,7 +39,9 @@ fn err(status: StatusCode, msg: &str) -> Response {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// fix: result_large_err — box the Response to shrink the Err variant below 128 bytes
+/// Get WebAuthn-enabled AuthState, or return a boxed error response.
+/// Box<Response> keeps the Result variants balanced in size (clippy::result_large_err suppressed).
+#[allow(clippy::result_large_err)]
 fn get_auth(state: &DashState) -> Result<&AuthState, Box<Response>> {
     let auth = state
         .auth
@@ -54,6 +56,7 @@ fn get_auth(state: &DashState) -> Result<&AuthState, Box<Response>> {
     Ok(auth)
 }
 
+#[allow(clippy::result_large_err)]
 fn get_sessions(state: &DashState) -> Result<&AuthState, Box<Response>> {
     state.auth.as_deref().ok_or_else(|| {
         Box::new(err(
@@ -69,7 +72,6 @@ fn cookie_is_secure(state: &DashState, headers: &axum::http::HeaderMap) -> bool 
 
 // ── auth status (public) ───────────────────────────────────────────────────
 
-/// `GET /api/v1/auth/status` — always public (no auth required).
 pub async fn auth_status(State(state): State<Arc<DashState>>) -> Response {
     let webauthn_available = state
         .auth
@@ -171,6 +173,7 @@ pub async fn webauthn_register_begin(
         Err(e) => return *e,
     };
 
+    // clippy::map_clone: CredentialID is Clone; use .cloned() on the iterator
     let existing: Vec<_> = auth
         .passkeys_for(&body.username)
         .iter()

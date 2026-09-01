@@ -18,7 +18,6 @@ use rust_embed::Embed;
 use serde::Deserialize;
 use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::Arc;
-use toml; // E0433 fix: explicit crate import
 
 #[derive(Embed)]
 #[folder = "assets/"]
@@ -32,7 +31,7 @@ pub fn router(state: Arc<DashState>) -> Router {
         .route("/static", get(|| async { Redirect::permanent("/") }))
         .route("/static/", get(|| async { Redirect::permanent("/") }))
         .route("/static/{*path}", get(redirect_legacy_static))
-        // ── auth endpoints ────────────────────────────────────────────────────────────────────────
+        // ── auth endpoints ──────────────────────────────────────────────────────────────────────
         .route("/api/v1/auth/status", get(auth_routes::auth_status))
         .route("/api/v1/auth/login", post(auth_routes::login))
         .route("/api/v1/auth/logout", post(auth_routes::logout))
@@ -81,7 +80,7 @@ async fn redirect_legacy_static(Path(path): Path<String>) -> Redirect {
 }
 
 #[allow(dead_code)]
-#[allow(clippy::result_large_err)] // axum middleware requires the exact `Response` error type
+#[allow(clippy::result_large_err)]
 pub async fn basic_auth(
     state: axum::extract::State<Arc<DashState>>,
     req: Request<Body>,
@@ -194,20 +193,17 @@ fn traffic_resp(hist: TunnelTrafficHistory) -> TunnelTrafficResp {
     }
 }
 
-// ── /healthz  ─────────────────────────────────────────────────────────────────────────────────
+// ── /healthz ──────────────────────────────────────────────────────────────────
 
-/// Simple liveness probe used by load-balancers and the dashboard health badge.
-/// Always returns 200 with plain text "ok" while the server is running.
 async fn healthz() -> &'static str {
     "ok"
 }
 
-// ── /api/v1/system/health  ─────────────────────────────────────────────────────────────────────
+// ── /api/v1/system/health ─────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
 struct HealthResp {
     status: &'static str,
-    /// Monotonic uptime in whole seconds (approximate).
     #[serde(rename = "uptimeSecs")]
     uptime_secs: u64,
     version: &'static str,
@@ -217,7 +213,6 @@ struct HealthResp {
     active_connections: usize,
 }
 
-/// Structured health response consumed by the Settings / Health page.
 async fn system_health(State(state): State<Arc<DashState>>) -> Json<ApiResponse<HealthResp>> {
     let snap = state.svc.dashboard_snapshot().await;
     let online = snap
@@ -227,25 +222,15 @@ async fn system_health(State(state): State<Arc<DashState>>) -> Json<ApiResponse<
         .count();
     Json(ApiResponse::ok(HealthResp {
         status: "ok",
-        uptime_secs: 0, // placeholder — replace with a real Instant once tracked in Service
+        uptime_secs: 0,
         version: VERSION,
         online_clients: online,
         active_connections: snap.active_connections,
     }))
 }
 
-// ── /api/v1/config/reload  ─────────────────────────────────────────────────────────────────────
+// ── /api/v1/config/reload ─────────────────────────────────────────────────────
 
-/// POST /api/v1/config/reload
-///
-/// Request body: `{ "configPath": "/path/to/orbien-server.toml" }` (optional).
-/// When `configPath` is omitted the server re-reads the path it was started
-/// with (stored in `DashboardConfig.config_file`, injected by `main.rs`).
-///
-/// Currently reloads the **access policy** (token rules) without requiring a
-/// process restart.  Network-level settings (ports, TLS) are NOT hot-swapped
-/// — the response’s `changed` list will include them so the operator knows a
-/// restart is needed.
 #[derive(Deserialize, Default)]
 struct ReloadBody {
     #[serde(rename = "configPath", default)]
@@ -258,7 +243,6 @@ async fn config_reload(
 ) -> Json<ApiResponse<ConfigReloadResp>> {
     let body = body.map(|b| b.0).unwrap_or_default();
 
-    // Resolve the config file path: explicit body > startup-injected path.
     let path = if !body.config_path.is_empty() {
         body.config_path.clone()
     } else {
@@ -273,22 +257,24 @@ async fn config_reload(
         });
     }
 
-    // Parse the config file with the `toml` crate.
-    let new_cfg: ServerConfig = match std::fs::read_to_string(&path) {
-        Ok(s) => match toml::from_str(&s) {
-            Ok(c) => c,
-            Err(e) => {
-                return Json(ApiResponse {
-                    code: 422,
-                    msg: format!("config parse error: {e}"),
-                    data: ConfigReloadResp { changed: vec![] },
-                });
-            }
-        },
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
         Err(e) => {
             return Json(ApiResponse {
                 code: 500,
                 msg: format!("cannot read {path}: {e}"),
+                data: ConfigReloadResp { changed: vec![] },
+            });
+        }
+    };
+
+    // Use fully-qualified path to avoid `use toml;` bare import (clippy::single_component_path_imports)
+    let new_cfg: ServerConfig = match toml::de::from_str(&raw) {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(ApiResponse {
+                code: 422,
+                msg: format!("config parse error: {e}"),
                 data: ConfigReloadResp { changed: vec![] },
             });
         }
@@ -496,8 +482,6 @@ async fn list_tunnels(
     }))
 }
 
-/// DELETE /api/v1/proxies/{name}
-/// Remove and stop a running proxy by name.
 async fn kick_proxy(
     State(state): State<Arc<DashState>>,
     Path(name): Path<String>,
@@ -613,7 +597,6 @@ fn bytes_response(content_type: &'static str, body: Vec<u8>) -> Response {
     (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], body).into_response()
 }
 
-/// Prometheus text exposition endpoint (`/metrics`).
 async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
     let snap = state.svc.dashboard_snapshot().await;
 
