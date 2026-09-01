@@ -24,6 +24,8 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export interface AuthStatus {
     webauthn: boolean
     password: boolean
+    /** True when the server is configured with an OIDC provider (issue #35). */
+    oidc: boolean
 }
 
 /**
@@ -36,7 +38,7 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
     try {
         return await api<AuthStatus>('/api/v1/auth/status')
     } catch {
-        return { webauthn: false, password: true }
+        return { webauthn: false, password: true, oidc: false }
     }
 }
 
@@ -125,4 +127,26 @@ export function fetchConnections(tunnelName: string, params: ConnectionListParam
     return api<Page<ConnectionInfo>>(
         `/api/v1/tunnels/${encodeURIComponent(tunnelName)}/connections?${qs.toString()}`,
     )
+}
+
+// ── config reload (issue #29) ─────────────────────────────────────────────────
+
+/**
+ * Describes the diff returned by POST /api/v1/config/reload.
+ * Each array contains tunnel names that were added, removed, or modified
+ * in the running config without a server restart.
+ */
+export interface ConfigReloadDiff {
+    added: string[]
+    removed: string[]
+    modified: string[]
+}
+
+/**
+ * POST /api/v1/config/reload
+ * Triggers a hot-reload of the server config. Returns a diff of what changed.
+ * Requires an authenticated session.
+ */
+export function reloadConfig() {
+    return api<ConfigReloadDiff>('/api/v1/config/reload', { method: 'POST' })
 }

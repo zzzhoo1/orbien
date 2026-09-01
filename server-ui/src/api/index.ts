@@ -11,7 +11,8 @@ export {
     fetchSystemTraffic,
     fetchSystemTokens,
     fetchConnections,
+    reloadConfig,
 } from './client'
-export type {AuthStatus, TrafficRange} from './client'
+export type {AuthStatus, TrafficRange, ConfigReloadDiff} from './client'
 export type {TunnelListParams, ConnectionListParams} from './client'
 export type {TokenMetricItem, TokenMetricsResp} from '@/types/api'

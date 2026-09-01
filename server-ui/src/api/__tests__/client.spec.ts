@@ -77,33 +77,39 @@ describe('api internals – fetch integration', () => {
 
 describe('fetchAuthStatus', () => {
   it('returns server data on success', async () => {
-    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data: {webauthn: true, password: true}}))
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data: {webauthn: true, password: true, oidc: false}}))
     const {fetchAuthStatus} = await importClient()
-    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: true, password: true})
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: true, password: true, oidc: false})
+  })
+
+  it('returns server data when oidc is true', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data: {webauthn: false, password: false, oidc: true}}))
+    const {fetchAuthStatus} = await importClient()
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: false, oidc: true})
   })
 
   it('returns safe defaults on any error without throwing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')))
     const {fetchAuthStatus} = await importClient()
-    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true, oidc: false})
   })
 
   it('returns safe defaults on 401', async () => {
     vi.stubGlobal('fetch', mockFetch(401, null, false))
     const {fetchAuthStatus} = await importClient()
-    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true, oidc: false})
   })
 
   it('returns safe defaults on 500', async () => {
     vi.stubGlobal('fetch', mockFetch(500, null, false))
     const {fetchAuthStatus} = await importClient()
-    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true, oidc: false})
   })
 
   it('returns safe defaults when server returns api error code', async () => {
     vi.stubGlobal('fetch', mockFetch(200, {code: 403, msg: 'forbidden', data: null}))
     const {fetchAuthStatus} = await importClient()
-    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true})
+    await expect(fetchAuthStatus()).resolves.toEqual({webauthn: false, password: true, oidc: false})
   })
 })
 
@@ -308,5 +314,42 @@ describe('fetchSystemTokens', () => {
     vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data}))
     const {fetchSystemTokens} = await importClient()
     await expect(fetchSystemTokens()).resolves.toMatchObject({tokens: [{token: 'tok1'}]})
+  })
+})
+
+describe('reloadConfig', () => {
+  it('sends POST to /api/v1/config/reload', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {added: [], removed: [], modified: []}})
+    vi.stubGlobal('fetch', spy)
+    const {reloadConfig} = await importClient()
+    await reloadConfig().catch(() => {})
+    expect(spy).toHaveBeenCalledWith(
+      '/api/v1/config/reload',
+      expect.objectContaining({method: 'POST'}),
+    )
+  })
+
+  it('returns ConfigReloadDiff on success', async () => {
+    const diff = {added: ['new-tunnel'], removed: [], modified: ['ssh']}
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data: diff}))
+    const {reloadConfig} = await importClient()
+    await expect(reloadConfig()).resolves.toEqual(diff)
+  })
+
+  it('throws ApiError(unauthorized) on 401', async () => {
+    vi.stubGlobal('fetch', mockFetch(401, null, false))
+    const {reloadConfig} = await importClient()
+    await expect(reloadConfig()).rejects.toMatchObject({code: 'unauthorized'})
+  })
+
+  it('passes credentials: include', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {added: [], removed: [], modified: []}})
+    vi.stubGlobal('fetch', spy)
+    const {reloadConfig} = await importClient()
+    await reloadConfig().catch(() => {})
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({credentials: 'include'}),
+    )
   })
 })
