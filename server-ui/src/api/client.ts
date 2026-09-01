@@ -19,19 +19,26 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     return body.data
 }
 
-// ── auth ──────────────────────────────────────────────────────────────────────
-
 export interface AuthStatus {
     webauthn: boolean
     password: boolean
 }
 
-/**
- * GET /api/v1/auth/status — always public, no credentials needed.
- * Returns which login methods the server has configured.
- * Silently returns defaults (password only) on any error so the UI never
- * breaks even if the endpoint is momentarily unreachable.
- */
+export interface SystemStats {
+    clientsOnline: number
+    clientsTotal: number
+    tunnelsTotal: number
+    activeConnections: number
+    totalTrafficIn: number
+    totalTrafficOut: number
+}
+
+export interface ReloadDiffResp {
+    added: string[]
+    removed: string[]
+    modified: string[]
+}
+
 export async function fetchAuthStatus(): Promise<AuthStatus> {
     try {
         return await api<AuthStatus>('/api/v1/auth/status')
@@ -40,10 +47,12 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
     }
 }
 
-// ── system ────────────────────────────────────────────────────────────────────
-
 export function fetchSystemInfo() {
     return api<SystemInfo>('/api/v1/system/info')
+}
+
+export function fetchSystemStats() {
+    return api<SystemStats>('/api/v1/system/stats')
 }
 
 export function fetchClients(page = 1, pageSize = 200) {
@@ -55,6 +64,12 @@ export function fetchClient(sessionId: string) {
 }
 
 export function kickClient(sessionId: string) {
+    return api<unknown>(`/api/v1/clients/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+    })
+}
+
+export function kickClientLegacy(sessionId: string) {
     return api<unknown>(`/api/v1/clients/${encodeURIComponent(sessionId)}/kick`, {
         method: 'POST',
     })
@@ -70,7 +85,7 @@ export type TunnelListParams = {
 export function fetchTunnels(pageOrParams: number | TunnelListParams = 1, pageSize = 200) {
     const params: TunnelListParams =
         typeof pageOrParams === 'number'
-            ? {page: pageOrParams, pageSize}
+            ? { page: pageOrParams, pageSize }
             : pageOrParams
     const qs = new URLSearchParams()
     qs.set('page', String(params.page ?? 1))
@@ -80,7 +95,10 @@ export function fetchTunnels(pageOrParams: number | TunnelListParams = 1, pageSi
     return api<Page<TunnelInfo>>(`/api/v1/tunnels?${qs.toString()}`)
 }
 
-/** DELETE /api/v1/proxies/{name} — force-remove a running proxy */
+export function fetchTunnel(name: string) {
+    return api<TunnelInfo>(`/api/v1/tunnels/${encodeURIComponent(name)}`)
+}
+
 export function kickProxy(name: string) {
     return api<unknown>(`/api/v1/proxies/${encodeURIComponent(name)}`, { method: 'DELETE' })
 }
@@ -105,7 +123,9 @@ export function fetchSystemTokens() {
     return api<TokenMetricsResp>('/api/v1/system/tokens')
 }
 
-// ── connections ───────────────────────────────────────────────────────────────
+export function reloadConfig() {
+    return api<ReloadDiffResp>('/api/v1/config/reload', { method: 'POST' })
+}
 
 export type ConnectionListParams = {
     page?: number
@@ -113,10 +133,6 @@ export type ConnectionListParams = {
     q?: string
 }
 
-/**
- * GET /api/v1/tunnels/:name/connections
- * Returns paginated active connections for a given tunnel.
- */
 export function fetchConnections(tunnelName: string, params: ConnectionListParams = {}) {
     const qs = new URLSearchParams()
     qs.set('page', String(params.page ?? 1))

@@ -73,6 +73,22 @@ pub struct SystemStatus {
 }
 
 #[derive(Serialize)]
+pub struct SystemStats {
+    #[serde(rename = "clientsOnline")]
+    pub clients_online: usize,
+    #[serde(rename = "clientsTotal")]
+    pub clients_total: usize,
+    #[serde(rename = "tunnelsTotal")]
+    pub tunnels_total: usize,
+    #[serde(rename = "activeConnections")]
+    pub active_connections: usize,
+    #[serde(rename = "totalTrafficIn")]
+    pub total_traffic_in: u64,
+    #[serde(rename = "totalTrafficOut")]
+    pub total_traffic_out: u64,
+}
+
+#[derive(Serialize)]
 pub struct ClientInfo {
     #[serde(rename = "sessionId")]
     pub session_id: String,
