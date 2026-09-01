@@ -2,6 +2,7 @@
 import {computed, ref, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -216,15 +217,21 @@ async function onKick(sessionId: string, evt: Event) {
       </div>
     </div>
 
-    <div v-if="!store.clients.length" class="empty-card">
-      {{ t('clients.empty') }}
-    </div>
-    <div v-else-if="!filtered.length && searchQuery" class="empty-card">
-      {{ t('clients.searchEmpty') }}
-    </div>
-    <div v-else-if="!filtered.length" class="empty-card">
-      {{ t('clients.filterEmpty') }}
-    </div>
+    <EmptyState
+        v-if="!store.clients.length"
+        type="clients"
+        :title="t('clients.empty')"
+    />
+    <EmptyState
+        v-else-if="!filtered.length && searchQuery"
+        type="search"
+        :title="t('clients.searchEmpty')"
+    />
+    <EmptyState
+        v-else-if="!filtered.length"
+        type="filter"
+        :title="t('clients.filterEmpty')"
+    />
 
     <article
         v-for="c in pageItems"
@@ -473,16 +480,6 @@ async function onKick(sessionId: string, evt: Event) {
 .search-clear:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--muted) 14%, transparent);
-}
-
-.empty-card {
-  padding: 2.5rem 1rem;
-  text-align: center;
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
 }
 
 .client-card {

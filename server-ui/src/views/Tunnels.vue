@@ -4,6 +4,7 @@ import {useRouter} from 'vue-router'
 import PaginationBar from '@/components/PaginationBar.vue'
 import TrafficIO from '@/components/TrafficIO.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
@@ -161,15 +162,21 @@ async function onDelete(name: string, evt: Event) {
       </div>
     </div>
 
-    <div v-if="!store.tunnels.length" class="empty-card">
-      {{ t('tunnels.empty') }}
-    </div>
-    <div v-else-if="searchQuery && !filtered.length" class="empty-card">
-      {{ t('tunnels.searchEmpty') }}
-    </div>
-    <div v-else-if="!filtered.length" class="empty-card">
-      {{ t('tunnels.filterEmpty') }}
-    </div>
+    <EmptyState
+        v-if="!store.tunnels.length"
+        type="tunnels"
+        :title="t('tunnels.empty')"
+    />
+    <EmptyState
+        v-else-if="searchQuery && !filtered.length"
+        type="search"
+        :title="t('tunnels.searchEmpty')"
+    />
+    <EmptyState
+        v-else-if="!filtered.length"
+        type="filter"
+        :title="t('tunnels.filterEmpty')"
+    />
 
     <article
         v-for="tunnel in pageItems"
@@ -325,7 +332,6 @@ async function onDelete(name: string, evt: Event) {
   box-shadow: var(--shadow);
   width: 13rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, width 0.2s ease;
-  /* remove native search cancel button */
   -webkit-appearance: none;
   appearance: none;
 }
@@ -369,16 +375,6 @@ async function onDelete(name: string, evt: Event) {
 }
 
 /* ── Cards ── */
-.empty-card {
-  padding: 2.5rem 1rem;
-  text-align: center;
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
-
 .tunnel-card {
   display: flex;
   align-items: center;
