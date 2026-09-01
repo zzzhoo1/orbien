@@ -192,6 +192,10 @@ impl Service {
     /// Returns the list of top-level config keys that changed relative to the
     /// currently-loaded config so the caller can surface a meaningful diff to
     /// the operator.
+    ///
+    /// `AuthConfig` fields: `auth_type`, `token`, `token_policies`.
+    /// There is no `password` field on `AuthConfig`; dashboard credentials
+    /// live in `DashboardConfig.password` and are not hot-reloaded.
     pub async fn reload_access_policy(
         &self,
         new_cfg: &ServerConfig,
@@ -202,23 +206,31 @@ impl Service {
         // Compute a coarse diff of observable top-level fields.
         let mut changed: Vec<String> = Vec::new();
         let old = &self.cfg;
+
         if old.listen != new_cfg.listen {
             changed.push("listen".into());
         }
-        if old.auth.token_policies != new_cfg.auth.token_policies
-            || old.auth.password != new_cfg.auth.password
+
+        // AuthConfig has: auth_type, token, token_policies
+        // Dashboard password (DashboardConfig.password) is NOT hot-reloaded.
+        if old.auth.auth_type != new_cfg.auth.auth_type
+            || old.auth.token != new_cfg.auth.token
+            || old.auth.token_policies != new_cfg.auth.token_policies
         {
             changed.push("auth".into());
         }
+
         if old.http_gw_port != new_cfg.http_gw_port
             || old.https_gw_port != new_cfg.https_gw_port
             || old.http_gw_enabled() != new_cfg.http_gw_enabled()
         {
             changed.push("gateway".into());
         }
+
         if old.root_domain != new_cfg.root_domain {
             changed.push("root_domain".into());
         }
+
         if old.quic_port != new_cfg.quic_port || old.kcp_port != new_cfg.kcp_port {
             changed.push("transport_ports".into());
         }
