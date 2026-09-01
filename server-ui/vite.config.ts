@@ -2,13 +2,20 @@ import {defineConfig} from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import {fileURLToPath, URL} from 'node:url'
 
+const srcRoot = fileURLToPath(new URL('./src', import.meta.url))
+const rawSvgMock = fileURLToPath(new URL('./src/test/mocks/rawSvgMock.ts', import.meta.url))
+
 export default defineConfig({
     plugins: [vue()],
     base: '/',
     resolve: {
-        alias: {
-            '@': fileURLToPath(new URL('./src', import.meta.url)),
-        },
+        alias: [
+            {find: /^@$/, replacement: srcRoot},
+            {find: /^@\//, replacement: `${srcRoot}/`},
+            // Stub all ?raw SVG imports so jsdom tests don't choke on SVG content
+            {find: '@/assets/icon/search.svg?raw', replacement: rawSvgMock},
+            {find: '@/assets/icon/signal.svg?raw', replacement: rawSvgMock},
+        ],
     },
     server: {
         port: 5173,
@@ -32,12 +39,5 @@ export default defineConfig({
         environment: 'jsdom',
         globals: true,
         include: ['src/**/*.{spec,test}.ts'],
-        // Alias ?raw SVG imports to a stub so jsdom tests don't choke on raw SVG content
-        alias: [
-            {
-                find: /^.*\.svg\?raw$/,
-                replacement: fileURLToPath(new URL('./src/test/mocks/rawSvgMock.ts', import.meta.url)),
-            },
-        ],
     },
 })
