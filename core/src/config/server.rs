@@ -98,7 +98,11 @@ pub struct ServerConfig {
     pub ctrl_heartbeat_timeout_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Per-token access policy entry.
+///
+/// `PartialEq` is derived so that `reload_access_policy` can compare
+/// the old and new `token_policies` vecs with `!=` (E0369 fix).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct TokenPolicy {
     pub token: String,
     #[serde(default)]
@@ -173,6 +177,15 @@ pub struct DashboardConfig {
     pub webauthn_origin: String,
     #[serde(default, rename = "staticDir", alias = "static_dir")]
     pub static_dir: String,
+    /// Path to the TOML config file that was used to start the server.
+    /// Stored here so that `POST /api/v1/config/reload` can re-read it
+    /// without the caller having to supply the path every time.
+    ///
+    /// This field is **not** deserialized from the config file itself
+    /// (it would be a circular reference); it is injected at startup by
+    /// `main.rs` after the config is loaded.
+    #[serde(skip)]
+    pub config_file: Option<String>,
     /// Explicitly disable authentication — for local dev / CI only.
     /// WARNING: Never set this in production.
     #[serde(default, rename = "disableAuth", alias = "disable_auth")]
