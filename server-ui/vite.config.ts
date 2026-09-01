@@ -1,19 +1,15 @@
 import {defineConfig} from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import {fileURLToPath, URL} from 'node:url'
-import path from 'node:path'
-
-const srcRoot = fileURLToPath(new URL('./src', import.meta.url))
-const rawSvgMock = path.resolve(srcRoot, 'test/mocks/rawSvgMock.ts')
 
 export default defineConfig({
     plugins: [vue()],
     base: '/',
     resolve: {
         alias: {
-            '@': srcRoot,
-            '@/assets/icon/search.svg?raw': rawSvgMock,
-            '@/assets/icon/signal.svg?raw': rawSvgMock,
+            '@': fileURLToPath(new URL('./src', import.meta.url)),
+            '@/assets/icon/search.svg?raw': fileURLToPath(new URL('./src/test/mocks/rawSvgMock.ts', import.meta.url)),
+            '@/assets/icon/signal.svg?raw': fileURLToPath(new URL('./src/test/mocks/rawSvgMock.ts', import.meta.url)),
         },
     },
     server: {
