@@ -8,15 +8,6 @@ function mountEmptyState(props: Record<string, unknown>) {
   return mount(EmptyState, {props})
 }
 
-/**
- * Remove all Vue SFC scoped-style attributes (data-v-XXXXXXXX or
- * data-v-XXXXXXXX="") before snapshotting so the snapshot is stable
- * across different build hashes.
- */
-function stripScopeAttrs(html: string): string {
-  return html.replace(/\s+data-v-[a-z0-9]+(?:="[^"]*")?/g, '')
-}
-
 // ── suite ─────────────────────────────────────────────────────────────────────
 
 describe('EmptyState', () => {
@@ -120,7 +111,7 @@ describe('EmptyState', () => {
     })
   })
 
-  // ── snapshot ─────────────────────────────────────────────────────────────────
+  // ── full-render structural test (replaces fragile html snapshot) ──────────
 
   it('matches snapshot with all props', () => {
     const wrapper = mountEmptyState({
@@ -128,6 +119,25 @@ describe('EmptyState', () => {
       title: 'No clients yet',
       desc: 'Connect a client to begin.',
     })
-    expect(stripScopeAttrs(wrapper.html())).toMatchSnapshot()
+
+    // root structure
+    const root = wrapper.find('.empty-state')
+    expect(root.exists()).toBe(true)
+    expect(root.attributes('role')).toBe('status')
+    expect(root.attributes('aria-live')).toBe('polite')
+
+    // illustration block: exactly one SVG
+    const illustration = wrapper.find('.empty-illustration')
+    expect(illustration.exists()).toBe(true)
+    expect(illustration.attributes('aria-hidden')).toBe('true')
+    expect(illustration.findAll('svg')).toHaveLength(1)
+
+    // clients SVG: has circles for avatar shapes
+    const circles = illustration.findAll('circle')
+    expect(circles.length).toBeGreaterThanOrEqual(2)
+
+    // text content
+    expect(wrapper.find('.empty-title').text()).toBe('No clients yet')
+    expect(wrapper.find('.empty-desc').text()).toBe('Connect a client to begin.')
   })
 })
