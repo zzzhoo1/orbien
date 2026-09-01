@@ -8,6 +8,11 @@ function mountEmptyState(props: Record<string, unknown>) {
   return mount(EmptyState, {props})
 }
 
+/** Remove non-deterministic Vue scoped-style attributes before snapshotting. */
+function stripScopeAttrs(html: string): string {
+  return html.replace(/\s*data-v-[a-z0-9]+(="")?/g, '')
+}
+
 // ── suite ─────────────────────────────────────────────────────────────────────
 
 describe('EmptyState', () => {
@@ -119,6 +124,6 @@ describe('EmptyState', () => {
       title: 'No clients yet',
       desc: 'Connect a client to begin.',
     })
-    expect(wrapper.html()).toMatchSnapshot()
+    expect(stripScopeAttrs(wrapper.html())).toMatchSnapshot()
   })
 })
