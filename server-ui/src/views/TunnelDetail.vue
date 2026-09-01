@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import {computed, ref} from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
 import TrafficIO from '@/components/TrafficIO.vue'
 import type {TrafficRange} from '@/api'
-import {kickProxy} from '@/api'
+import {fetchConnections, kickProxy} from '@/api'
+import type {ConnectionInfo} from '@/types/api'
 import {useDashboardStore} from '@/stores/dashboard'
 import {useLocale} from '@/composables/useLocale'
 import {usePresence} from '@/composables/usePresence'
@@ -25,10 +27,92 @@ const chartVariant = ref<'bar' | 'line'>('bar')
 const name = computed(() => String(route.params.name || ''))
 const tunnel = computed(() => store.tunnels.find((t) => t.name === name.value) || null)
 
-// ── delete state ────────────────────────────────────────────────────────────────
+// ── delete state ──────────────────────────────────────────────────────────────
 const confirmDelete = ref(false)
 const deleting = ref(false)
 
+// ── connections panel ─────────────────────────────────────────────────────────
+const connections = ref<ConnectionInfo[]>([])
+const connTotal = ref(0)
+const connPage = ref(1)
+const connPageSize = ref(10)
+const connSearch = ref('')
+const connLoading = ref(false)
+const connReady = ref(false)
+let connReqSeq = 0
+let connSearchDebounce: number | null = null
+let connRefreshTimer: number | null = null
+
+async function loadConnections() {
+  const seq = ++connReqSeq
+  connLoading.value = true
+  try {
+    const q = connSearch.value.trim()
+    const data = await fetchConnections(name.value, {
+      page: connPage.value,
+      pageSize: connPageSize.value,
+      q: q || undefined,
+    })
+    if (seq !== connReqSeq) return
+    const maxPage = Math.max(1, Math.ceil(data.total / Math.max(data.pageSize, 1)))
+    if (data.items.length === 0 && data.total > 0 && data.page > maxPage) {
+      connPage.value = maxPage
+      await loadConnections()
+      return
+    }
+    connections.value = data.items ?? []
+    connTotal.value = data.total
+    connPage.value = data.page
+    connPageSize.value = data.pageSize
+  } catch {
+    if (seq !== connReqSeq) return
+  } finally {
+    if (seq === connReqSeq) connLoading.value = false
+  }
+}
+
+function clearConnSearchDebounce() {
+  if (connSearchDebounce !== null) {
+    window.clearTimeout(connSearchDebounce)
+    connSearchDebounce = null
+  }
+}
+
+watch(connSearch, () => {
+  if (!connReady.value) return
+  clearConnSearchDebounce()
+  connReqSeq++
+  connLoading.value = false
+  connPage.value = 1
+  connSearchDebounce = window.setTimeout(() => {
+    connSearchDebounce = null
+    loadConnections()
+  }, 300)
+})
+
+watch([connPage, connPageSize], () => {
+  if (!connReady.value) return
+  if (connSearchDebounce !== null) return
+  loadConnections()
+})
+
+onMounted(async () => {
+  await loadConnections()
+  connReady.value = true
+  connRefreshTimer = window.setInterval(() => {
+    loadConnections()
+  }, 5000)
+})
+
+onUnmounted(() => {
+  clearConnSearchDebounce()
+  if (connRefreshTimer !== null) {
+    window.clearInterval(connRefreshTimer)
+    connRefreshTimer = null
+  }
+})
+
+// ── helpers ───────────────────────────────────────────────────────────────────
 function goBack() {
   router.push({name: 'tunnels'})
 }
@@ -221,6 +305,92 @@ async function confirmAndDelete() {
           :refresh-ms="5000"
       />
     </SectionCard>
+
+    <!-- ── connections panel ── -->
+    <section class="conn-panel card">
+      <div class="conn-header">
+        <div class="conn-title">
+          <h3>{{ t('tunnels.connectionsTitle') }}</h3>
+          <span class="conn-count">{{ connTotal }}</span>
+        </div>
+        <label class="conn-search">
+          <span class="conn-search-icon" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="M21 21l-4.35-4.35"/>
+            </svg>
+          </span>
+          <input
+              v-model="connSearch"
+              type="search"
+              class="conn-search-input"
+              :placeholder="t('tunnels.connectionsSearchPlaceholder')"
+              :aria-label="t('tunnels.connectionsSearchPlaceholder')"
+          />
+          <button
+              v-if="connSearch"
+              type="button"
+              class="conn-search-clear"
+              :aria-label="t('tunnels.connectionsSearchClear')"
+              @click="connSearch = ''"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </label>
+      </div>
+
+      <div v-if="connLoading && !connections.length" class="conn-empty">
+        {{ t('traffic.loading') }}
+      </div>
+      <div v-else-if="!connections.length" class="conn-empty">
+        {{
+          connSearch.trim()
+            ? t('tunnels.connectionsSearchEmpty', {q: connSearch.trim()})
+            : t('tunnels.connectionsEmpty')
+        }}
+      </div>
+
+      <div v-else class="conn-list">
+        <div
+            v-for="conn in connections"
+            :key="conn.id"
+            class="conn-row"
+        >
+          <span class="conn-remote mono">
+            <em>{{ t('tunnels.connectionRemoteAddr') }}</em>
+            {{ conn.remoteAddr || '—' }}
+          </span>
+          <span v-if="conn.localAddr" class="conn-local mono">
+            <em>{{ t('tunnels.connectionLocalAddr') }}</em>
+            {{ conn.localAddr }}
+          </span>
+          <span v-if="conn.connectedAt" class="conn-time">
+            <em>{{ t('tunnels.connectionConnectedAt') }}</em>
+            {{ conn.connectedAt }}
+          </span>
+          <span v-if="conn.trafficIn != null || conn.trafficOut != null" class="conn-traffic">
+            <TrafficIO
+                layout="inline"
+                :traffic-in="conn.trafficIn"
+                :traffic-out="conn.trafficOut"
+            />
+          </span>
+        </div>
+      </div>
+
+      <PaginationBar
+          v-if="connTotal > 0"
+          v-model:page="connPage"
+          v-model:page-size="connPageSize"
+          :total="connTotal"
+      />
+    </section>
   </div>
 </template>
 
@@ -574,6 +744,162 @@ async function confirmAndDelete() {
   color: var(--text);
 }
 
+/* ── connections panel ── */
+.conn-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.conn-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.95rem 1.15rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.conn-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.conn-title h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.conn-count {
+  min-width: 1.35rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius);
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.conn-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: min(100%, 14rem);
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
+}
+
+.conn-search-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.conn-search-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.conn-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.conn-search input::placeholder {
+  color: var(--muted);
+}
+
+.conn-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 0;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.conn-search-clear:hover {
+  background: color-mix(in srgb, var(--muted) 32%, transparent);
+  color: var(--text);
+}
+
+.conn-empty {
+  padding: 2.25rem 1rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.conn-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.conn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.25rem;
+  padding: 0.75rem 1.15rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+
+.conn-row:last-child {
+  border-bottom: 0;
+}
+
+.conn-remote,
+.conn-local {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.conn-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.conn-row em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-right: 0.25rem;
+}
+
+.conn-panel :deep(.pagination-bar) {
+  padding: 0 1rem 0.9rem;
+  border-top: 0;
+}
+
 @media (max-width: 960px) {
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -591,6 +917,11 @@ async function confirmAndDelete() {
 
   .confirm-label {
     width: 100%;
+  }
+
+  .conn-row {
+    flex-direction: column;
+    gap: 0.2rem;
   }
 }
 </style>

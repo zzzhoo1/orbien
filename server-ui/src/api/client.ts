@@ -6,6 +6,7 @@ import type {
     TunnelTrafficResp,
     ApiResponse,
     TokenMetricsResp,
+    ConnectionInfo,
 } from '@/types/api'
 import { ApiError } from './errors'
 
@@ -102,4 +103,26 @@ export function fetchSystemTraffic(range: TrafficRange = '7d') {
 
 export function fetchSystemTokens() {
     return api<TokenMetricsResp>('/api/v1/system/tokens')
+}
+
+// ── connections ───────────────────────────────────────────────────────────────
+
+export type ConnectionListParams = {
+    page?: number
+    pageSize?: number
+    q?: string
+}
+
+/**
+ * GET /api/v1/tunnels/:name/connections
+ * Returns paginated active connections for a given tunnel.
+ */
+export function fetchConnections(tunnelName: string, params: ConnectionListParams = {}) {
+    const qs = new URLSearchParams()
+    qs.set('page', String(params.page ?? 1))
+    qs.set('pageSize', String(params.pageSize ?? 20))
+    if (params.q) qs.set('q', params.q)
+    return api<Page<ConnectionInfo>>(
+        `/api/v1/tunnels/${encodeURIComponent(tunnelName)}/connections?${qs.toString()}`,
+    )
 }

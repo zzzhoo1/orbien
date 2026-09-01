@@ -10,7 +10,8 @@ export {
     fetchTunnelTraffic,
     fetchSystemTraffic,
     fetchSystemTokens,
+    fetchConnections,
 } from './client'
 export type {AuthStatus, TrafficRange} from './client'
-export type {TunnelListParams} from './client'
+export type {TunnelListParams, ConnectionListParams} from './client'
 export type {TokenMetricItem, TokenMetricsResp} from '@/types/api'

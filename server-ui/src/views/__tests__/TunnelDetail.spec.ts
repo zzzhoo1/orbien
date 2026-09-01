@@ -7,6 +7,7 @@ import * as api from '@/api'
 
 // ── stub child components ──────────────────────────────────────────────────────
 vi.mock('@/components/AppIcon.vue',     () => ({default: {template: '<span class="stub-icon"/>',          props: ['name']}}))
+vi.mock('@/components/PaginationBar.vue', () => ({default: {template: '<div class="stub-pagination-bar"/>', props: ['page', 'pageSize', 'total'], emits: ['update:page', 'update:pageSize']}}))
 vi.mock('@/components/SectionCard.vue', () => ({default: {template: '<div class="stub-section-card"><slot/><slot name="extra"/></div>', props: ['title']}}))
 vi.mock('@/components/StatusBadge.vue', () => ({default: {template: '<span class="stub-status-badge"/>',  props: ['status','label','size']}}))
 vi.mock('@/components/TrafficChart.vue',() => ({default: {template: '<div class="stub-traffic-chart"/>',  props: ['tunnelName','range','variant','refreshMs']}}))
@@ -32,13 +33,16 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 // ── mock @/api ────────────────────────────────────────────────────────────────
-vi.mock('@/api', () => ({kickProxy: vi.fn()}))
+vi.mock('@/api', () => ({
+  kickProxy: vi.fn(),
+  fetchConnections: vi.fn(),
+}))
 
-// ── mock dashboard store ─────────────────────────────────────────────────────────
+// ── mock dashboard store ─────────────────────────────────────────────────────
 const mockStore = {tunnels: [] as unknown[]}
 vi.mock('@/stores/dashboard', () => ({useDashboardStore: () => mockStore}))
 
-// ── fixture ─────────────────────────────────────────────────────────────────────
+// ── fixtures ──────────────────────────────────────────────────────────────────
 function makeTunnel(overrides: Record<string, unknown> = {}) {
   return {
     name: 'my-tunnel',
@@ -55,7 +59,23 @@ function makeTunnel(overrides: Record<string, unknown> = {}) {
   }
 }
 
-// ── router / mount helpers ─────────────────────────────────────────────────────────
+function makeConnPage(items: unknown[] = [], total = 0) {
+  return {total, page: 1, pageSize: 10, items}
+}
+
+function makeConn(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '1',
+    remoteAddr: '1.2.3.4:54321',
+    localAddr: '127.0.0.1:3000',
+    connectedAt: '2026-09-01T00:00:00Z',
+    trafficIn: 100,
+    trafficOut: 200,
+    ...overrides,
+  }
+}
+
+// ── router / mount helpers ────────────────────────────────────────────────────
 function makeRouter() {
   return createRouter({
     history: createMemoryHistory(),
@@ -82,9 +102,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockStore.tunnels = []
   vi.mocked(api.kickProxy).mockResolvedValue(undefined)
+  vi.mocked(api.fetchConnections).mockResolvedValue(makeConnPage())
 })
 
-// ── tunnel not found ────────────────────────────────────────────────────────────────
+// ── tunnel not found ──────────────────────────────────────────────────────────
 describe('TunnelDetail – tunnel not found', () => {
   it('renders without crashing when tunnel is not in store', async () => {
     const {wrapper} = await mountDetail()
@@ -102,7 +123,7 @@ describe('TunnelDetail – tunnel not found', () => {
   })
 })
 
-// ── back navigation ────────────────────────────────────────────────────────────────
+// ── back navigation ───────────────────────────────────────────────────────────
 describe('TunnelDetail – back navigation', () => {
   it('navigates to tunnels list when back button clicked', async () => {
     const {wrapper, router} = await mountDetail()
@@ -112,7 +133,7 @@ describe('TunnelDetail – back navigation', () => {
   })
 })
 
-// ── summary card ──────────────────────────────────────────────────────────────────
+// ── summary card ──────────────────────────────────────────────────────────────
 describe('TunnelDetail – summary card', () => {
   it('renders tunnel name', async () => {
     mockStore.tunnels = [makeTunnel()]
@@ -198,7 +219,7 @@ describe('TunnelDetail – summary card', () => {
   })
 })
 
-// ── openClient navigation ────────────────────────────────────────────────────────────────
+// ── openClient navigation ─────────────────────────────────────────────────────
 describe('TunnelDetail – openClient navigation', () => {
   it('navigates to client-detail on sessionId click', async () => {
     mockStore.tunnels = [makeTunnel()]
@@ -210,7 +231,7 @@ describe('TunnelDetail – openClient navigation', () => {
   })
 })
 
-// ── chart toolbar ──────────────────────────────────────────────────────────────────
+// ── chart toolbar ─────────────────────────────────────────────────────────────
 describe('TunnelDetail – chart toolbar', () => {
   it('bar variant is active by default', async () => {
     const {wrapper} = await mountDetail()
@@ -248,7 +269,7 @@ describe('TunnelDetail – chart toolbar', () => {
   })
 })
 
-// ── delete ────────────────────────────────────────────────────────────────────────
+// ── delete ────────────────────────────────────────────────────────────────────
 describe('TunnelDetail – delete', () => {
   it('renders delete button', async () => {
     mockStore.tunnels = [makeTunnel()]
@@ -328,5 +349,58 @@ describe('TunnelDetail – delete', () => {
     await flushPromises()
     expect(wrapper.find('.confirm-bar').exists()).toBe(false)
     expect(wrapper.find('.delete-btn').exists()).toBe(true)
+  })
+})
+
+// ── connections panel ─────────────────────────────────────────────────────────
+describe('TunnelDetail – connections panel', () => {
+  it('renders connections panel header', async () => {
+    const {wrapper} = await mountDetail()
+    expect(wrapper.find('.conn-panel').exists()).toBe(true)
+    expect(wrapper.text()).toContain('tunnels.connectionsTitle')
+  })
+
+  it('shows empty state when no connections', async () => {
+    vi.mocked(api.fetchConnections).mockResolvedValue(makeConnPage([], 0))
+    const {wrapper} = await mountDetail()
+    expect(wrapper.find('.conn-empty').exists()).toBe(true)
+    expect(wrapper.text()).toContain('tunnels.connectionsEmpty')
+  })
+
+  it('renders connection rows when connections are returned', async () => {
+    vi.mocked(api.fetchConnections).mockResolvedValue(
+      makeConnPage([makeConn(), makeConn({id: '2', remoteAddr: '5.6.7.8:11111'})], 2),
+    )
+    const {wrapper} = await mountDetail()
+    expect(wrapper.findAll('.conn-row')).toHaveLength(2)
+    expect(wrapper.text()).toContain('1.2.3.4:54321')
+    expect(wrapper.text()).toContain('5.6.7.8:11111')
+  })
+
+  it('renders search input', async () => {
+    const {wrapper} = await mountDetail()
+    expect(wrapper.find('.conn-search-input').exists()).toBe(true)
+  })
+
+  it('shows connectionsSearchEmpty when search yields no results', async () => {
+    vi.mocked(api.fetchConnections).mockResolvedValue(makeConnPage([], 0))
+    const {wrapper} = await mountDetail()
+    const input = wrapper.find('.conn-search-input')
+    await input.setValue('xyz')
+    await flushPromises()
+    // fast-forward debounce
+    vi.useFakeTimers()
+    vi.runAllTimers()
+    vi.useRealTimers()
+    await flushPromises()
+    expect(wrapper.text()).toContain('tunnels.connectionsSearchEmpty')
+  })
+
+  it('calls fetchConnections on mount with tunnel name from route', async () => {
+    await mountDetail('my-tunnel')
+    expect(api.fetchConnections).toHaveBeenCalledWith(
+      'my-tunnel',
+      expect.objectContaining({page: 1}),
+    )
   })
 })

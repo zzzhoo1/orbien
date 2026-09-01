@@ -156,6 +156,16 @@ export interface MessageSchema {
         deleting: string
         deleteSuccess: string
         deleteFailed: string
+        connectionsTitle: string
+        connectionsSearchPlaceholder: string
+        connectionsSearchClear: string
+        connectionsEmpty: string
+        connectionsSearchEmpty: string
+        connectionRemoteAddr: string
+        connectionLocalAddr: string
+        connectionConnectedAt: string
+        connectionTrafficIn: string
+        connectionTrafficOut: string
     }
     traffic: {
         in: string

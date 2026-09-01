@@ -97,3 +97,21 @@ export interface TokenMetricItem {
 export interface TokenMetricsResp {
     tokens: TokenMetricItem[]
 }
+
+/** A single active connection through a tunnel. */
+export interface ConnectionInfo {
+    /** Unique connection identifier (may be a number or opaque string). */
+    id: string | number
+    /** Remote visitor address, e.g. "1.2.3.4:54321". */
+    remoteAddr: string
+    /** Local target address, e.g. "127.0.0.1:3000". */
+    localAddr?: string
+    /** ISO-8601 timestamp when the connection was established. */
+    connectedAt?: string
+    /** Bytes received from the visitor side. */
+    trafficIn?: number
+    /** Bytes sent to the visitor side. */
+    trafficOut?: number
+    /** Connection status, typically 'active'. */
+    status?: string
+}
