@@ -18,6 +18,7 @@ use rust_embed::Embed;
 use serde::Deserialize;
 use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::Arc;
+use toml; // E0433 fix: explicit crate import
 
 #[derive(Embed)]
 #[folder = "assets/"]
@@ -31,7 +32,7 @@ pub fn router(state: Arc<DashState>) -> Router {
         .route("/static", get(|| async { Redirect::permanent("/") }))
         .route("/static/", get(|| async { Redirect::permanent("/") }))
         .route("/static/{*path}", get(redirect_legacy_static))
-        // ── auth endpoints ───────────────────────────────────────────────────────────
+        // ── auth endpoints ────────────────────────────────────────────────────────────────────────
         .route("/api/v1/auth/status", get(auth_routes::auth_status))
         .route("/api/v1/auth/login", post(auth_routes::login))
         .route("/api/v1/auth/logout", post(auth_routes::logout))
@@ -51,7 +52,7 @@ pub fn router(state: Arc<DashState>) -> Router {
             "/api/v1/auth/webauthn/login/finish",
             post(auth_routes::webauthn_login_finish),
         )
-        // ── dashboard API ─────────────────────────────────────────────────────────
+        // ── dashboard API ───────────────────────────────────────────────────────────────────────
         .route("/api/v1/system/info", get(system_info))
         .route("/api/v1/system/health", get(system_health))
         .route("/api/v1/system/traffic", get(system_traffic))
@@ -193,7 +194,7 @@ fn traffic_resp(hist: TunnelTrafficHistory) -> TunnelTrafficResp {
     }
 }
 
-// ── /healthz  ─────────────────────────────────────────────────────────────────
+// ── /healthz  ─────────────────────────────────────────────────────────────────────────────────
 
 /// Simple liveness probe used by load-balancers and the dashboard health badge.
 /// Always returns 200 with plain text "ok" while the server is running.
@@ -201,7 +202,7 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-// ── /api/v1/system/health  ────────────────────────────────────────────────────
+// ── /api/v1/system/health  ─────────────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
 struct HealthResp {
@@ -233,18 +234,18 @@ async fn system_health(State(state): State<Arc<DashState>>) -> Json<ApiResponse<
     }))
 }
 
-// ── /api/v1/config/reload  ────────────────────────────────────────────────────
+// ── /api/v1/config/reload  ─────────────────────────────────────────────────────────────────────
 
 /// POST /api/v1/config/reload
 ///
 /// Request body: `{ "configPath": "/path/to/orbien-server.toml" }` (optional).
 /// When `configPath` is omitted the server re-reads the path it was started
-/// with (stored in `DashState.cfg.config_file`, if present).
+/// with (stored in `DashboardConfig.config_file`, injected by `main.rs`).
 ///
-/// Currently reloads the **access policy** (token rules, password hash) without
-/// requiring a process restart.  Network-level settings (ports, TLS) are NOT
-/// hot-swapped — the response's `changed` list will include them so the
-/// operator knows a restart is needed.
+/// Currently reloads the **access policy** (token rules) without requiring a
+/// process restart.  Network-level settings (ports, TLS) are NOT hot-swapped
+/// — the response’s `changed` list will include them so the operator knows a
+/// restart is needed.
 #[derive(Deserialize, Default)]
 struct ReloadBody {
     #[serde(rename = "configPath", default)]
@@ -257,7 +258,7 @@ async fn config_reload(
 ) -> Json<ApiResponse<ConfigReloadResp>> {
     let body = body.map(|b| b.0).unwrap_or_default();
 
-    // Resolve the config file path: explicit body > dashboard config_file field.
+    // Resolve the config file path: explicit body > startup-injected path.
     let path = if !body.config_path.is_empty() {
         body.config_path.clone()
     } else {
@@ -272,7 +273,7 @@ async fn config_reload(
         });
     }
 
-    // Parse the config file.
+    // Parse the config file with the `toml` crate.
     let new_cfg: ServerConfig = match std::fs::read_to_string(&path) {
         Ok(s) => match toml::from_str(&s) {
             Ok(c) => c,
