@@ -294,3 +294,103 @@ describe('Clients – kick', () => {
     expect(router.currentRoute.value.path).toBe('/clients')
   })
 })
+
+describe('Clients – search box', () => {
+  it('renders a search input', async () => {
+    const {wrapper} = await mountClients()
+    expect(wrapper.find('.search-input').exists()).toBe(true)
+  })
+
+  it('filters clients by hostname when typing', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'a', hostname: 'web-server'}),
+      makeClient({sessionId: 'b', hostname: 'db-server'}),
+    ]
+    const {wrapper} = await mountClients()
+    await wrapper.find('.search-input').setValue('web')
+    await flushPromises()
+    expect(wrapper.findAll('.client-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('web-server')
+    expect(wrapper.text()).not.toContain('db-server')
+  })
+
+  it('filters clients by sessionId when typing', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'session-abc', hostname: 'host-x'}),
+      makeClient({sessionId: 'session-xyz', hostname: 'host-y'}),
+    ]
+    const {wrapper} = await mountClients()
+    await wrapper.find('.search-input').setValue('abc')
+    await flushPromises()
+    expect(wrapper.findAll('.client-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('session-abc')
+  })
+
+  it('filters clients by clientIP when typing', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'a', clientIP: '10.0.0.1'}),
+      makeClient({sessionId: 'b', clientIP: '192.168.1.5'}),
+    ]
+    const {wrapper} = await mountClients()
+    await wrapper.find('.search-input').setValue('192')
+    await flushPromises()
+    expect(wrapper.findAll('.client-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('192.168.1.5')
+  })
+
+  it('shows clients.searchEmpty when no clients match the query', async () => {
+    mockStore.clients = [makeClient({hostname: 'production-host'})]
+    const {wrapper} = await mountClients()
+    await wrapper.find('.search-input').setValue('zzz-no-match')
+    await flushPromises()
+    expect(wrapper.findAll('.client-card')).toHaveLength(0)
+    expect(wrapper.text()).toContain('clients.searchEmpty')
+  })
+
+  it('restores all cards after clearing the search input', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'a', hostname: 'alpha'}),
+      makeClient({sessionId: 'b', hostname: 'beta'}),
+    ]
+    const {wrapper} = await mountClients()
+    await wrapper.find('.search-input').setValue('alpha')
+    await flushPromises()
+    expect(wrapper.findAll('.client-card')).toHaveLength(1)
+    await wrapper.find('.search-clear').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.client-card')).toHaveLength(2)
+  })
+
+  it('resets page to 1 when search query changes', async () => {
+    mockStore.clients = Array.from({length: 12}, (_, i) =>
+      makeClient({sessionId: `client-${i}`, hostname: `host-${i}`}),
+    )
+    const {wrapper} = await mountClients()
+    const vm = wrapper.vm as unknown as {page: number}
+    vm.page = 2
+    await flushPromises()
+    await wrapper.find('.search-input').setValue('host')
+    await flushPromises()
+    expect(vm.page).toBe(1)
+  })
+
+  it('applies search and status filter simultaneously', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'web-online',  hostname: 'web', status: 'online'}),
+      makeClient({sessionId: 'web-offline', hostname: 'web', status: 'offline'}),
+      makeClient({sessionId: 'db-online',   hostname: 'db',  status: 'online'}),
+    ]
+    const {wrapper} = await mountClients()
+    // activate online filter (chip index 1)
+    await wrapper.findAll('.filter-chip')[1].trigger('click')
+    await flushPromises()
+    // then type search query
+    await wrapper.find('.search-input').setValue('web')
+    await flushPromises()
+    // only web-online should remain
+    expect(wrapper.findAll('.client-card')).toHaveLength(1)
+    expect(wrapper.text()).toContain('web-online')
+    expect(wrapper.text()).not.toContain('web-offline')
+    expect(wrapper.text()).not.toContain('db-online')
+  })
+})
