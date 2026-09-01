@@ -21,11 +21,6 @@ vi.mock('@/components/StatusBadge.vue', () => ({
   default: {template: '<span class="stub-status-badge"/>', props: ['status', 'label']},
 }))
 
-// Stub raw SVG asset import used in Clients.vue
-vi.mock('@/assets/icon/signal.svg?raw', () => ({
-  default: '<svg></svg>',
-}))
-
 vi.mock('@/composables/useLocale', () => ({
   useLocale: () => ({t: (key: string) => key}),
 }))

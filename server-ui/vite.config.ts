@@ -32,10 +32,12 @@ export default defineConfig({
         environment: 'jsdom',
         globals: true,
         include: ['src/**/*.{spec,test}.ts'],
-        // Return empty string for ?raw SVG imports so jsdom tests don't choke
-        // on raw SVG content being treated as JS.
-        assets: {
-            include: ['**/*.svg'],
-        },
+        // Alias ?raw SVG imports to a stub so jsdom tests don't choke on raw SVG content
+        alias: [
+            {
+                find: /^.*\.svg\?raw$/,
+                replacement: fileURLToPath(new URL('./src/test/mocks/rawSvgMock.ts', import.meta.url)),
+            },
+        ],
     },
 })
