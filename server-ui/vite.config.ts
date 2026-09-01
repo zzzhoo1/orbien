@@ -2,16 +2,20 @@ import {defineConfig} from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import {fileURLToPath, URL} from 'node:url'
 import type {Plugin} from 'vite'
+import {basename} from 'node:path'
 
 // Intercept *.svg?raw imports in Vitest (jsdom cannot parse real SVG files).
-// resolve.alias does not support query-string keys, so we use a plugin instead.
+// Returns a unique stub per file so prop-change tests can distinguish icons.
 function rawSvgStubPlugin(): Plugin {
   return {
     name: 'raw-svg-stub',
     enforce: 'pre',
     load(id) {
       if (id.endsWith('.svg?raw') || (id.includes('.svg?') && id.includes('raw'))) {
-        return `export default '<svg></svg>'`
+        // strip the query string to get the real file path, then extract basename
+        const filePath = id.replace(/\?.*$/, '')
+        const name = basename(filePath, '.svg')
+        return `export default '<svg data-icon="${name}"></svg>'`
       }
     },
   }
