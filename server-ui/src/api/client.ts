@@ -7,6 +7,8 @@ import type {
     ApiResponse,
     TokenMetricsResp,
     ConnectionInfo,
+    ConfigReloadResp,
+    HealthInfo,
 } from '@/types/api'
 import { ApiError } from './errors'
 
@@ -19,7 +21,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     return body.data
 }
 
-// ── auth ──────────────────────────────────────────────────────────────────────
+// ── auth ────────────────────────────────────────────────────────────────────────────────
 
 export interface AuthStatus {
     webauthn: boolean
@@ -44,6 +46,15 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
 
 export function fetchSystemInfo() {
     return api<SystemInfo>('/api/v1/system/info')
+}
+
+/**
+ * GET /api/v1/system/health
+ * Returns structured health data: status, uptime, version, online clients,
+ * and active connections.  Used by the Settings page health card.
+ */
+export function fetchSystemHealth() {
+    return api<HealthInfo>('/api/v1/system/health')
 }
 
 export function fetchClients(page = 1, pageSize = 200) {
@@ -105,7 +116,25 @@ export function fetchSystemTokens() {
     return api<TokenMetricsResp>('/api/v1/system/tokens')
 }
 
-// ── connections ───────────────────────────────────────────────────────────────
+// ── config ─────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/config/reload
+ *
+ * Hot-reloads the server access policy from the config file.
+ * Pass `configPath` to override the default path the server was started with.
+ * Returns the list of top-level config keys that changed; empty list = no diff.
+ */
+export function reloadConfig(configPath?: string) {
+    const body = configPath ? JSON.stringify({ configPath }) : '{}'
+    return api<ConfigReloadResp>('/api/v1/config/reload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+    })
+}
+
+// ── connections ───────────────────────────────────────────────────────────────────
 
 export type ConnectionListParams = {
     page?: number
