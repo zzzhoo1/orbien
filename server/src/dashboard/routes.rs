@@ -1,7 +1,7 @@
 use super::auth_routes;
 use super::model::{
-    ApiResponse, ClientInfo, Page, SystemConfig, SystemInfo, SystemStatus, TunnelInfo,
-    TunnelTrafficPoint, TunnelTrafficResp,
+    ApiResponse, ClientInfo, ConfigReloadResp, Page, SystemConfig, SystemInfo, SystemStatus,
+    TunnelInfo, TunnelTrafficPoint, TunnelTrafficResp,
 };
 use super::DashState;
 use crate::metrics::{TrafficWindow, TunnelTrafficHistory};
@@ -12,6 +12,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use orbien_core::config::ServerConfig;
 use orbien_core::VERSION;
 use rust_embed::Embed;
 use serde::Deserialize;
@@ -24,7 +25,7 @@ struct Assets;
 
 pub fn router(state: Arc<DashState>) -> Router {
     Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/healthz", get(healthz))
         .route("/", get(index_html))
         .route("/favicon.ico", get(favicon))
         .route("/static", get(|| async { Redirect::permanent("/") }))
@@ -52,8 +53,10 @@ pub fn router(state: Arc<DashState>) -> Router {
         )
         // ── dashboard API ─────────────────────────────────────────────────────────
         .route("/api/v1/system/info", get(system_info))
+        .route("/api/v1/system/health", get(system_health))
         .route("/api/v1/system/traffic", get(system_traffic))
         .route("/api/v1/system/tokens", get(system_token_metrics))
+        .route("/api/v1/config/reload", post(config_reload))
         .route("/metrics", get(prometheus_metrics))
         .route("/api/v1/clients", get(list_clients))
         .route("/api/v1/clients/{session_id}", get(get_client))
@@ -187,6 +190,119 @@ fn traffic_resp(hist: TunnelTrafficHistory) -> TunnelTrafficResp {
                 traffic_out: p.traffic_out,
             })
             .collect(),
+    }
+}
+
+// ── /healthz  ─────────────────────────────────────────────────────────────────
+
+/// Simple liveness probe used by load-balancers and the dashboard health badge.
+/// Always returns 200 with plain text "ok" while the server is running.
+async fn healthz() -> &'static str {
+    "ok"
+}
+
+// ── /api/v1/system/health  ────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct HealthResp {
+    status: &'static str,
+    /// Monotonic uptime in whole seconds (approximate).
+    #[serde(rename = "uptimeSecs")]
+    uptime_secs: u64,
+    version: &'static str,
+    #[serde(rename = "onlineClients")]
+    online_clients: usize,
+    #[serde(rename = "activeConnections")]
+    active_connections: usize,
+}
+
+/// Structured health response consumed by the Settings / Health page.
+async fn system_health(State(state): State<Arc<DashState>>) -> Json<ApiResponse<HealthResp>> {
+    let snap = state.svc.dashboard_snapshot().await;
+    let online = snap
+        .clients
+        .iter()
+        .filter(|c| c.status.is_empty() || c.status == "online")
+        .count();
+    Json(ApiResponse::ok(HealthResp {
+        status: "ok",
+        uptime_secs: 0, // placeholder — replace with a real Instant once tracked in Service
+        version: VERSION,
+        online_clients: online,
+        active_connections: snap.active_connections,
+    }))
+}
+
+// ── /api/v1/config/reload  ────────────────────────────────────────────────────
+
+/// POST /api/v1/config/reload
+///
+/// Request body: `{ "configPath": "/path/to/orbien-server.toml" }` (optional).
+/// When `configPath` is omitted the server re-reads the path it was started
+/// with (stored in `DashState.cfg.config_file`, if present).
+///
+/// Currently reloads the **access policy** (token rules, password hash) without
+/// requiring a process restart.  Network-level settings (ports, TLS) are NOT
+/// hot-swapped — the response's `changed` list will include them so the
+/// operator knows a restart is needed.
+#[derive(Deserialize, Default)]
+struct ReloadBody {
+    #[serde(rename = "configPath", default)]
+    config_path: String,
+}
+
+async fn config_reload(
+    State(state): State<Arc<DashState>>,
+    body: Option<Json<ReloadBody>>,
+) -> Json<ApiResponse<ConfigReloadResp>> {
+    let body = body.map(|b| b.0).unwrap_or_default();
+
+    // Resolve the config file path: explicit body > dashboard config_file field.
+    let path = if !body.config_path.is_empty() {
+        body.config_path.clone()
+    } else {
+        state.cfg.config_file.clone().unwrap_or_default()
+    };
+
+    if path.is_empty() {
+        return Json(ApiResponse {
+            code: 400,
+            msg: "configPath not specified and no config file path recorded at startup".into(),
+            data: ConfigReloadResp { changed: vec![] },
+        });
+    }
+
+    // Parse the config file.
+    let new_cfg: ServerConfig = match std::fs::read_to_string(&path) {
+        Ok(s) => match toml::from_str(&s) {
+            Ok(c) => c,
+            Err(e) => {
+                return Json(ApiResponse {
+                    code: 422,
+                    msg: format!("config parse error: {e}"),
+                    data: ConfigReloadResp { changed: vec![] },
+                });
+            }
+        },
+        Err(e) => {
+            return Json(ApiResponse {
+                code: 500,
+                msg: format!("cannot read {path}: {e}"),
+                data: ConfigReloadResp { changed: vec![] },
+            });
+        }
+    };
+
+    match state.svc.reload_access_policy(&new_cfg).await {
+        Ok(changed) => {
+            tracing::info!(path = %path, ?changed, "config reloaded via dashboard");
+            Json(ApiResponse::ok(ConfigReloadResp { changed }))
+        }
+        Err(e) => Json(ApiResponse {
+            code: 500,
+            msg: format!("reload failed: {e}"),
+            data: ConfigReloadResp { changed: vec![] },
+        }),
     }
 }
 
@@ -497,10 +613,6 @@ fn bytes_response(content_type: &'static str, body: Vec<u8>) -> Response {
 }
 
 /// Prometheus text exposition endpoint (`/metrics`).
-///
-/// Exposes the same aggregate metrics surfaced by the dashboard in the
-/// standard Prometheus text format so operators can scrape the server
-/// directly (e.g. via prometheus.yml `metrics_path: /metrics`).
 async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
     let snap = state.svc.dashboard_snapshot().await;
 
@@ -521,7 +633,6 @@ async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
     out.push_str("# TYPE orbien_traffic_out_bytes_total counter\n");
     out.push_str(&format!("orbien_traffic_out_bytes_total {}\n", snap.total_traffic_out));
 
-    // Per-tunnel gauges.
     out.push_str("# HELP orbien_proxy_connections_current Current connections per proxy.\n");
     out.push_str("# TYPE orbien_proxy_connections_current gauge\n");
     for p in &snap.tunnels {
@@ -533,7 +644,6 @@ async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
         ));
     }
 
-    // Per-tunnel traffic counters.
     out.push_str("# HELP orbien_proxy_traffic_in_bytes_total Total bytes received per proxy.\n");
     out.push_str("# TYPE orbien_proxy_traffic_in_bytes_total counter\n");
     out.push_str("# HELP orbien_proxy_traffic_out_bytes_total Total bytes sent per proxy.\n");
@@ -553,7 +663,6 @@ async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
     bytes_response("text/plain; version=0.0.4; charset=utf-8", out.into_bytes())
 }
 
-/// Escape a label value for Prometheus text format.
 fn prom_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }
