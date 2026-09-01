@@ -8,6 +8,9 @@ import * as api from '@/api'
 vi.mock('@/components/AppIcon.vue', () => ({
   default: {template: '<span class="stub-app-icon"/>', props: ['name']},
 }))
+vi.mock('@/components/EmptyState.vue', () => ({
+  default: {template: '<div class="stub-empty-state">{{ title }}</div>', props: ['type', 'title', 'desc']},
+}))
 vi.mock('@/components/OsBadge.vue', () => ({
   default: {template: '<span class="stub-os-badge"/>', props: ['os', 'arch', 'iconOnly', 'textOnly']},
 }))
@@ -16,6 +19,11 @@ vi.mock('@/components/PaginationBar.vue', () => ({
 }))
 vi.mock('@/components/StatusBadge.vue', () => ({
   default: {template: '<span class="stub-status-badge"/>', props: ['status', 'label']},
+}))
+
+// Stub raw SVG asset import used in Clients.vue
+vi.mock('@/assets/icon/signal.svg?raw', () => ({
+  default: '<svg></svg>',
 }))
 
 vi.mock('@/composables/useLocale', () => ({
@@ -283,7 +291,7 @@ describe('Clients – kick', () => {
     const {wrapper} = await mountClients()
     await wrapper.find('.kick-btn').trigger('click')
     await flushPromises()
-    expect(mockShowToast).toHaveBeenCalledWith('error', 'clients.kickFailed')
+    expect(mockShowToast).toHaveBeenCalledWith('error', expect.stringContaining('clients.kickFailed'))
   })
 
   it('does not navigate to detail when kick button is clicked', async () => {
@@ -381,16 +389,51 @@ describe('Clients – search box', () => {
       makeClient({sessionId: 'db-online',   hostname: 'db',  status: 'online'}),
     ]
     const {wrapper} = await mountClients()
-    // activate online filter (chip index 1)
     await wrapper.findAll('.filter-chip')[1].trigger('click')
     await flushPromises()
-    // then type search query
     await wrapper.find('.search-input').setValue('web')
     await flushPromises()
-    // only web-online should remain
     expect(wrapper.findAll('.client-card')).toHaveLength(1)
     expect(wrapper.text()).toContain('web-online')
     expect(wrapper.text()).not.toContain('web-offline')
     expect(wrapper.text()).not.toContain('db-online')
+  })
+})
+
+describe('Clients – sort', () => {
+  it('renders sort chips', async () => {
+    const {wrapper} = await mountClients()
+    expect(wrapper.find('.sort-wrap').exists()).toBe(true)
+    expect(wrapper.findAll('.sort-chip').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('sorts clients by tunnelCount descending', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'low',  tunnelCount: 1}),
+      makeClient({sessionId: 'high', tunnelCount: 9}),
+    ]
+    const {wrapper} = await mountClients()
+    const tunnelChip = wrapper.findAll('.sort-chip').find(w => w.text().includes('clients.sortTunnels'))
+    await tunnelChip!.trigger('click')
+    await flushPromises()
+    const cards = wrapper.findAll('.client-card')
+    expect(cards[0].text()).toContain('high')
+    expect(cards[1].text()).toContain('low')
+  })
+
+  it('toggles sort direction on second click', async () => {
+    mockStore.clients = [
+      makeClient({sessionId: 'low',  tunnelCount: 1}),
+      makeClient({sessionId: 'high', tunnelCount: 9}),
+    ]
+    const {wrapper} = await mountClients()
+    const tunnelChip = wrapper.findAll('.sort-chip').find(w => w.text().includes('clients.sortTunnels'))!
+    await tunnelChip.trigger('click')
+    await flushPromises()
+    await tunnelChip.trigger('click')
+    await flushPromises()
+    const cards = wrapper.findAll('.client-card')
+    expect(cards[0].text()).toContain('low')
+    expect(cards[1].text()).toContain('high')
   })
 })

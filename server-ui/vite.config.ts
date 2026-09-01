@@ -32,5 +32,10 @@ export default defineConfig({
         environment: 'jsdom',
         globals: true,
         include: ['src/**/*.{spec,test}.ts'],
+        // Return empty string for ?raw SVG imports so jsdom tests don't choke
+        // on raw SVG content being treated as JS.
+        assets: {
+            include: ['**/*.svg'],
+        },
     },
 })
