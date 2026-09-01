@@ -13,8 +13,11 @@ import {useToast} from '@/composables/useToast'
 import signalIcon from '@/assets/icon/signal.svg?raw'
 
 type StatusFilter = 'all' | 'online' | 'offline'
+type SortKey = 'default' | 'tunnels' | 'connections' | 'uptime'
+type SortDir = 'asc' | 'desc'
 
 const FILTERS: StatusFilter[] = ['all', 'online', 'offline']
+const SORT_KEYS: SortKey[] = ['default', 'tunnels', 'connections', 'uptime']
 
 const store = useDashboardStore()
 const router = useRouter()
@@ -27,20 +30,45 @@ const pageSize = ref(10)
 const statusFilter = ref<StatusFilter>('all')
 const kicking = ref<string | null>(null)
 const searchQuery = ref('')
+const sortKey = ref<SortKey>('default')
+const sortDir = ref<SortDir>('desc')
+
+function toggleSort(key: SortKey) {
+  if (key === 'default') {
+    sortKey.value = 'default'
+    sortDir.value = 'desc'
+    return
+  }
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortKey.value = key
+    sortDir.value = 'desc'
+  }
+}
 
 const filtered = computed(() => {
   let list = store.clients
   if (statusFilter.value === 'online') list = list.filter((c) => isOnline(c.status))
   else if (statusFilter.value === 'offline') list = list.filter((c) => !isOnline(c.status))
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return list
-  return list.filter(
-    (c) =>
-      c.sessionId?.toLowerCase().includes(q) ||
-      c.hostname?.toLowerCase().includes(q) ||
-      c.clientIP?.toLowerCase().includes(q) ||
-      c.user?.toLowerCase().includes(q),
-  )
+  if (q) {
+    list = list.filter(
+      (c) =>
+        c.sessionId?.toLowerCase().includes(q) ||
+        c.hostname?.toLowerCase().includes(q) ||
+        c.clientIP?.toLowerCase().includes(q) ||
+        c.user?.toLowerCase().includes(q),
+    )
+  }
+  if (sortKey.value === 'default') return list
+  const dir = sortDir.value === 'desc' ? -1 : 1
+  return [...list].sort((a, b) => {
+    if (sortKey.value === 'tunnels') return ((a.tunnelCount ?? 0) - (b.tunnelCount ?? 0)) * dir
+    if (sortKey.value === 'connections') return ((a.connections ?? 0) - (b.connections ?? 0)) * dir
+    if (sortKey.value === 'uptime') return ((a.connectedSecs ?? 0) - (b.connectedSecs ?? 0)) * dir
+    return 0
+  })
 })
 
 const total = computed(() => filtered.value.length)
@@ -81,6 +109,13 @@ function filterLabel(key: StatusFilter) {
   if (key === 'all') return t('clients.filterAll')
   if (key === 'online') return t('status.online')
   return t('status.offline')
+}
+
+function sortLabel(key: SortKey) {
+  if (key === 'default') return t('clients.sortDefault')
+  if (key === 'tunnels') return t('clients.sortTunnels')
+  if (key === 'connections') return t('clients.sortConnections')
+  return t('clients.sortUptime')
 }
 
 function openDetail(sessionId: string) {
@@ -126,6 +161,27 @@ async function onKick(sessionId: string, evt: Event) {
         <span>{{ filterLabel(key) }}</span>
         <em>{{ statusCounts[key] }}</em>
       </button>
+
+      <!-- sort buttons -->
+      <div class="sort-wrap" role="group" :aria-label="t('clients.sort')">
+        <button
+            v-for="key in SORT_KEYS"
+            :key="key"
+            type="button"
+            class="sort-chip"
+            :class="{ active: sortKey === key }"
+            :aria-pressed="sortKey === key"
+            @click="toggleSort(key)"
+        >
+          {{ sortLabel(key) }}
+          <span
+              v-if="sortKey === key && key !== 'default'"
+              class="sort-arrow"
+              :class="{ asc: sortDir === 'asc' }"
+              aria-hidden="true"
+          >↓</span>
+        </button>
+      </div>
 
       <div class="search-wrap">
         <span class="search-icon" aria-hidden="true">
@@ -298,6 +354,55 @@ async function onKick(sessionId: string, evt: Event) {
 .filter-chip.active em {
   color: var(--accent-text);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* ── sort chips ── */
+.sort-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.sort-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.18rem 0.55rem;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.sort-chip:hover:not(.active) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+}
+
+.sort-chip.active {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.sort-arrow {
+  display: inline-block;
+  font-size: 0.7rem;
+  line-height: 1;
+  transition: transform 0.18s ease;
+}
+
+.sort-arrow.asc {
+  transform: rotate(180deg);
 }
 
 /* ── search box ── */
@@ -596,6 +701,11 @@ async function onKick(sessionId: string, evt: Event) {
 }
 
 @media (max-width: 560px) {
+  .sort-wrap {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .search-wrap {
     width: 100%;
     margin-left: 0;

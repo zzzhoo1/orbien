@@ -112,6 +112,11 @@ export interface MessageSchema {
         search: string
         searchEmpty: string
         searchClear: string
+        sort: string
+        sortDefault: string
+        sortTunnels: string
+        sortConnections: string
+        sortUptime: string
         uptimeSecs: string
         uptimeMins: string
         uptimeHours: string
