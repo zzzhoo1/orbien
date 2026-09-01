@@ -8,9 +8,13 @@ function mountEmptyState(props: Record<string, unknown>) {
   return mount(EmptyState, {props})
 }
 
-/** Remove non-deterministic Vue scoped-style attributes before snapshotting. */
+/**
+ * Remove all Vue SFC scoped-style attributes (data-v-XXXXXXXX or
+ * data-v-XXXXXXXX="") before snapshotting so the snapshot is stable
+ * across different build hashes.
+ */
 function stripScopeAttrs(html: string): string {
-  return html.replace(/\s*data-v-[a-z0-9]+(="")?/g, '')
+  return html.replace(/\s+data-v-[a-z0-9]+(?:="[^"]*")?/g, '')
 }
 
 // ── suite ─────────────────────────────────────────────────────────────────────
