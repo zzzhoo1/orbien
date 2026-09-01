@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::task::JoinSet;
 
 #[allow(unused_imports)] // public API re-export
@@ -34,7 +34,7 @@ struct OfflineClientRecord {
 
 pub struct Service {
     cfg: ServerConfig,
-    access: Arc<AccessPolicy>,
+    access: Arc<RwLock<Arc<AccessPolicy>>>,
     controls: Arc<Mutex<HashMap<String, Arc<Control>>>>,
     offline_clients: Arc<Mutex<HashMap<String, OfflineClientRecord>>>,
     http_gw: Option<Arc<HttpGw>>,
@@ -45,7 +45,7 @@ pub struct Service {
 
 impl Service {
     pub fn new(cfg: ServerConfig) -> Result<Self> {
-        let access = Arc::new(AccessPolicy::from_server_config(&cfg)?);
+        let access = Arc::new(RwLock::new(Arc::new(AccessPolicy::from_server_config(&cfg)?)));
         let http_gw = if cfg.http_gw_enabled() {
             Some(Arc::new(HttpGw::new(cfg.http_gw_port)))
         } else {
@@ -174,6 +174,60 @@ impl Service {
 
     pub fn metrics(&self) -> &Arc<MemMetrics> {
         &self.metrics
+    }
+
+    /// Return a snapshot of the current access policy for use inside a request
+    /// handler.  Callers should not hold the returned `Arc` across `.await`
+    /// points that may block for a long time.
+    pub async fn access_policy(&self) -> Arc<AccessPolicy> {
+        Arc::clone(&*self.access.read().await)
+    }
+
+    /// Hot-reload the access policy from a new `ServerConfig`.
+    ///
+    /// Builds a fresh `AccessPolicy`, then atomically swaps it in under the
+    /// `RwLock`.  Existing connections are not affected; new auth checks will
+    /// use the updated rules immediately.
+    ///
+    /// Returns the list of top-level config keys that changed relative to the
+    /// currently-loaded config so the caller can surface a meaningful diff to
+    /// the operator.
+    pub async fn reload_access_policy(
+        &self,
+        new_cfg: &ServerConfig,
+    ) -> Result<Vec<String>> {
+        let new_policy = AccessPolicy::from_server_config(new_cfg)
+            .map_err(|e| anyhow!("reload: failed to build access policy: {e}"))?;
+
+        // Compute a coarse diff of observable top-level fields.
+        let mut changed: Vec<String> = Vec::new();
+        let old = &self.cfg;
+        if old.listen != new_cfg.listen {
+            changed.push("listen".into());
+        }
+        if old.auth.token_policies != new_cfg.auth.token_policies
+            || old.auth.password != new_cfg.auth.password
+        {
+            changed.push("auth".into());
+        }
+        if old.http_gw_port != new_cfg.http_gw_port
+            || old.https_gw_port != new_cfg.https_gw_port
+            || old.http_gw_enabled() != new_cfg.http_gw_enabled()
+        {
+            changed.push("gateway".into());
+        }
+        if old.root_domain != new_cfg.root_domain {
+            changed.push("root_domain".into());
+        }
+        if old.quic_port != new_cfg.quic_port || old.kcp_port != new_cfg.kcp_port {
+            changed.push("transport_ports".into());
+        }
+
+        // Atomically swap in the new policy.
+        *self.access.write().await = Arc::new(new_policy);
+        tracing::info!(changed = ?changed, "access policy reloaded");
+
+        Ok(changed)
     }
 
     pub async fn kick_client(&self, session_id: &str) -> Result<()> {
