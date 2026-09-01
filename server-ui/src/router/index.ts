@@ -1,43 +1,54 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import Monitor from '@/views/Monitor.vue'
-import Tunnels from '@/views/Tunnels.vue'
-import TunnelDetail from '@/views/TunnelDetail.vue'
-import Clients from '@/views/Clients.vue'
-import ClientDetail from '@/views/ClientDetail.vue'
-import Login from '@/views/Login.vue'
+import { createRouter, createWebHistory } from 'vue-router'
 
-export const router = createRouter({
-  history: createWebHashHistory(import.meta.env.BASE_URL),
-  routes: [
-    { path: '/login', name: 'login', component: Login, meta: { public: true } },
-    { path: '/', name: 'monitor', component: Monitor },
-    { path: '/tunnels', name: 'tunnels', component: Tunnels },
-    { path: '/tunnels/:name', name: 'tunnel-detail', component: TunnelDetail },
-    { path: '/clients', name: 'clients', component: Clients },
-    { path: '/clients/:sessionId', name: 'client-detail', component: ClientDetail },
-    { path: '/overview', redirect: '/' },
-  ],
+const router = createRouter({
+    history: createWebHistory(import.meta.env.BASE_URL),
+    routes: [
+        {
+            path: '/',
+            component: () => import('@/layouts/AppLayout.vue'),
+            children: [
+                {
+                    path: '',
+                    name: 'dashboard',
+                    component: () => import('@/views/Dashboard.vue'),
+                },
+                {
+                    path: 'clients',
+                    name: 'clients',
+                    component: () => import('@/views/Clients.vue'),
+                },
+                {
+                    path: 'clients/:sessionId',
+                    name: 'client-detail',
+                    component: () => import('@/views/ClientDetail.vue'),
+                },
+                {
+                    path: 'tunnels',
+                    name: 'tunnels',
+                    component: () => import('@/views/Tunnels.vue'),
+                },
+                {
+                    path: 'tokens',
+                    name: 'tokens',
+                    component: () => import('@/views/Tokens.vue'),
+                },
+                {
+                    path: 'settings',
+                    name: 'settings',
+                    component: () => import('@/views/Settings.vue'),
+                },
+            ],
+        },
+        {
+            path: '/login',
+            name: 'login',
+            component: () => import('@/views/Login.vue'),
+        },
+        {
+            path: '/:pathMatch(.*)*',
+            redirect: '/',
+        },
+    ],
 })
 
-/**
- * Navigation guard.
- *
- * - Public routes (meta.public) always pass through.
- * - If auth store already says authenticated, allow through immediately.
- * - Otherwise call auth.fetchStatus() which hits /api/v1/auth/status
- *   (same endpoint used by the rest of the app) instead of a raw fetch
- *   against /api/v1/system/info, so the logic stays consistent.
- */
-router.beforeEach(async (to) => {
-  if (to.meta.public) return true
-  const auth = useAuthStore()
-  if (auth.authenticated) return true
-  try {
-    const ok = await auth.fetchStatus()
-    if (ok) return true
-    return { name: 'login' }
-  } catch {
-    return { name: 'login' }
-  }
-})
+export default router
