@@ -9,7 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const username = ref('')
 
   // Server-reported capabilities — loaded once on app start / login page mount.
-  const capabilities = ref<AuthStatus>({ webauthn: false, password: true, oidc: false })
+  const capabilities = ref<AuthStatus>({ webauthn: false, password: true })
   const capabilitiesLoaded = ref(false)
 
   /** Call once when the Login page is shown. */
