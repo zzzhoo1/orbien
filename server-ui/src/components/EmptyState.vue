@@ -47,7 +47,7 @@ defineProps<{
 
       <!-- filter empty -->
       <svg v-else-if="type === 'filter'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M16 20 H64 L50 36 V52 L30 44 V36 Z" fill="currentColor" opacity="0.08" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity="0.15"/>
+        <path d="M16 20 H64 L50 36 V52 L30 44 V36 Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity="0.15"/>
         <rect x="28" y="40" width="24" height="2" rx="1" fill="currentColor" opacity="0.12"/>
         <circle cx="60" cy="48" r="8" fill="currentColor" opacity="0.07"/>
         <line x1="57" y1="48" x2="63" y2="48" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.2"/>

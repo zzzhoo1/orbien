@@ -14,11 +14,11 @@ import {useToast} from '@/composables/useToast'
 import signalIcon from '@/assets/icon/signal.svg?raw'
 
 type StatusFilter = 'all' | 'online' | 'offline'
-type SortKey = 'default' | 'tunnels' | 'connections' | 'uptime'
+type SortKey = 'default' | 'tunnels' | 'activeConnections' | 'uptime'
 type SortDir = 'asc' | 'desc'
 
 const FILTERS: StatusFilter[] = ['all', 'online', 'offline']
-const SORT_KEYS: SortKey[] = ['default', 'tunnels', 'connections', 'uptime']
+const SORT_KEYS: SortKey[] = ['default', 'tunnels', 'activeConnections', 'uptime']
 
 const store = useDashboardStore()
 const router = useRouter()
@@ -66,7 +66,7 @@ const filtered = computed(() => {
   const dir = sortDir.value === 'desc' ? -1 : 1
   return [...list].sort((a, b) => {
     if (sortKey.value === 'tunnels') return ((a.tunnelCount ?? 0) - (b.tunnelCount ?? 0)) * dir
-    if (sortKey.value === 'connections') return ((a.connections ?? 0) - (b.connections ?? 0)) * dir
+    if (sortKey.value === 'activeConnections') return ((a.activeConnections ?? 0) - (b.activeConnections ?? 0)) * dir
     if (sortKey.value === 'uptime') return ((a.connectedSecs ?? 0) - (b.connectedSecs ?? 0)) * dir
     return 0
   })
@@ -115,7 +115,7 @@ function filterLabel(key: StatusFilter) {
 function sortLabel(key: SortKey) {
   if (key === 'default') return t('clients.sortDefault')
   if (key === 'tunnels') return t('clients.sortTunnels')
-  if (key === 'connections') return t('clients.sortConnections')
+  if (key === 'activeConnections') return t('clients.sortConnections')
   return t('clients.sortUptime')
 }
 
