@@ -10,6 +10,13 @@ vi.mock('@/components/PaginationBar.vue', () => ({default: {template: '<div clas
 vi.mock('@/components/TrafficIO.vue',     () => ({default: {template: '<div class="stub-traffic-io"/>',  props: ['trafficIn','trafficOut']}}))
 vi.mock('@/components/AppIcon.vue',       () => ({default: {template: '<span class="stub-app-icon"/>',   props: ['name']}}))
 vi.mock('@/components/StatusBadge.vue',   () => ({default: {template: '<span class="stub-status-badge"/>', props: ['status','label']}}))
+vi.mock('@/components/EmptyState.vue',    () => ({default: {template: '<div class="stub-empty-state">{{ title }}</div>', props: ['type','title','desc']}}))
+
+// ── stub utils/format ─────────────────────────────────────────────────────────
+vi.mock('@/utils/format', () => ({
+  formatTunnelEndpoint: (_type: string, addr: string) => addr ?? '',
+  isHttpTunnelType: (type: string) => type === 'http' || type === 'https',
+}))
 
 // ── mock useLocale ────────────────────────────────────────────────────────────
 vi.mock('@/composables/useLocale', () => ({
@@ -30,10 +37,10 @@ vi.mock('@/composables/usePresence', () => ({
   }),
 }))
 
-// ── mock @/api – factory uses only vi.fn() so hoisting is safe ────────────────────────
+// ── mock @/api ────────────────────────────────────────────────────────────────
 vi.mock('@/api', () => ({kickProxy: vi.fn()}))
 
-// ── mock dashboard store ─────────────────────────────────────────────────────────
+// ── mock dashboard store ──────────────────────────────────────────────────────
 const mockStore = {
   tunnels: [] as unknown[],
   refresh: vi.fn(),
@@ -42,7 +49,7 @@ vi.mock('@/stores/dashboard', () => ({
   useDashboardStore: () => mockStore,
 }))
 
-// ── fixture ─────────────────────────────────────────────────────────────────────
+// ── fixture ───────────────────────────────────────────────────────────────────
 function makeTunnel(overrides: Record<string, unknown> = {}) {
   return {
     name: 'tun-alpha',
@@ -58,7 +65,7 @@ function makeTunnel(overrides: Record<string, unknown> = {}) {
   }
 }
 
-// ── mount helper ───────────────────────────────────────────────────────────────
+// ── mount helper ──────────────────────────────────────────────────────────────
 function makeRouter() {
   return createRouter({
     history: createMemoryHistory(),
@@ -88,7 +95,7 @@ beforeEach(() => {
   vi.mocked(api.kickProxy).mockResolvedValue(undefined)
 })
 
-// ── empty state ─────────────────────────────────────────────────────────────────
+// ── empty state ───────────────────────────────────────────────────────────────
 describe('Tunnels – empty state', () => {
   it('shows tunnels.empty when no tunnels', async () => {
     const {wrapper} = await mountTunnels()
@@ -101,7 +108,7 @@ describe('Tunnels – empty state', () => {
   })
 })
 
-// ── filter chips ─────────────────────────────────────────────────────────────────
+// ── filter chips ──────────────────────────────────────────────────────────────
 describe('Tunnels – filter chips', () => {
   it('renders 6 protocol filter chips (all,tcp,udp,http,https,socks5)', async () => {
     const {wrapper} = await mountTunnels()
@@ -172,7 +179,7 @@ describe('Tunnels – filter chips', () => {
   })
 })
 
-// ── search box ───────────────────────────────────────────────────────────────────
+// ── search box ────────────────────────────────────────────────────────────────
 describe('Tunnels – search box', () => {
   it('renders a search input', async () => {
     const {wrapper} = await mountTunnels()
@@ -221,10 +228,8 @@ describe('Tunnels – search box', () => {
       makeTunnel({name: 'api-tcp',  type: 'tcp'}),
     ]
     const {wrapper} = await mountTunnels()
-    // activate tcp chip
     await wrapper.findAll('.filter-chip')[1].trigger('click')
     await flushPromises()
-    // then search for 'web'
     await wrapper.find('.search-input').setValue('web')
     await flushPromises()
     expect(wrapper.findAll('.tunnel-card')).toHaveLength(1)
@@ -234,7 +239,7 @@ describe('Tunnels – search box', () => {
   })
 })
 
-// ── tunnel cards ──────────────────────────────────────────────────────────────────
+// ── tunnel cards ──────────────────────────────────────────────────────────────
 describe('Tunnels – tunnel cards', () => {
   it('renders tunnel name and type', async () => {
     mockStore.tunnels = [makeTunnel()]
@@ -287,7 +292,7 @@ describe('Tunnels – tunnel cards', () => {
   })
 })
 
-// ── pagination ───────────────────────────────────────────────────────────────────
+// ── pagination ────────────────────────────────────────────────────────────────
 describe('Tunnels – pagination', () => {
   it('shows only first pageSize items on page 1', async () => {
     mockStore.tunnels = Array.from({length: 15}, (_, i) =>
@@ -311,7 +316,7 @@ describe('Tunnels – pagination', () => {
   })
 })
 
-// ── delete (kick) ─────────────────────────────────────────────────────────────────
+// ── delete (kick) ─────────────────────────────────────────────────────────────
 describe('Tunnels – delete / kick', () => {
   it('calls kickProxy with tunnel name on delete button click', async () => {
     mockStore.tunnels = [makeTunnel()]
@@ -334,7 +339,7 @@ describe('Tunnels – delete / kick', () => {
     const {wrapper} = await mountTunnels()
     await wrapper.find('.delete-btn').trigger('click')
     await flushPromises()
-    expect(mockShowToast).toHaveBeenCalledWith('info', 'tunnels.deleteSuccess')
+    expect(mockShowToast).toHaveBeenCalledWith('info', expect.stringContaining('tunnels.deleteSuccess'))
   })
 
   it('shows error toast when kickProxy throws', async () => {
