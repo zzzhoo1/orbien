@@ -49,6 +49,10 @@ pub async fn write_msg<W: AsyncWrite + Unpin>(
         Message::Pong(m) => serde_json::to_vec(m)?,
         Message::UdpPacket(m) => serde_json::to_vec(m)?,
         Message::KickOut(m) => serde_json::to_vec(m)?,
+        Message::P2pReq(m) => serde_json::to_vec(m)?,
+        Message::P2pInfo(m) => serde_json::to_vec(m)?,
+        Message::P2pAddr(m) => serde_json::to_vec(m)?,
+        Message::P2pReady(m) => serde_json::to_vec(m)?,
     };
 
     writer.write_u8(type_byte).await?;
@@ -80,6 +84,10 @@ pub async fn read_msg<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Message, M
         TYPE_PONG => Message::Pong(serde_json::from_slice(&buf)?),
         TYPE_UDP_PACKET => Message::UdpPacket(serde_json::from_slice(&buf)?),
         TYPE_KICK_OUT => Message::KickOut(serde_json::from_slice(&buf)?),
+        TYPE_P2P_REQ => Message::P2pReq(serde_json::from_slice(&buf)?),
+        TYPE_P2P_INFO => Message::P2pInfo(serde_json::from_slice(&buf)?),
+        TYPE_P2P_ADDR => Message::P2pAddr(serde_json::from_slice(&buf)?),
+        TYPE_P2P_READY => Message::P2pReady(serde_json::from_slice(&buf)?),
         other => return Err(MessageReadError::UnknownType(other)),
     };
     Ok(msg)
@@ -107,7 +115,6 @@ mod tests {
         write_msg(&mut a, &msg).await.unwrap();
         let got = read_msg(&mut b).await.unwrap();
         assert_eq!(got.type_byte(), msg.type_byte());
-        // Compare serialized bodies to ensure identical payloads.
         let (_, body) = split(&msg);
         let (_, got_body) = split(&got);
         assert_eq!(body, got_body, "message body mismatch for type {}", msg.type_byte() as char);
@@ -127,6 +134,10 @@ mod tests {
             Message::Pong(m) => serde_json::to_vec(m).unwrap(),
             Message::UdpPacket(m) => serde_json::to_vec(m).unwrap(),
             Message::KickOut(m) => serde_json::to_vec(m).unwrap(),
+            Message::P2pReq(m) => serde_json::to_vec(m).unwrap(),
+            Message::P2pInfo(m) => serde_json::to_vec(m).unwrap(),
+            Message::P2pAddr(m) => serde_json::to_vec(m).unwrap(),
+            Message::P2pReady(m) => serde_json::to_vec(m).unwrap(),
         };
         (msg.type_byte(), body)
     }
@@ -202,10 +213,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn p2p_messages_roundtrip() {
+        roundtrip(Message::P2pReq(P2pReq {
+            peer_session_id: "peer-abc".into(),
+            token: "tok-123".into(),
+            preferred_local_port: 0,
+        }))
+        .await;
+
+        roundtrip(Message::P2pInfo(P2pInfo {
+            token: "tok-123".into(),
+            peer_addr: "1.2.3.4:54321".into(),
+            error: "".into(),
+        }))
+        .await;
+
+        roundtrip(Message::P2pAddr(P2pAddr {
+            token: "tok-123".into(),
+            candidates: "192.168.1.5:40000,1.2.3.4:54321".into(),
+        }))
+        .await;
+
+        roundtrip(Message::P2pReady(P2pReady {
+            token: "tok-123".into(),
+            initiator_candidates: "192.168.1.5:40000".into(),
+            responder_candidates: "10.0.0.2:50000".into(),
+            initiator_observed_addr: "1.2.3.4:54321".into(),
+            responder_observed_addr: "5.6.7.8:60000".into(),
+        }))
+        .await;
+    }
+
+    #[tokio::test]
     async fn rejects_unknown_type() {
         let (mut a, mut b) = duplex(64);
         use tokio::io::AsyncWriteExt;
-        a.write_u8(0x7f).await.unwrap(); // unknown type byte
+        a.write_u8(0x7f).await.unwrap();
         a.write_u32_le(0).await.unwrap();
         a.flush().await.unwrap();
         let err = read_msg(&mut b).await.unwrap_err();

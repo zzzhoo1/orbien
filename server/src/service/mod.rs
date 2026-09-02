@@ -1,5 +1,6 @@
 mod dashboard_view;
 mod ingress;
+mod p2p_broker;
 mod session_registry;
 
 use crate::access::AccessPolicy;
@@ -9,6 +10,7 @@ use crate::tunnel::{run_http_gw_listener, run_https_gw_listener, HttpGw, HttpsGw
 use anyhow::{anyhow, Result};
 use orbien_core::config::ServerConfig;
 use orbien_core::transport;
+use p2p_broker::P2pBroker;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,7 +19,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::task::JoinSet;
 
-#[allow(unused_imports)] // public API re-export
+#[allow(unused_imports)]
 pub use dashboard_view::DashboardSnapshot;
 
 struct OfflineClientRecord {
@@ -41,6 +43,8 @@ pub struct Service {
     https_gw: Option<Arc<HttpsGw>>,
     tls_config: Arc<rustls::ServerConfig>,
     metrics: Arc<MemMetrics>,
+    /// Broker for P2P direct-tunnel handshakes.
+    p2p: Arc<P2pBroker>,
 }
 
 impl Service {
@@ -71,6 +75,7 @@ impl Service {
             https_gw,
             tls_config,
             metrics: MemMetrics::new(),
+            p2p: P2pBroker::new(),
         })
     }
 
@@ -176,27 +181,11 @@ impl Service {
         &self.metrics
     }
 
-    /// Return a snapshot of the current access policy for use inside a request
-    /// handler.  Callers should not hold the returned `Arc` across `.await`
-    /// points that may block for a long time.
     #[allow(dead_code)]
     pub async fn access_policy(&self) -> Arc<AccessPolicy> {
         Arc::clone(&*self.access.read().await)
     }
 
-    /// Hot-reload the access policy from a new `ServerConfig`.
-    ///
-    /// Builds a fresh `AccessPolicy`, then atomically swaps it in under the
-    /// `RwLock`.  Existing connections are not affected; new auth checks will
-    /// use the updated rules immediately.
-    ///
-    /// Returns the list of top-level config keys that changed relative to the
-    /// currently-loaded config so the caller can surface a meaningful diff to
-    /// the operator.
-    ///
-    /// `AuthConfig` fields: `auth_type`, `token`, `token_policies`.
-    /// There is no `password` field on `AuthConfig`; dashboard credentials
-    /// live in `DashboardConfig.password` and are not hot-reloaded.
     pub async fn reload_access_policy(
         &self,
         new_cfg: &ServerConfig,
@@ -204,42 +193,33 @@ impl Service {
         let new_policy = AccessPolicy::from_server_config(new_cfg)
             .map_err(|e| anyhow!("reload: failed to build access policy: {e}"))?;
 
-        // Compute a coarse diff of observable top-level fields.
         let mut changed: Vec<String> = Vec::new();
         let old = &self.cfg;
 
         if old.listen != new_cfg.listen {
             changed.push("listen".into());
         }
-
-        // AuthConfig has: auth_type, token, token_policies
-        // Dashboard password (DashboardConfig.password) is NOT hot-reloaded.
         if old.auth.auth_type != new_cfg.auth.auth_type
             || old.auth.token != new_cfg.auth.token
             || old.auth.token_policies != new_cfg.auth.token_policies
         {
             changed.push("auth".into());
         }
-
         if old.http_gw_port != new_cfg.http_gw_port
             || old.https_gw_port != new_cfg.https_gw_port
             || old.http_gw_enabled() != new_cfg.http_gw_enabled()
         {
             changed.push("gateway".into());
         }
-
         if old.root_domain != new_cfg.root_domain {
             changed.push("root_domain".into());
         }
-
         if old.quic_port != new_cfg.quic_port || old.kcp_port != new_cfg.kcp_port {
             changed.push("transport_ports".into());
         }
 
-        // Atomically swap in the new policy.
         *self.access.write().await = Arc::new(new_policy);
         tracing::info!(changed = ?changed, "access policy reloaded");
-
         Ok(changed)
     }
 
@@ -275,10 +255,6 @@ impl Service {
         }
     }
 
-    /// Remove and stop a running proxy/tunnel by name (from the dashboard).
-    /// Kept under the `proxy` name for backward compatibility with the
-    /// dashboard API (`DELETE /api/v1/proxies/{name}`); it operates on the
-    /// tunnel registry.
     pub async fn kick_proxy(&self, proxy_name: &str) -> Result<()> {
         let controls: Vec<Arc<Control>> = {
             let map = self.controls.lock().await;
@@ -290,5 +266,41 @@ impl Service {
             }
         }
         Err(anyhow!("proxy not found: {proxy_name}"))
+    }
+
+    // ── P2P helpers ───────────────────────────────────────────────────────────
+
+    /// Look up a live `Control` by session ID.  Returns `None` if the session
+    /// is not currently connected.
+    pub(crate) async fn control_by_session(
+        &self,
+        session_id: &str,
+    ) -> Option<Arc<Control>> {
+        self.controls.lock().await.get(session_id).cloned()
+    }
+
+    /// Handle an incoming `P2pReq` from `initiator_ctrl`.
+    pub(crate) async fn handle_p2p_req(
+        self: &Arc<Self>,
+        req: orbien_core::msg::P2pReq,
+        initiator_ctrl: Arc<Control>,
+        initiator_peer: std::net::SocketAddr,
+    ) -> anyhow::Result<()> {
+        let responder = self
+            .control_by_session(&req.peer_session_id)
+            .await
+            .ok_or_else(|| anyhow!("P2pReq: peer session not found: {}", req.peer_session_id))?;
+        self.p2p
+            .handle_req(req, initiator_ctrl, initiator_peer, responder)
+            .await
+    }
+
+    /// Handle an incoming `P2pAddr` from the client identified by `session_id`.
+    pub(crate) async fn handle_p2p_addr(
+        &self,
+        addr_msg: orbien_core::msg::P2pAddr,
+        session_id: &str,
+    ) -> anyhow::Result<()> {
+        self.p2p.handle_addr(addr_msg, session_id).await
     }
 }
