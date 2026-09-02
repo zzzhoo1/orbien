@@ -4,10 +4,12 @@ mod register;
 use crate::access::AccessPolicy;
 use crate::metrics::{MemMetrics, ServerMetrics};
 use crate::tunnel::{HttpGw, HttpsGw, TunnelManager};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use orbien_core::config::ServerConfig;
 use orbien_core::msg::{self, KickOut, Message, Ping, Pong};
 use orbien_core::transport::DynStream;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -19,6 +21,19 @@ use tokio::time::sleep;
 
 type CtrlRead = ReadHalf<DynStream>;
 type CtrlWrite = WriteHalf<DynStream>;
+
+/// Minimal interface the control session needs from the Service layer in order
+/// to dispatch P2P broker messages without creating a circular dependency.
+/// The service implements this via a closure captured at session-creation time.
+pub type P2pHandler = Arc<
+    dyn Fn(
+            Message,
+            String, // session_id of the sender
+            SocketAddr,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
 
 pub struct Control {
     pub session_id: String,
@@ -45,10 +60,14 @@ pub struct Control {
     access: Arc<AccessPolicy>,
     pub metrics: Arc<MemMetrics>,
     last_ping_unix: AtomicI64,
+    /// Server-observed socket address of this client.
+    peer_socket_addr: SocketAddr,
+    /// Optional P2P broker dispatch hook injected by the Service.
+    p2p_handler: Option<P2pHandler>,
 }
 
 impl Control {
-    #[allow(clippy::too_many_arguments)] // Control::new wires many subsystem handles
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_id: String,
         stream: DynStream,
@@ -65,6 +84,19 @@ impl Control {
         client_ip: String,
         metrics: Arc<MemMetrics>,
     ) -> Self {
+        // Best-effort: parse the stored client_ip string back into a SocketAddr.
+        // Falls back to 0.0.0.0:0 so the broker always has a valid address even
+        // when the IP string is incomplete.
+        let peer_socket_addr = client_ip
+            .parse::<SocketAddr>()
+            .or_else(|_| {
+                // client_ip may be just an IP without a port
+                client_ip
+                    .parse::<IpAddr>()
+                    .map(|ip| SocketAddr::new(ip, 0))
+            })
+            .unwrap_or_else(|_| SocketAddr::from_str("0.0.0.0:0").unwrap());
+
         let (reader, writer) = tokio::io::split(stream);
         let (data_tx, data_rx) = mpsc::channel(64);
         Self {
@@ -97,8 +129,42 @@ impl Control {
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0),
             ),
+            peer_socket_addr,
+            p2p_handler: None,
         }
     }
+
+    // ── P2P helpers ────────────────────────────────────────────────────────────
+
+    /// Return the session ID as a `&str` (convenience for broker code).
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Return the server-observed socket address of this client.
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_socket_addr
+    }
+
+    /// Inject the P2P dispatch hook after construction.
+    /// Called once by `Service::register_control` before `Control::run()`.
+    pub fn set_p2p_handler(&mut self, handler: P2pHandler) {
+        self.p2p_handler = Some(handler);
+    }
+
+    /// Write a P2P broker message (`P2pInfo` or `P2pReady`) directly onto this
+    /// client's control stream.
+    pub async fn send_p2p_msg(&self, msg: Message) -> Result<()> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(anyhow!("control closed, cannot send P2P message"));
+        }
+        let mut writer = self.writer.lock().await;
+        msg::write_msg(&mut *writer, &msg)
+            .await
+            .map_err(|e| anyhow!("send_p2p_msg: {e}"))
+    }
+
+    // ── Standard session API ──────────────────────────────────────────────────
 
     pub async fn tunnel_summaries(&self) -> Vec<crate::tunnel::TunnelSummary> {
         self.tunnels.lock().await.summaries()
@@ -108,7 +174,6 @@ impl Control {
         self.tunnels.lock().await.len()
     }
 
-    /// Remove and stop a single registered tunnel by name (from the dashboard).
     pub async fn kick_tunnel(&self, name: &str) -> bool {
         let mut tm = self.tunnels.lock().await;
         if let Some(ty) = tm.remove(name).await {
@@ -189,6 +254,20 @@ impl Control {
                 Message::NewTunnel(np) => self.handle_new_tunnel(np).await?,
                 Message::CloseTunnel(cp) => self.handle_close_tunnel(cp).await?,
                 Message::Ping(p) => self.handle_ping(p).await?,
+
+                // ── P2P broker messages ─────────────────────────────────────
+                p2p_msg @ Message::P2pReq(_) | p2p_msg @ Message::P2pAddr(_) => {
+                    if let Some(ref handler) = self.p2p_handler {
+                        let peer = self.peer_socket_addr;
+                        let sid = self.session_id.clone();
+                        if let Err(e) = handler(p2p_msg, sid, peer).await {
+                            tracing::warn!(error = %e, "P2P broker dispatch error");
+                        }
+                    } else {
+                        tracing::warn!("P2P message received but no handler registered");
+                    }
+                }
+
                 other => {
                     tracing::warn!(ty = other.type_byte(), "ignored control message");
                 }

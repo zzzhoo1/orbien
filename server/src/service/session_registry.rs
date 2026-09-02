@@ -1,5 +1,5 @@
 use super::{OfflineClientRecord, Service};
-use crate::control::Control;
+use crate::control::{Control, P2pHandler};
 use crate::metrics::ServerMetrics;
 use anyhow::{anyhow, Result};
 use orbien_core::auth;
@@ -54,13 +54,11 @@ impl Service {
         let max_pool = self.cfg.transport.max_conn_pool.max(0) as usize;
         let pool_count = (login.pool_count.max(0) as usize).min(max_pool);
 
-        let client_ip = peer.ip().to_string();
+        let client_ip = peer.to_string();
 
-        // Snapshot the current access policy for this session. Hot-reload
-        // updates self.access; existing sessions keep their original snapshot.
         let access_snapshot = self.access.read().await.clone();
 
-        let control = Control::new(
+        let mut control = Control::new(
             session_id.clone(),
             stream,
             self.cfg.clone(),
@@ -76,6 +74,33 @@ impl Service {
             client_ip,
             Arc::clone(&self.metrics),
         );
+
+        // Wire up the P2P broker dispatch hook so the control loop can forward
+        // P2pReq / P2pAddr messages to the Service without a circular Arc.
+        let svc_weak = Arc::downgrade(&self);
+        let p2p_hook: P2pHandler = Arc::new(move |msg, sid, peer_addr| {
+            let svc_weak = svc_weak.clone();
+            Box::pin(async move {
+                let svc = svc_weak
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("service dropped"))?;
+                match msg {
+                    Message::P2pReq(req) => {
+                        // Look up initiator control by session_id so we can
+                        // pass it to the broker.
+                        let initiator = svc
+                            .control_by_session(&sid)
+                            .await
+                            .ok_or_else(|| anyhow!("P2pReq: initiator session not found: {sid}"))?;
+                        svc.handle_p2p_req(req, initiator, peer_addr).await
+                    }
+                    Message::P2pAddr(addr) => svc.handle_p2p_addr(addr, &sid).await,
+                    _ => Err(anyhow!("unexpected message type in p2p_hook")),
+                }
+            })
+        });
+        control.set_p2p_handler(p2p_hook);
+
         let control = Arc::new(control);
 
         {
