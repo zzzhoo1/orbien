@@ -4,6 +4,7 @@ pub mod io;
 pub mod limit;
 pub mod msg;
 pub mod net;
+pub mod p2p;
 pub mod tls;
 pub mod transport;
 pub mod udp;
