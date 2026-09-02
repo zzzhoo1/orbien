@@ -1,8 +1,8 @@
 import {describe, it, expect, vi, beforeEach} from 'vitest'
-import {createMemoryHistory, createRouter} from 'vue-router'
+import {createMemoryHistory} from 'vue-router'
 import type {Router} from 'vue-router'
 
-// ── Auth store mock ─────────────────────────────────────────────────────────────────────────────
+// ── Auth store mock ──────────────────────────────────────────────────────────────────────────────────
 const authState = {
   authenticated: false,
   fetchStatus: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => authState,
 }))
 
-// ── View stubs ───────────────────────────────────────────────────────────────────────────────
+// ── View stubs ──────────────────────────────────────────────────────────────────────────────────
 const stub = {template: '<div/>'}
 vi.mock('@/views/Monitor.vue', () => ({default: stub}))
 vi.mock('@/views/Tunnels.vue', () => ({default: stub}))
@@ -23,7 +23,8 @@ vi.mock('@/views/Login.vue', () => ({default: stub}))
 // ── Helper: fresh router per test ──────────────────────────────────────────────────────────────────
 async function makeRouter(): Promise<Router> {
   vi.resetModules()
-  const {router} = await import('../index')
+  const mod = await import('../index')
+  const router = mod.default
   const mem = createMemoryHistory()
   ;(router as any).history = mem
   return router
@@ -35,7 +36,7 @@ beforeEach(() => {
   authState.fetchStatus.mockResolvedValue(false)
 })
 
-// ── Route definitions ────────────────────────────────────────────────────────────────────────────
+// ── Route definitions ───────────────────────────────────────────────────────────────────────────────
 describe('router – route definitions', () => {
   it('has a /login route marked as public', async () => {
     const router = await makeRouter()
@@ -111,7 +112,7 @@ describe('router – route definitions', () => {
   })
 })
 
-// ── Navigation guard ───────────────────────────────────────────────────────────────────────────────
+// ── Navigation guard ───────────────────────────────────────────────────────────────────────────────────
 describe('router – navigation guard', () => {
   it('allows public route /login without auth', async () => {
     authState.authenticated = false

@@ -7,29 +7,27 @@ const router = createRouter({
         {
             path: '/',
             name: 'monitor',
-            component: () => import('@/layouts/DefaultLayout.vue'),
-            children: [
-                {
-                    path: 'clients',
-                    name: 'clients',
-                    component: () => import('@/views/Clients.vue'),
-                },
-                {
-                    path: 'clients/:sessionId',
-                    name: 'client-detail',
-                    component: () => import('@/views/ClientDetail.vue'),
-                },
-                {
-                    path: 'tunnels',
-                    name: 'tunnels',
-                    component: () => import('@/views/Tunnels.vue'),
-                },
-                {
-                    path: 'tunnels/:name',
-                    name: 'tunnel-detail',
-                    component: () => import('@/views/TunnelDetail.vue'),
-                },
-            ],
+            component: () => import('@/views/Monitor.vue'),
+        },
+        {
+            path: '/clients',
+            name: 'clients',
+            component: () => import('@/views/Clients.vue'),
+        },
+        {
+            path: '/clients/:sessionId',
+            name: 'client-detail',
+            component: () => import('@/views/ClientDetail.vue'),
+        },
+        {
+            path: '/tunnels',
+            name: 'tunnels',
+            component: () => import('@/views/Tunnels.vue'),
+        },
+        {
+            path: '/tunnels/:name',
+            name: 'tunnel-detail',
+            component: () => import('@/views/TunnelDetail.vue'),
         },
         {
             path: '/login',
@@ -39,10 +37,6 @@ const router = createRouter({
         },
         {
             path: '/overview',
-            redirect: '/',
-        },
-        {
-            path: '/:pathMatch(.*)*',
             redirect: '/',
         },
     ],
