@@ -1,6 +1,6 @@
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest'
 
-// ── locales.ts ───────────────────────────────────────────────────────────────────
+// ── locales.ts ─────────────────────────────────────────────────────────────────────────────────
 describe('locales – isAppLocale', () => {
   let isAppLocale: (v: string) => boolean
 
@@ -47,7 +47,7 @@ describe('locales – LOCALE_META', () => {
 
   it('has nativeLabel for zh-CN', async () => {
     const {LOCALE_META} = await import('../locales')
-    expect(LOCALE_META['zh-CN'].nativeLabel).toBe('中文')
+    expect(LOCALE_META['zh-CN'].nativeLabel).toBe('\u4e2d\u6587')
   })
 
   it('has nativeLabel for en-US', async () => {
@@ -56,7 +56,7 @@ describe('locales – LOCALE_META', () => {
   })
 })
 
-// ── index.ts: resolveLocale ────────────────────────────────────────────────────────
+// ── index.ts: resolveLocale ───────────────────────────────────────────────────────────────────────────────
 describe('resolveLocale', () => {
   let resolveLocale: (preferred?: string | null) => string
   const STORAGE_KEY = 'orbien-server-ui-locale'
@@ -133,7 +133,7 @@ describe('resolveLocale', () => {
   })
 })
 
-// ── index.ts: applyDocumentLocale ──────────────────────────────────────────────────
+// ── index.ts: applyDocumentLocale ──────────────────────────────────────────────────────────────────────────
 describe('applyDocumentLocale', () => {
   const STORAGE_KEY = 'orbien-server-ui-locale'
 
@@ -176,7 +176,7 @@ describe('applyDocumentLocale', () => {
   })
 })
 
-// ── index.ts: setLocale ──────────────────────────────────────────────────────────────────
+// ── index.ts: setLocale ────────────────────────────────────────────────────────────────────────────────────────
 describe('setLocale', () => {
   const STORAGE_KEY = 'orbien-server-ui-locale'
 
@@ -227,32 +227,42 @@ describe('setLocale', () => {
   })
 })
 
-// ── constants: NAV_ITEMS ──────────────────────────────────────────────────────────────
+// ── constants: NAV_ITEMS ───────────────────────────────────────────────────────────────────────────────────
 describe('NAV_ITEMS', () => {
-  it('has exactly 3 items', async () => {
+  it('has exactly 5 items', async () => {
     const {NAV_ITEMS} = await import('@/constants/menus')
-    expect(NAV_ITEMS).toHaveLength(3)
+    expect(NAV_ITEMS).toHaveLength(5)
   })
 
-  it('first item is monitor at /', async () => {
+  it('first item is dashboard at /', async () => {
     const {NAV_ITEMS} = await import('@/constants/menus')
-    expect(NAV_ITEMS[0]).toMatchObject({name: 'monitor', path: '/', icon: 'monitor'})
+    expect(NAV_ITEMS[0]).toMatchObject({key: 'dashboard', path: '/', icon: 'dashboard'})
   })
 
-  it('second item is tunnels at /tunnels', async () => {
+  it('second item is clients at /clients', async () => {
     const {NAV_ITEMS} = await import('@/constants/menus')
-    expect(NAV_ITEMS[1]).toMatchObject({name: 'tunnels', path: '/tunnels', icon: 'tunnels'})
+    expect(NAV_ITEMS[1]).toMatchObject({key: 'clients', path: '/clients', icon: 'clients'})
   })
 
-  it('third item is clients at /clients', async () => {
+  it('third item is tunnels at /tunnels', async () => {
     const {NAV_ITEMS} = await import('@/constants/menus')
-    expect(NAV_ITEMS[2]).toMatchObject({name: 'clients', path: '/clients', icon: 'clients'})
+    expect(NAV_ITEMS[2]).toMatchObject({key: 'tunnels', path: '/tunnels', icon: 'tunnels'})
   })
 
-  it('all items have matching labelKey and name', async () => {
+  it('fourth item is tokens at /tokens', async () => {
+    const {NAV_ITEMS} = await import('@/constants/menus')
+    expect(NAV_ITEMS[3]).toMatchObject({key: 'tokens', path: '/tokens', icon: 'tokens'})
+  })
+
+  it('fifth item is settings at /settings', async () => {
+    const {NAV_ITEMS} = await import('@/constants/menus')
+    expect(NAV_ITEMS[4]).toMatchObject({key: 'settings', path: '/settings', icon: 'settings'})
+  })
+
+  it('all items have labelKey prefixed with nav.', async () => {
     const {NAV_ITEMS} = await import('@/constants/menus')
     for (const item of NAV_ITEMS) {
-      expect(item.labelKey).toBe(item.name)
+      expect(item.labelKey).toBe(`nav.${item.key}`)
     }
   })
 })

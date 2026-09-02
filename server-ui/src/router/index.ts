@@ -1,17 +1,14 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import {createRouter, createWebHistory} from 'vue-router'
+import {useAuthStore} from '@/stores/auth'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
     routes: [
         {
             path: '/',
+            name: 'monitor',
             component: () => import('@/layouts/DefaultLayout.vue'),
             children: [
-                {
-                    path: '',
-                    name: 'dashboard',
-                    component: () => import('@/views/Dashboard.vue'),
-                },
                 {
                     path: 'clients',
                     name: 'clients',
@@ -28,27 +25,40 @@ const router = createRouter({
                     component: () => import('@/views/Tunnels.vue'),
                 },
                 {
-                    path: 'tokens',
-                    name: 'tokens',
-                    component: () => import('@/views/Tokens.vue'),
-                },
-                {
-                    path: 'settings',
-                    name: 'settings',
-                    component: () => import('@/views/Settings.vue'),
+                    path: 'tunnels/:name',
+                    name: 'tunnel-detail',
+                    component: () => import('@/views/TunnelDetail.vue'),
                 },
             ],
         },
         {
             path: '/login',
             name: 'login',
+            meta: {public: true},
             component: () => import('@/views/Login.vue'),
+        },
+        {
+            path: '/overview',
+            redirect: '/',
         },
         {
             path: '/:pathMatch(.*)*',
             redirect: '/',
         },
     ],
+})
+
+router.beforeEach(async (to) => {
+    if (to.meta.public) return true
+    const auth = useAuthStore()
+    if (auth.authenticated) return true
+    try {
+        const ok = await auth.fetchStatus()
+        if (ok) return true
+    } catch {
+        // fall through to login redirect
+    }
+    return {name: 'login'}
 })
 
 export default router
