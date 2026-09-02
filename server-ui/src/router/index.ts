@@ -5,7 +5,7 @@ const router = createRouter({
     routes: [
         {
             path: '/',
-            component: () => import('@/layouts/AppLayout.vue'),
+            component: () => import('@/layouts/DefaultLayout.vue'),
             children: [
                 {
                     path: '',

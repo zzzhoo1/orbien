@@ -1,7 +1,7 @@
 import {reactive} from 'vue'
 import {fetchClients, fetchTunnels, fetchSystemInfo, fetchSystemTokens, isApiError, type ApiError} from '@/api'
 import {useAuthStore} from '@/stores/auth'
-import {router} from '@/router'
+import router from '@/router'
 import type {ClientInfo, TunnelInfo, SystemInfo, TokenMetricItem} from '@/types/api'
 
 export type DashboardError =
