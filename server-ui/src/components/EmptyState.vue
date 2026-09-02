@@ -1,16 +1,21 @@
 <script setup lang="ts">
-defineProps<{
-  type?: 'clients' | 'tunnels' | 'search' | 'filter' | 'generic'
-  title: string
-  desc?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    type?: 'clients' | 'tunnels' | 'search' | 'filter' | 'generic'
+    title: string
+    desc?: string
+  }>(),
+  {
+    type: 'generic',
+  },
+)
 </script>
 
 <template>
   <div class="empty-state" role="status" aria-live="polite">
     <div class="empty-illustration" aria-hidden="true">
       <!-- clients -->
-      <svg v-if="type === 'clients'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg v-if="props.type === 'clients'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="8" y="20" width="28" height="34" rx="4" fill="currentColor" opacity="0.07"/>
         <rect x="44" y="20" width="28" height="34" rx="4" fill="currentColor" opacity="0.07"/>
         <circle cx="22" cy="13" r="7" fill="currentColor" opacity="0.15"/>
@@ -23,7 +28,7 @@ defineProps<{
       </svg>
 
       <!-- tunnels -->
-      <svg v-else-if="type === 'tunnels'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg v-else-if="props.type === 'tunnels'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="6" y="26" width="20" height="12" rx="3" fill="currentColor" opacity="0.12"/>
         <rect x="54" y="26" width="20" height="12" rx="3" fill="currentColor" opacity="0.12"/>
         <path d="M26 32 L54 32" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3" stroke-linecap="round" opacity="0.18"/>
@@ -36,7 +41,7 @@ defineProps<{
       </svg>
 
       <!-- search empty -->
-      <svg v-else-if="type === 'search'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg v-else-if="props.type === 'search'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
         <circle cx="34" cy="30" r="16" stroke="currentColor" stroke-width="2.5" opacity="0.15"/>
         <path d="M46 42 L58 54" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" opacity="0.18"/>
         <path d="M28 30 L32 34 L40 26" stroke="currentColor" stroke-width="0" fill="none"/>
@@ -46,7 +51,7 @@ defineProps<{
       </svg>
 
       <!-- filter empty -->
-      <svg v-else-if="type === 'filter'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg v-else-if="props.type === 'filter'" viewBox="0 0 80 64" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M16 20 H64 L50 36 V52 L30 44 V36 Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity="0.15"/>
         <rect x="28" y="40" width="24" height="2" rx="1" fill="currentColor" opacity="0.12"/>
         <circle cx="60" cy="48" r="8" fill="currentColor" opacity="0.07"/>
