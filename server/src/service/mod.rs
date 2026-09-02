@@ -112,7 +112,7 @@ impl Service {
         }
 
         if this.cfg.quic_enabled() {
-            let quic_addr: SocketAddr = format!("{}:{}", listen_host, this.cfg.quic_port)
+            let quic_addr: SocketAddr = format!("{}: {}", listen_host, this.cfg.quic_port)
                 .parse()
                 .map_err(|e| anyhow!("invalid quic bind addr: {e}"))?;
             let endpoint = transport::build_server_endpoint(
@@ -130,7 +130,7 @@ impl Service {
         }
 
         if this.cfg.kcp_enabled() {
-            let kcp_addr: SocketAddr = format!("{}:{}", listen_host, this.cfg.kcp_port)
+            let kcp_addr: SocketAddr = format!("{}: {}", listen_host, this.cfg.kcp_port)
                 .parse()
                 .map_err(|e| anyhow!("invalid kcp bind addr: {e}"))?;
             let listener = transport::bind_kcp_listener(kcp_addr).await?;
@@ -179,6 +179,7 @@ impl Service {
     /// Return a snapshot of the current access policy for use inside a request
     /// handler.  Callers should not hold the returned `Arc` across `.await`
     /// points that may block for a long time.
+    #[allow(dead_code)]
     pub async fn access_policy(&self) -> Arc<AccessPolicy> {
         Arc::clone(&*self.access.read().await)
     }

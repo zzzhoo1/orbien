@@ -56,6 +56,10 @@ impl Service {
 
         let client_ip = peer.ip().to_string();
 
+        // Snapshot the current access policy for this session. Hot-reload
+        // updates self.access; existing sessions keep their original snapshot.
+        let access_snapshot = self.access.read().await.clone();
+
         let control = Control::new(
             session_id.clone(),
             stream,
@@ -63,7 +67,7 @@ impl Service {
             pool_count,
             self.http_gw.clone(),
             self.https_gw.clone(),
-            Arc::clone(&self.access),
+            access_snapshot,
             login.user.clone(),
             login.hostname.clone(),
             login.os.clone(),

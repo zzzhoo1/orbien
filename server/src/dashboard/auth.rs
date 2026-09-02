@@ -126,7 +126,6 @@ impl AuthState {
     }
 
     pub fn passkeys_for(&self, username: &str) -> Vec<Passkey> {
-        // clippy::map_clone: use .cloned() on the inner iterator
         self.passkeys
             .get(username)
             .map(|v| v.value().clone())
@@ -134,10 +133,9 @@ impl AuthState {
     }
 
     pub fn all_passkeys(&self) -> Vec<Passkey> {
-        // clippy::map_clone: use iter().cloned() instead of .clone() on the value
         self.passkeys
             .iter()
-            .flat_map(|e| e.value().iter().cloned())
+            .flat_map(|e| e.value().to_vec())
             .collect()
     }
 
