@@ -74,11 +74,9 @@ pub fn parse_candidates(s: &str) -> Vec<SocketAddr> {
 ///
 /// Both peers must call this function concurrently after receiving `P2pReady`.
 pub async fn punch(cfg: HolePunchConfig) -> HolePunchResult {
-    // Try UDP hole-punch first.
     if let Some(sock) = try_udp_punch(&cfg).await {
         return HolePunchResult::Udp(sock);
     }
-    // Fallback: try direct TCP to each remote candidate.
     if let Some(stream) = try_tcp_connect(&cfg).await {
         return HolePunchResult::Tcp(stream);
     }
@@ -93,12 +91,10 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
     }
 
     let token_bytes = cfg.token.as_bytes();
-    // Pad / truncate token to exactly 36 bytes for a fixed-size probe header.
     let mut probe = [0u8; 36];
     let copy_len = token_bytes.len().min(36);
     probe[..copy_len].copy_from_slice(&token_bytes[..copy_len]);
 
-    // Spawn one task per remote candidate; the first to hear back wins.
     let mut tasks = tokio::task::JoinSet::new();
 
     for remote in cfg.remote_candidates.clone() {
@@ -108,24 +104,22 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
         let token_bytes_owned = cfg.token.clone();
 
         tasks.spawn(async move {
-            // Bind to an ephemeral port — the OS chooses the source port,
-            // which becomes our hole in the NAT table.
             let sock = UdpSocket::bind("0.0.0.0:0").await.ok()?;
             sock.connect(remote).await.ok()?;
 
-            // Send multiple probes to maximise the chance of punching through.
             for _ in 0..probe_count {
                 let _ = sock.send(&probe).await;
                 tokio::time::sleep(probe_interval).await;
             }
 
-            // Wait for the peer's probe to arrive (verifying the token).
+            // `timeout(…).await` → Result<Result<usize, io::Error>, Elapsed>
+            // First `.ok()?`  discards Elapsed, yielding Option<Result<usize, io::Error>>
+            // Second `.ok()?` discards io::Error, yielding Option<usize> and then usize via `?`
             let mut buf = [0u8; 64];
             let n = timeout(Duration::from_secs(5), sock.recv(&mut buf))
                 .await
-                .ok()??
-                // ignore errors
-                ;
+                .ok()?  // discard Elapsed error → Option<Result<usize, io::Error>>
+                .ok()?; // discard io::Error     → usize (propagates None on error)
             let received_token = &buf[..n.min(token_bytes_owned.len())];
             if received_token == token_bytes_owned.as_bytes() {
                 Some(sock)
@@ -135,7 +129,6 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
         });
     }
 
-    // Race all candidates; return on the first success.
     let overall = timeout(cfg.timeout, async move {
         while let Some(res) = tasks.join_next().await {
             if let Ok(Some(sock)) = res {
@@ -211,7 +204,6 @@ mod tests {
 
     #[tokio::test]
     async fn punch_returns_failed_on_unreachable_candidates() {
-        // 192.0.2.x is TEST-NET — guaranteed unreachable in any environment.
         let cfg = HolePunchConfig {
             token: "tok".into(),
             local_candidates: vec![],
@@ -223,28 +215,19 @@ mod tests {
         assert!(matches!(punch(cfg).await, HolePunchResult::Failed));
     }
 
-    /// Loopback self-punch: both "sides" bind on 127.0.0.1 and punch each
-    /// other.  This proves the UDP probe + response path works end-to-end
-    /// without any real NAT.
     #[tokio::test]
     async fn udp_self_punch_loopback() {
-        let token = "loopback-test-token-123456789012".to_string(); // 32 chars
+        let token = "loopback-test-token-123456789012".to_string();
 
-        // Bind two sockets on loopback to get their OS-assigned ports.
         let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr_a = sock_a.local_addr().unwrap();
         let addr_b = sock_b.local_addr().unwrap();
-
-        // Return sockets so our punch tasks can reuse the ports.
         drop(sock_a);
         drop(sock_b);
 
-        let token_a = token.clone();
-        let token_b = token.clone();
-
         let cfg_a = HolePunchConfig {
-            token: token_a,
+            token: token.clone(),
             local_candidates: vec![addr_a],
             remote_candidates: vec![addr_b],
             timeout: Duration::from_secs(5),
@@ -252,7 +235,7 @@ mod tests {
             probe_interval: Duration::from_millis(50),
         };
         let cfg_b = HolePunchConfig {
-            token: token_b,
+            token: token.clone(),
             local_candidates: vec![addr_b],
             remote_candidates: vec![addr_a],
             timeout: Duration::from_secs(5),
@@ -262,7 +245,6 @@ mod tests {
 
         let (res_a, res_b) = tokio::join!(punch(cfg_a), punch(cfg_b));
 
-        // At least one side should get through on loopback.
         let a_ok = matches!(res_a, HolePunchResult::Udp(_));
         let b_ok = matches!(res_b, HolePunchResult::Udp(_));
         assert!(a_ok || b_ok, "expected at least one UDP punch to succeed on loopback");
