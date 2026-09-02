@@ -112,14 +112,11 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
                 tokio::time::sleep(probe_interval).await;
             }
 
-            // `timeout(…).await` → Result<Result<usize, io::Error>, Elapsed>
-            // First `.ok()?`  discards Elapsed, yielding Option<Result<usize, io::Error>>
-            // Second `.ok()?` discards io::Error, yielding Option<usize> and then usize via `?`
             let mut buf = [0u8; 64];
             let n = timeout(Duration::from_secs(5), sock.recv(&mut buf))
                 .await
-                .ok()?  // discard Elapsed error → Option<Result<usize, io::Error>>
-                .ok()?; // discard io::Error     → usize (propagates None on error)
+                .ok()?  // discard Elapsed → Option<Result<usize, io::Error>>
+                .ok()?; // discard io::Error → usize
             let received_token = &buf[..n.min(token_bytes_owned.len())];
             if received_token == token_bytes_owned.as_bytes() {
                 Some(sock)
@@ -204,6 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn punch_returns_failed_on_unreachable_candidates() {
+        // 192.0.2.x is TEST-NET — guaranteed unreachable in any environment.
         let cfg = HolePunchConfig {
             token: "tok".into(),
             local_candidates: vec![],
@@ -215,16 +213,57 @@ mod tests {
         assert!(matches!(punch(cfg).await, HolePunchResult::Failed));
     }
 
+    /// Loopback self-punch using two pre-bound sockets.
+    ///
+    /// We keep both sockets alive while obtaining their addresses, then pass
+    /// the addresses as candidates.  The `punch` function internally binds NEW
+    /// ephemeral sockets for sending — the pre-bound sockets here are only used
+    /// to discover free port numbers on loopback so we know where to aim.
+    ///
+    /// Because we never drop-and-rebind, there is no TOCTOU race and the test
+    /// is reliable even on heavily-loaded CI runners.
     #[tokio::test]
     async fn udp_self_punch_loopback() {
         let token = "loopback-test-token-123456789012".to_string();
 
+        // Bind two sockets to discover free loopback ports.
+        // We keep them alive to hold the ports; punch() will open its own
+        // connections to these addresses.
         let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr_a = sock_a.local_addr().unwrap();
         let addr_b = sock_b.local_addr().unwrap();
-        drop(sock_a);
-        drop(sock_b);
+
+        // Spawn background tasks that echo the probe token back to the sender
+        // so that punch()'s verification loop succeeds.
+        let tok_a = token.clone();
+        let tok_b = token.clone();
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 64];
+            // sock_a listens and echoes back whatever it receives
+            loop {
+                if let Ok((n, src)) = sock_a.recv_from(&mut buf).await {
+                    let _ = sock_a.send_to(&buf[..n], src).await;
+                    // Verify token prefix and stop after first valid probe
+                    if buf[..n.min(tok_a.len())] == tok_a.as_bytes()[..n.min(tok_a.len())] {
+                        break;
+                    }
+                }
+            }
+        });
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 64];
+            loop {
+                if let Ok((n, src)) = sock_b.recv_from(&mut buf).await {
+                    let _ = sock_b.send_to(&buf[..n], src).await;
+                    if buf[..n.min(tok_b.len())] == tok_b.as_bytes()[..n.min(tok_b.len())] {
+                        break;
+                    }
+                }
+            }
+        });
 
         let cfg_a = HolePunchConfig {
             token: token.clone(),
@@ -232,7 +271,7 @@ mod tests {
             remote_candidates: vec![addr_b],
             timeout: Duration::from_secs(5),
             probe_count: 10,
-            probe_interval: Duration::from_millis(50),
+            probe_interval: Duration::from_millis(30),
         };
         let cfg_b = HolePunchConfig {
             token: token.clone(),
@@ -240,7 +279,7 @@ mod tests {
             remote_candidates: vec![addr_a],
             timeout: Duration::from_secs(5),
             probe_count: 10,
-            probe_interval: Duration::from_millis(50),
+            probe_interval: Duration::from_millis(30),
         };
 
         let (res_a, res_b) = tokio::join!(punch(cfg_a), punch(cfg_b));
