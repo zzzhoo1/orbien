@@ -13,7 +13,7 @@
 //! - either leg returns an unrecoverable I/O error.
 
 use anyhow::{anyhow, Result};
-use std::net::SocketAddr;
+use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
@@ -43,9 +43,13 @@ pub async fn run_p2p_udp_session(
     label: &str,
     cancel: CancellationToken,
 ) -> Result<()> {
-    // Bind an ephemeral socket for the backend leg and connect it so that
-    // recv() only returns packets from backend_addr.
-    let backend_sock = UdpSocket::bind("127.0.0.1:0")
+    // Bind the backend socket on the same address family as backend_addr so
+    // that the subsequent connect() cannot fail with EAFNOSUPPORT.
+    let bind_addr: SocketAddr = match backend_addr {
+        SocketAddr::V4(_) => "127.0.0.1:0".parse().unwrap(),
+        SocketAddr::V6(_) => SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 0),
+    };
+    let backend_sock = UdpSocket::bind(bind_addr)
         .await
         .map_err(|e| anyhow!("p2p backend bind: {e}"))?;
     backend_sock
@@ -65,6 +69,10 @@ pub async fn run_p2p_udp_session(
 }
 
 /// Core relay loop: two concurrent copy legs under a select.
+///
+/// Whichever branch of the select wins, the *other* task is explicitly
+/// aborted and awaited before this function returns, ensuring no relay
+/// task outlives the session.
 async fn relay_loop(
     peer: Arc<UdpSocket>,
     backend: Arc<UdpSocket>,
@@ -81,14 +89,29 @@ async fn relay_loop(
         tokio::spawn(async move { copy_leg(&backend, &peer, "backend→peer").await })
     };
 
+    // Each arm captures the JoinHandle of the *other* task so we can abort it
+    // after the winning branch resolves.
     let result = tokio::select! {
-        _ = cancel.cancelled() => Ok(()),
-        r = peer_to_backend => flatten(r, "peer→backend task"),
-        r = backend_to_peer  => flatten(r, "backend→peer task"),
+        _ = cancel.cancelled() => {
+            peer_to_backend.abort();
+            backend_to_peer.abort();
+            // Await both so their resources are released before we return.
+            let _ = peer_to_backend.await;
+            let _ = backend_to_peer.await;
+            return Ok(());
+        }
+        r = peer_to_backend => {
+            backend_to_peer.abort();
+            let _ = backend_to_peer.await;
+            flatten(r, "peer→backend task")
+        }
+        r = backend_to_peer => {
+            peer_to_backend.abort();
+            let _ = peer_to_backend.await;
+            flatten(r, "backend→peer task")
+        }
     };
 
-    peer.to_owned();
-    backend.to_owned();
     result
 }
 

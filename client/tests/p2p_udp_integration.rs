@@ -9,6 +9,7 @@
 //! - UDP datagram boundary preservation
 //! - session termination when the backend disappears
 //! - clean exit on cancellation
+//! - IPv6 backend address compatibility
 //!
 //! Run with:
 //!   cargo test --test p2p_udp_integration
@@ -233,6 +234,9 @@ async fn test_backend_disconnect_ends_session() {
 
 /// After the relay is idle-running, cancel the token and verify the task
 /// exits within 1 second.
+///
+/// The test asserts the session is still pending immediately before cancellation
+/// to rule out a false pass caused by an early exit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_cancellation_exits_session() {
     let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
@@ -248,14 +252,72 @@ async fn test_cancellation_exits_session() {
         run_p2p_udp_session(session_sock, backend_addr, "test-cancel", cancel_clone).await
     });
 
+    // Give the relay a moment to reach its loop, then verify it is still running.
     tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !session.is_finished(),
+        "session exited before cancel was fired"
+    );
 
+    // Cancel and assert the task exits promptly.
     cancel.cancel();
-    with_timeout(
+    let join_result = with_timeout(
         Duration::from_secs(1),
         "session must exit after cancellation",
         session,
     )
     .await
-    .expect("task join");
+    .expect("task must not panic");
+
+    // Cancel arm always returns Ok(()).
+    join_result.expect("session must return Ok after clean cancel");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 5 – IPv6 backend address compatibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verify that run_p2p_udp_session starts successfully when backend_addr is an
+/// IPv6 loopback address. Sends one datagram and asserts the backend receives it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_ipv6_backend_addr() {
+    const MSG: &[u8] = b"ipv6-test-payload";
+
+    // Build an IPv6-connected peer pair.
+    let session_sock = UdpSocket::bind("[::1]:0").await.unwrap();
+    let session_addr = session_sock.local_addr().unwrap();
+    let peer_sock = UdpSocket::bind("[::1]:0").await.unwrap();
+    let peer_addr = peer_sock.local_addr().unwrap();
+    session_sock.connect(peer_addr).await.unwrap();
+    peer_sock.connect(session_addr).await.unwrap();
+
+    // IPv6 backend.
+    let backend_sock = UdpSocket::bind("[::1]:0").await.unwrap();
+    let backend_addr = backend_sock.local_addr().unwrap();
+
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
+
+    let session = tokio::spawn(async move {
+        run_p2p_udp_session(session_sock, backend_addr, "test-ipv6", cancel_clone).await
+    });
+
+    with_timeout(Duration::from_secs(2), "peer send ipv6", peer_sock.send(MSG))
+        .await
+        .unwrap();
+
+    let mut buf = vec![0u8; 64];
+    let (n, _) = with_timeout(
+        Duration::from_secs(2),
+        "backend recv ipv6",
+        backend_sock.recv_from(&mut buf),
+    )
+    .await
+    .unwrap();
+    assert_eq!(&buf[..n], MSG, "IPv6 backend received wrong payload");
+
+    cancel.cancel();
+    with_timeout(Duration::from_secs(1), "session exit ipv6", session)
+        .await
+        .expect("task join");
 }
