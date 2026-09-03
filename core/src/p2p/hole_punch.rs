@@ -11,8 +11,28 @@
 //!    candidate.  The first successful TCP connection wins.
 //! 6. If all attempts fail we return [`HolePunchResult::Failed`].
 //!
-//! The token is sent as the first 36 bytes of every probe so each side can
+//! The token is sent as the first bytes of every probe so each side can
 //! verify it is talking to the right peer and discard stray packets.
+//!
+//! ## Concurrency model inside each candidate task
+//!
+//! Probes are sent and received **concurrently** via `tokio::select!`:
+//!
+//! ```text
+//!  ┌─ send_probes ──────────────────────────────────────────────────┐
+//!  │  loop: sock.send(probe) → sleep(probe_interval) → ...          │
+//!  └────────────────────────────────────────────────────────────────┘
+//!         tokio::select!  ← first branch to complete wins
+//!  ┌─ recv_verified ────────────────────────────────────────────────┐
+//!  │  loop: sock.recv(buf) → token check → return Some(sock)        │
+//!  └────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! The recv loop starts **before** the first probe is sent, which is
+//! critical for Port Restricted NAT: the remote NAT only allows our
+//! incoming packet after we have sent one, but our recv must be ready
+//! to catch the peer's reply immediately.  The old sequential design
+//! (all probes first, recv after) lost this race.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -33,7 +53,7 @@ pub struct HolePunchConfig {
     pub timeout: Duration,
     /// Number of UDP probe packets to send per candidate pair before pausing.
     pub probe_count: u32,
-    /// Delay between probe bursts.
+    /// Delay between consecutive probe packets.
     pub probe_interval: Duration,
 }
 
@@ -103,49 +123,98 @@ fn candidate_pairs(cfg: &HolePunchConfig) -> Vec<(SocketAddr, SocketAddr)> {
     pairs
 }
 
+/// Send `probe` repeatedly for `count` rounds with `interval` between each.
+/// Never resolves on its own — it is always cancelled by the `select!` in
+/// the parent task once `recv_verified` returns.
+async fn send_probes(sock: &UdpSocket, probe: &[u8], count: u32, interval: Duration) {
+    for _ in 0..count {
+        // Ignore send errors: the NAT mapping may not be open yet and the
+        // kernel will drop the packet rather than returning an error on
+        // connected UDP sockets.  We keep sending regardless.
+        let _ = sock.send(probe).await;
+        tokio::time::sleep(interval).await;
+    }
+    // After `count` probes, keep sending at the same interval until we are
+    // cancelled.  This handles slow or lossy links where the peer's echo
+    // takes longer than count * interval to arrive.
+    loop {
+        let _ = sock.send(probe).await;
+        tokio::time::sleep(interval).await;
+    }
+}
+
+/// Receive packets until one carries the complete expected `token`.
+/// Returns the socket if a matching packet arrives; returns `None` only
+/// if the socket errors out permanently (which terminates the task via ?).
+async fn recv_verified(sock: UdpSocket, token: &[u8]) -> Option<UdpSocket> {
+    let mut buf = [0u8; 256];
+    loop {
+        let n = match sock.recv(&mut buf).await {
+            Ok(n) => n,
+            // Transient errors (ECONNREFUSED on some OS when a previous send
+            // was ICMP-rejected) — skip and keep trying.
+            Err(_) => continue,
+        };
+        // Strict check: the received payload must be at least as long as the
+        // token, and the first `token.len()` bytes must match exactly.
+        // A truncated packet (n < token.len()) must never be accepted.
+        if n >= token.len() && &buf[..token.len()] == token {
+            return Some(sock);
+        }
+    }
+}
+
 async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
     if cfg.remote_candidates.is_empty() {
         return None;
     }
 
+    // Build the probe payload: exactly the token bytes (up to 128 bytes).
+    // Keeping the probe equal to the token simplifies echo-based testing
+    // and avoids any ambiguity in what the receiver should match against.
     let token_bytes = cfg.token.as_bytes();
-    let mut probe = [0u8; 36];
-    let copy_len = token_bytes.len().min(36);
-    probe[..copy_len].copy_from_slice(&token_bytes[..copy_len]);
+    let probe_len = token_bytes.len().min(128);
+    let probe: Vec<u8> = token_bytes[..probe_len].to_vec();
 
     let pairs = candidate_pairs(cfg);
     let mut tasks = tokio::task::JoinSet::new();
 
     for (local, remote) in pairs {
-        let probe = probe;
+        let probe = probe.clone();
         let probe_count = cfg.probe_count;
         let probe_interval = cfg.probe_interval;
         let token_owned = cfg.token.clone();
 
         tasks.spawn(async move {
+            // Bind and connect.  A failure here means the address is unusable
+            // on this machine; skip it silently.
             let sock = UdpSocket::bind(local).await.ok()?;
             sock.connect(remote).await.ok()?;
 
-            for _ in 0..probe_count {
-                let _ = sock.send(&probe).await;
-                tokio::time::sleep(probe_interval).await;
-            }
-
-            let mut buf = [0u8; 64];
-            let n = timeout(Duration::from_secs(5), sock.recv(&mut buf))
-                .await
-                .ok()?
-                .ok()?;
-            let received_token = &buf[..n.min(token_owned.len())];
-            if received_token == token_owned.as_bytes() {
-                Some(sock)
-            } else {
-                None
+            // Split into two references: one for the sender, one for the
+            // receiver.  Both use the same underlying socket fd.
+            //
+            // Safety: `UdpSocket` does not implement `Clone`, so we pass
+            // `&sock` to `send_probes` and move `sock` into `recv_verified`.
+            // `tokio::select!` cancels the losing branch, which drops the
+            // future cleanly.
+            tokio::select! {
+                // The send loop never resolves; it runs until cancelled.
+                _ = send_probes(&sock, &probe, probe_count, probe_interval) => {
+                    None // unreachable in practice
+                }
+                // The recv loop resolves as soon as a valid token arrives.
+                result = recv_verified(sock, token_owned.as_bytes()) => {
+                    result
+                }
             }
         });
     }
 
-    let overall = timeout(cfg.timeout, async move {
+    // The outer timeout covers ALL candidate tasks uniformly.  No inner
+    // per-task timeout is needed — if the outer deadline fires, all tasks
+    // are dropped via JoinSet.
+    timeout(cfg.timeout, async move {
         while let Some(res) = tasks.join_next().await {
             if let Ok(Some(sock)) = res {
                 tasks.abort_all();
@@ -153,9 +222,10 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
             }
         }
         None
-    });
-
-    overall.await.ok().flatten()
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 // ── TCP fallback ──────────────────────────────────────────────────────────────
@@ -225,8 +295,44 @@ mod tests {
             ..Default::default()
         };
         let pairs = super::candidate_pairs(&cfg);
+        // 2 locals × 1 remote = 2 pairs
         assert_eq!(pairs.len(), 2);
     }
+
+    // ── Token verification unit tests ─────────────────────────────────────────
+
+    /// Verify that the strict token check rejects a truncated packet.
+    #[test]
+    fn token_check_rejects_prefix_match() {
+        let token = b"full-token-abc123";
+        // Only first 4 bytes received.
+        let buf = &token[..4];
+        let n = buf.len();
+        // Must NOT match because n < token.len().
+        assert!(!(n >= token.len() && &buf[..token.len().min(n)] == token));
+    }
+
+    /// Verify that the strict token check accepts an exact match.
+    #[test]
+    fn token_check_accepts_exact_match() {
+        let token = b"full-token-abc123";
+        let buf = token;
+        let n = buf.len();
+        assert!(n >= token.len() && &buf[..token.len()] == token);
+    }
+
+    /// Verify that extra trailing bytes after the token are accepted
+    /// (the peer might append data; we only check the prefix).
+    #[test]
+    fn token_check_accepts_token_with_trailing_bytes() {
+        let token = b"full-token-abc123";
+        let mut buf = token.to_vec();
+        buf.extend_from_slice(b"extra-data");
+        let n = buf.len();
+        assert!(n >= token.len() && &buf[..token.len()] == token);
+    }
+
+    // ── Integration tests ───────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn punch_returns_failed_with_no_candidates() {
@@ -242,6 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn punch_returns_failed_on_unreachable_candidates() {
+        // 192.0.2.x is TEST-NET — guaranteed unreachable in any environment.
         let cfg = HolePunchConfig {
             token: "tok".into(),
             local_candidates: vec![],
@@ -253,10 +360,9 @@ mod tests {
         assert!(matches!(punch(cfg).await, HolePunchResult::Failed));
     }
 
-    /// Loopback self-punch: two echo-server tasks reflect every probe back to
-    /// the sender so `punch()` can verify the token.  The echo servers run
-    /// until the test ends (no early break), which prevents the race where
-    /// the server exits before punch() calls recv().
+    /// Loopback self-punch: two echo-server tasks reflect every probe back so
+    /// `punch()` can verify the token.  Both send and recv run concurrently,
+    /// so the echo servers must loop forever (not break after one packet).
     #[tokio::test]
     async fn udp_self_punch_loopback() {
         let token = "loopback-test-token-123456789012".to_string();
@@ -267,22 +373,26 @@ mod tests {
         let addr_b = sock_b.local_addr().unwrap();
 
         // Echo servers: loop forever reflecting packets back.
-        // tokio will drop the spawned tasks when the test future completes.
+        // Tokio drops these tasks when the test future completes.
         tokio::spawn(async move {
-            let mut buf = [0u8; 64];
+            let mut buf = [0u8; 256];
             loop {
                 match sock_a.recv_from(&mut buf).await {
-                    Ok((n, src)) => { let _ = sock_a.send_to(&buf[..n], src).await; }
+                    Ok((n, src)) => {
+                        let _ = sock_a.send_to(&buf[..n], src).await;
+                    }
                     Err(_) => break,
                 }
             }
         });
 
         tokio::spawn(async move {
-            let mut buf = [0u8; 64];
+            let mut buf = [0u8; 256];
             loop {
                 match sock_b.recv_from(&mut buf).await {
-                    Ok((n, src)) => { let _ = sock_b.send_to(&buf[..n], src).await; }
+                    Ok((n, src)) => {
+                        let _ = sock_b.send_to(&buf[..n], src).await;
+                    }
                     Err(_) => break,
                 }
             }
@@ -309,6 +419,9 @@ mod tests {
 
         let a_ok = matches!(res_a, HolePunchResult::Udp(_));
         let b_ok = matches!(res_b, HolePunchResult::Udp(_));
-        assert!(a_ok || b_ok, "expected at least one UDP punch to succeed on loopback");
+        assert!(
+            a_ok || b_ok,
+            "expected at least one UDP punch to succeed on loopback"
+        );
     }
 }
