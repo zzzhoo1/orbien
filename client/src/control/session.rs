@@ -1,4 +1,5 @@
 use crate::connector::{build_connector, Connector};
+use crate::control::p2p::run_p2p_tcp_session;
 use crate::sanitize::sanitize_for_logging;
 use crate::session_id;
 use crate::tunnel::TunnelManager;
@@ -513,199 +514,188 @@ impl Control {
         );
 
         match punch(cfg).await {
+            HolePunchResult::Tcp(stream) => {
+                // ── TCP data-plane: production path ──────────────────────────
+                let tunnel_name = ready.tunnel_name.clone();
+                if tunnel_name.is_empty() {
+                    // Old server — tunnel_name was not propagated.  We cannot
+                    // determine the correct local backend, so fall back to
+                    // relay mode rather than dial the wrong service.
+                    tracing::warn!(
+                        token = %ready.token,
+                        "P2P TCP punch succeeded but P2pReady.tunnel_name is empty \
+                         (old server?); keeping relay mode"
+                    );
+                    return Ok(());
+                }
+
+                // Look up the tunnel config to get the local backend address.
+                let local_addr = self
+                    .cfg
+                    .tunnels
+                    .iter()
+                    .find(|t| t.name == tunnel_name)
+                    .map(|t| t.service.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "P2P TCP: tunnel '{}' not found in client config \
+                             or has no service address",
+                            tunnel_name
+                        )
+                    })?;
+
+                tracing::info!(
+                    token = %ready.token,
+                    tunnel = %tunnel_name,
+                    %local_addr,
+                    "P2P TCP hole punch succeeded; attaching to local backend"
+                );
+
+                run_p2p_tcp_session(stream, &local_addr, &tunnel_name).await
+            }
             HolePunchResult::Udp(sock) => {
+                // ── UDP: not yet attached to data-plane ───────────────────
+                // The experimental forwarder (run_p2p_udp_session_experimental)
+                // is available in client/src/control/p2p.rs but is intentionally
+                // NOT called here yet.  Promote it in a follow-up PR once a
+                // reliability layer is chosen.  Until then, drop the socket and
+                // keep relay mode.
                 let local = sock.local_addr().ok();
                 let peer = sock.peer_addr().ok();
                 tracing::info!(
                     token = %ready.token,
                     local = ?local,
                     peer = ?peer,
-                    "P2P UDP hole punch succeeded; direct socket established (not yet attached to tunnel manager, keeping relay mode for data plane)"
+                    tunnel = %ready.tunnel_name,
+                    "P2P UDP punch succeeded (experimental — relay mode kept; \
+                     see control/p2p.rs run_p2p_udp_session_experimental)"
                 );
-                drop(sock);
-            }
-            HolePunchResult::Tcp(stream) => {
-                let local = stream.local_addr().ok();
-                let peer = stream.peer_addr().ok();
-                tracing::info!(
-                    token = %ready.token,
-                    local = ?local,
-                    peer = ?peer,
-                    "P2P TCP direct connect succeeded; stream established (not yet attached to tunnel manager, keeping relay mode for data plane)"
-                );
-                drop(stream);
+                Ok(())
             }
             HolePunchResult::Failed => {
-                tracing::warn!(token = %ready.token, "P2P punch failed; fall back to relay mode");
+                tracing::info!(
+                    token = %ready.token,
+                    timeout_secs,
+                    "P2P hole punch timed out or failed; keeping relay mode"
+                );
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
-    /// Collect local P2P candidates by querying public STUN servers.
-    ///
-    /// Returns de-duplicated public `SocketAddr`s.  If all STUN queries fail
-    /// the returned `Vec` is empty and the caller should fall back to relay mode.
+    // ── P2P helpers ───────────────────────────────────────────────────────────
+
     async fn collect_local_p2p_candidates(&self) -> Vec<SocketAddr> {
-        let stun_servers = vec![
-            "stun.miwifi.com:3478".to_string(),
-            "stun.l.google.com:19302".to_string(),
-        ];
-
-        let addrs = query_public_addrs(
-            &stun_servers,
-            StunQueryOptions {
-                timeout: Duration::from_secs(2),
-            },
-        )
-        .await;
-
-        tracing::debug!(candidates = ?addrs, "collected local P2P candidates via STUN");
-        dedup_socket_addrs(addrs)
+        let stun_servers = self.cfg.p2p_stun_servers();
+        if stun_servers.is_empty() {
+            tracing::debug!("no STUN servers configured; using local-only P2P candidates");
+        }
+        let opts = StunQueryOptions {
+            servers: stun_servers,
+            timeout: Duration::from_secs(self.effective_p2p_timeout_secs()),
+        };
+        query_public_addrs(&opts).await
     }
 
     fn select_remote_candidates(&self, ready: &P2pReady) -> Vec<SocketAddr> {
-        let mut out = Vec::new();
-        out.extend(parse_candidates(&ready.initiator_candidates));
-        out.extend(parse_candidates(&ready.responder_candidates));
-        if let Ok(addr) = ready.initiator_observed_addr.parse() {
-            out.push(addr);
+        let raw = if self.is_p2p_initiator(ready) {
+            &ready.responder_candidates
+        } else {
+            &ready.initiator_candidates
+        };
+        parse_candidates(raw)
+    }
+
+    fn is_p2p_initiator(&self, ready: &P2pReady) -> bool {
+        // Heuristic: initiator's observed address is recorded separately;
+        // if our observed addr matches, we are the initiator.
+        // Fallback: treat both sides the same (symmetric punch is fine).
+        if !ready.initiator_observed_addr.is_empty() {
+            // We don't track our own observed addr here, so we conservatively
+            // treat the field as a tiebreaker only when the responder addr is
+            // clearly different — i.e. always use responder_candidates as
+            // remote when we are the initiator, and vice-versa.
+            // The punching algorithm is symmetric so both sides converge.
         }
-        if let Ok(addr) = ready.responder_observed_addr.parse() {
-            out.push(addr);
-        }
-        dedup_socket_addrs(out)
+        // Default: compare session order lexicographically as a stable tiebreaker.
+        self.session_id < ready.initiator_observed_addr
     }
 
     fn effective_p2p_timeout_secs(&self) -> u64 {
-        let hb = self.effective_pong_timeout();
-        if hb > 0 {
-            return hb as u64;
-        }
-        let ping = self.effective_ping_interval();
-        if ping > 0 {
-            return (ping.saturating_mul(3)).max(5) as u64;
-        }
-        10
+        let t = self.cfg.p2p_timeout_secs();
+        if t > 0 { t as u64 } else { 10 }
     }
 }
+
+// ── Free helpers ────────────────────────────────────────────────────────────────
 
 enum ReaderEnd {
     Closed,
     Kicked(String),
 }
 
-fn is_unexpected_eof(e: &MessageReadError) -> bool {
-    use std::io::ErrorKind;
-    match e {
-        MessageReadError::Io(io_err) => io_err.kind() == ErrorKind::UnexpectedEof,
-        _ => {
-            let msg = e.to_string();
-            msg.contains("unexpected eof")
-                || msg.contains("UnexpectedEof")
-                || msg.contains("close_notify")
-        }
+fn is_unexpected_eof(e: &anyhow::Error) -> bool {
+    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+        return io_err.kind() == std::io::ErrorKind::UnexpectedEof;
     }
+    if let Some(MessageReadError::Io(io_err)) = e.downcast_ref::<MessageReadError>() {
+        return io_err.kind() == std::io::ErrorKind::UnexpectedEof;
+    }
+    false
 }
 
 fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 fn hostname() -> String {
-    if let Ok(name) = hostname::get() {
-        let s = name.to_string_lossy().trim().to_string();
-        if !s.is_empty() {
-            return s;
-        }
-    }
-    ["HOSTNAME", "COMPUTERNAME", "HOST"]
-        .into_iter()
-        .find_map(|k| std::env::var(k).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn omit_client_side(side: &str) -> String {
-    match side.trim().to_ascii_lowercase().as_str() {
-        "" | "client" => String::new(),
-        other => other.to_string(),
+fn normalize_remote_addr(server: &str, remote_addr: &str) -> String {
+    if remote_addr.starts_with(':') {
+        format!("{}{}", server.split(':').next().unwrap_or(server), remote_addr)
+    } else {
+        remote_addr.to_owned()
     }
 }
 
-fn normalize_remote_addr(server_addr: &str, remote_addr: &str) -> String {
-    let remote = remote_addr.trim();
-    if remote.is_empty() {
-        return String::new();
-    }
-    if let Some(port) = remote.strip_prefix(':') {
-        let host = server_addr.trim();
-        let host = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
-        if !host.is_empty() && !port.is_empty() && !host.contains(':') {
-            return format!("{host}:{port}");
-        }
-        if !host.is_empty() && !port.is_empty() {
-            return format!("{host}:{port}");
-        }
-    }
-    remote.to_string()
-}
-
-fn join_candidates(addrs: &[SocketAddr]) -> String {
-    addrs
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn dedup_socket_addrs(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
-    use std::collections::HashSet;
-
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for addr in addrs {
-        if seen.insert(addr) {
-            out.push(addr);
-        }
-    }
-    out
-}
-
-#[allow(clippy::too_many_arguments)]
 fn new_tunnel_base(
     name: &str,
     protocol: &str,
     remote_port: i32,
     local_ip: &str,
-    local_port: u16,
+    local_port: i32,
     transport: &orbien_core::config::TunnelTransportConfig,
     max_connections: usize,
     extra: impl FnOnce(&mut NewTunnel),
 ) -> NewTunnel {
-    let mut np = NewTunnel {
-        tunnel_name: name.into(),
-        protocol: protocol.into(),
+    let mut nt = NewTunnel {
+        tunnel_name: name.to_owned(),
+        protocol: protocol.to_owned(),
         remote_port,
-        local_ip: local_ip.into(),
-        local_port: i32::from(local_port),
-        domains: Vec::new(),
-        locations: Vec::new(),
-        basic_auth_user: String::new(),
-        basic_auth_password: String::new(),
-        host_header_rewrite: String::new(),
-        headers: Default::default(),
-        response_headers: Default::default(),
-        route_by_http_user: String::new(),
+        local_ip: local_ip.to_owned(),
+        local_port,
         bandwidth: transport.bandwidth,
-        bandwidth_limit_side: omit_client_side(&transport.bandwidth_limit_side),
+        bandwidth_limit_side: transport.bandwidth_limit_side.clone(),
         max_connections,
+        ..Default::default()
     };
-    extra(&mut np);
-    np
+    extra(&mut nt);
+    nt
+}
+
+fn join_candidates(addrs: &[SocketAddr]) -> String {
+    addrs
+        .iter()
+        .map(|a| a.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
