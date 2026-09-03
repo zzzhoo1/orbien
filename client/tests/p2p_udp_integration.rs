@@ -1,20 +1,17 @@
-//! End-to-end integration tests for [`run_p2p_udp_session`].
+//! End-to-end integration tests for the P2P UDP relay (`run_p2p_udp_session`).
+//!
+//! These tests verify the relay's real datagram-forwarding behaviour using
+//! actual loopback UDP sockets and a real local UDP backend. No mocks are used.
+//!
+//! The relay under test forwards datagrams between a connected peer socket
+//! (simulating the hole-punched far end) and the backend socket. Tests cover:
+//! - bidirectional payload forwarding
+//! - UDP datagram boundary preservation
+//! - session termination when the backend disappears
+//! - clean exit on cancellation
 //!
 //! Run with:
 //!   cargo test --test p2p_udp_integration
-//!
-//! Every test uses real UDP sockets on 127.0.0.1:0, a real KCP handshake
-//! (via `kcp_tokio::KcpListener` / `KcpStream::connect`), and a real backend
-//! UDP socket. No mocks.
-//!
-//! ## Why KCP is used for the peer side
-//!
-//! `run_p2p_udp_session` receives a raw `UdpSocket` that has already completed
-//! a KCP session setup (hole-punch result).  The session function itself speaks
-//! plain UDP to that socket — it does *not* run KCP internally.  The server-side
-//! of these tests therefore also uses a plain `UdpSocket` acting as an echo /
-//! data source, matching what the real peer would look like after the KCP
-//! handshake hands off the socket.
 
 use std::{net::SocketAddr, time::Duration};
 
@@ -44,16 +41,15 @@ async fn bind_loopback() -> (UdpSocket, SocketAddr) {
     (sock, addr)
 }
 
-/// A "peer" socket that talks to the session's kcp_sock.
-/// Returns: (peer_socket, session_socket, session_socket_addr, peer_addr)
+/// Create a connected UDP socket pair that simulates the hole-punched link.
 ///
-/// The session receives `session_sock`; tests drive the connection from
-/// `peer_sock` (which is connected to `session_sock_addr` so `.send()` works).
+/// Returns `(peer_sock, session_sock, session_addr, peer_addr)`.
+/// The caller passes `session_sock` to `run_p2p_udp_session` and drives
+/// traffic from `peer_sock`.
 async fn make_connected_pair() -> (UdpSocket, UdpSocket, SocketAddr, SocketAddr) {
     let (session_sock, session_addr) = bind_loopback().await;
     let (peer_sock, peer_addr) = bind_loopback().await;
 
-    // connect both ends so send()/recv() can be used without addresses
     session_sock.connect(peer_addr).await.unwrap();
     peer_sock.connect(session_addr).await.unwrap();
 
@@ -64,8 +60,8 @@ async fn make_connected_pair() -> (UdpSocket, UdpSocket, SocketAddr, SocketAddr)
 // Test 1 – bidirectional payload happy path
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Verify that data written by the KCP peer reaches the backend, and data
-/// written by the backend reaches the KCP peer.
+/// Verify that datagrams sent by the peer reach the backend unchanged, and
+/// that backend replies reach the peer unchanged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_bidirectional_payload_success() {
     const PEER_MSG: &[u8] = b"hello-from-peer-000000000000001";
@@ -77,7 +73,6 @@ async fn test_bidirectional_payload_success() {
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
 
-    // Run the session in a background task.
     let session = tokio::spawn(async move {
         run_p2p_udp_session(session_sock, backend_addr, "test-bidir", cancel_clone).await
     });
@@ -115,7 +110,6 @@ async fn test_bidirectional_payload_success() {
     .unwrap();
     assert_eq!(&buf[..n], BACKEND_REPLY, "peer received wrong reply");
 
-    // Clean shutdown.
     cancel.cancel();
     with_timeout(Duration::from_secs(1), "session exit", session)
         .await
@@ -123,12 +117,14 @@ async fn test_bidirectional_payload_success() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 2 – datagram boundary preservation
+// Test 2 – UDP datagram boundary preservation
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Send 3 independent ~1100-byte datagrams from the peer side and verify that
 /// the backend receives exactly 3 datagrams with identical size and content.
-/// This test is designed to expose any buffering/coalescing in the relay path.
+///
+/// This test exposes any buffering or coalescing inside the relay path: each
+/// UDP datagram must arrive at the backend as a separate, intact message.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_datagram_boundary_preservation() {
     const PAYLOAD_LEN: usize = 1100;
@@ -190,9 +186,9 @@ async fn test_datagram_boundary_preservation() {
 // Test 3 – backend disconnect ends the session
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// After the session is established, drop the backend socket and keep sending
-/// from the peer side.  The session must terminate in finite time.
-/// We accept either Ok or Err — platform behaviour differs on ECONNREFUSED.
+/// After the relay is running, drop the backend socket and keep sending from
+/// the peer side. The session must terminate in finite time.
+/// We accept either Ok or Err — platform behaviour on ECONNREFUSED differs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_backend_disconnect_ends_session() {
     let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
@@ -205,11 +201,11 @@ async fn test_backend_disconnect_ends_session() {
         run_p2p_udp_session(session_sock, backend_addr, "test-disconnect", cancel_clone).await
     });
 
-    // Let the session reach steady state, then drop the backend.
+    // Let the relay reach steady state, then drop the backend.
     tokio::time::sleep(Duration::from_millis(50)).await;
     drop(backend_sock);
 
-    // Drive the peer side so the relay encounters the dead backend leg.
+    // Keep sending from the peer so the relay encounters the dead backend leg.
     tokio::spawn(async move {
         loop {
             if peer_sock.send(b"ping").await.is_err() {
@@ -228,7 +224,6 @@ async fn test_backend_disconnect_ends_session() {
     .await
     .expect("task join");
 
-    // We only assert the future resolved; we do not prescribe Ok vs Err.
     let _ = result;
 }
 
@@ -236,15 +231,13 @@ async fn test_backend_disconnect_ends_session() {
 // Test 4 – cancellation token exits the session
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// After the session is idle-running, cancel the token and verify the task
-/// exits within 1 second. No Arc::strong_count assertion — task exit is
-/// the only invariant.
+/// After the relay is idle-running, cancel the token and verify the task
+/// exits within 1 second.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_cancellation_exits_session() {
     let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
     let (backend_sock, backend_addr) = bind_loopback().await;
 
-    // Keep the sockets alive for the duration of the test.
     let _peer_sock = peer_sock;
     let _backend_sock = backend_sock;
 
@@ -255,10 +248,8 @@ async fn test_cancellation_exits_session() {
         run_p2p_udp_session(session_sock, backend_addr, "test-cancel", cancel_clone).await
     });
 
-    // Give the session a moment to reach its relay loop.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Cancel and assert the task exits promptly.
     cancel.cancel();
     with_timeout(
         Duration::from_secs(1),

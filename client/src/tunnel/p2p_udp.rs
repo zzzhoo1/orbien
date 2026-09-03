@@ -1,11 +1,11 @@
-//! P2P UDP session: relay between a KCP peer (raw UdpSocket after hole-punch)
-//! and a local UDP backend.
+//! P2P UDP relay: forward datagrams between a hole-punched peer socket and a
+//! local UDP backend.
 //!
 //! # Data flow
 //!
 //! ```text
-//!  KCP peer  ──UDP──►  kcp_sock  ──►  [run_p2p_udp_session]  ──►  backend_addr
-//!  KCP peer  ◄─UDP──   kcp_sock  ◄──  [run_p2p_udp_session]  ◄──  backend_addr
+//!  remote peer  ──UDP──►  peer_sock  ──►  [run_p2p_udp_session]  ──►  backend_addr
+//!  remote peer  ◄─UDP──   peer_sock  ◄──  [run_p2p_udp_session]  ◄──  backend_addr
 //! ```
 //!
 //! The session runs until:
@@ -23,20 +23,22 @@ const MAX_DGRAM: usize = 65_507;
 
 /// Run a P2P UDP relay session.
 ///
+/// Relays UDP datagrams between the connected peer socket and a local backend.
+///
 /// # Parameters
-/// - `kcp_sock`     – UDP socket already connected to the KCP peer (result of
-///                    hole-punching).  We read datagrams from the peer and write
-///                    replies back.
-/// - `backend_addr` – Local service address.  We forward every inbound datagram
-///                    here and relay its replies back to the peer.
+/// - `peer_sock`    – UDP socket already connected to the remote peer (e.g.
+///                   the result of UDP hole-punching). Datagrams are read from
+///                   and written back to this socket.
+/// - `backend_addr` – Local service address. Every inbound datagram is
+///                   forwarded here; replies are relayed back to the peer.
 /// - `label`        – Short identifier used in trace spans (e.g. tunnel name).
 /// - `cancel`       – Token that, when cancelled, causes the session to exit
-///                    cleanly.
+///                   cleanly.
 ///
 /// # Errors
 /// Returns `Err` if either UDP socket encounters a fatal I/O error.
 pub async fn run_p2p_udp_session(
-    kcp_sock: UdpSocket,
+    peer_sock: UdpSocket,
     backend_addr: SocketAddr,
     label: &str,
     cancel: CancellationToken,
@@ -51,43 +53,41 @@ pub async fn run_p2p_udp_session(
         .await
         .map_err(|e| anyhow!("p2p backend connect {backend_addr}: {e}"))?;
 
-    let kcp = Arc::new(kcp_sock);
+    let peer = Arc::new(peer_sock);
     let backend = Arc::new(backend_sock);
 
-    tracing::debug!(label, %backend_addr, "p2p udp session started");
+    tracing::debug!(label, %backend_addr, "p2p udp relay started");
 
-    let result = relay_loop(Arc::clone(&kcp), Arc::clone(&backend), cancel).await;
+    let result = relay_loop(Arc::clone(&peer), Arc::clone(&backend), cancel).await;
 
-    tracing::debug!(label, %backend_addr, "p2p udp session ended");
+    tracing::debug!(label, %backend_addr, "p2p udp relay ended");
     result
 }
 
 /// Core relay loop: two concurrent copy legs under a select.
 async fn relay_loop(
-    kcp: Arc<UdpSocket>,
+    peer: Arc<UdpSocket>,
     backend: Arc<UdpSocket>,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let kcp_to_backend = {
-        let kcp = Arc::clone(&kcp);
+    let peer_to_backend = {
+        let peer = Arc::clone(&peer);
         let backend = Arc::clone(&backend);
-        tokio::spawn(async move { copy_leg(&kcp, &backend, "kcp→backend").await })
+        tokio::spawn(async move { copy_leg(&peer, &backend, "peer→backend").await })
     };
-    let backend_to_kcp = {
-        let kcp = Arc::clone(&kcp);
+    let backend_to_peer = {
+        let peer = Arc::clone(&peer);
         let backend = Arc::clone(&backend);
-        tokio::spawn(async move { copy_leg(&backend, &kcp, "backend→kcp").await })
+        tokio::spawn(async move { copy_leg(&backend, &peer, "backend→peer").await })
     };
 
     let result = tokio::select! {
         _ = cancel.cancelled() => Ok(()),
-        r = kcp_to_backend => flatten(r, "kcp→backend task"),
-        r = backend_to_kcp  => flatten(r, "backend→kcp task"),
+        r = peer_to_backend => flatten(r, "peer→backend task"),
+        r = backend_to_peer  => flatten(r, "backend→peer task"),
     };
 
-    // Abort whichever leg is still running.
-    // (The other already returned, so abort is a no-op for it.)
-    kcp.to_owned();
+    peer.to_owned();
     backend.to_owned();
     result
 }
