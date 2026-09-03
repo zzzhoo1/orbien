@@ -1,5 +1,5 @@
 use crate::connector::{build_connector, Connector};
-use crate::control::p2p::run_p2p_tcp_session;
+use crate::control::p2p::{run_p2p_tcp_session, run_p2p_udp_session};
 use crate::sanitize::sanitize_for_logging;
 use crate::session_id;
 use crate::tunnel::TunnelManager;
@@ -324,10 +324,6 @@ impl Control {
                     }
                 }
                 Message::P2pReady(ready) => {
-                    // Spawn a cancel-managed task so the P2P session lifetime
-                    // is governed by the session CancellationToken.  When the
-                    // session shuts down, data_tasks.abort_all() in shutdown()
-                    // terminates any in-flight P2P tunnel immediately.
                     let ctl = Arc::clone(&self);
                     let cancel = self.cancel.clone();
                     self.data_tasks.lock().await.spawn(async move {
@@ -337,10 +333,6 @@ impl Control {
                             }
                             res = ctl.handle_p2p_ready(ready) => {
                                 if let Err(e) = res {
-                                    // All error cases (empty tunnel_name,
-                                    // tunnel not found, backend unreachable)
-                                    // are turned into warnings so the relay
-                                    // path remains active.
                                     tracing::warn!(
                                         error = %e,
                                         "P2P punch failed or backend unavailable; \
@@ -500,22 +492,18 @@ impl Control {
     }
 
     /// Handle a `P2pReady` message: attempt hole-punching and, on success,
-    /// wire the resulting `TcpStream` to the appropriate local backend.
+    /// wire the resulting stream to the appropriate local backend.
     ///
     /// # Error / fallback policy
-    ///
-    /// This method returns `Err` only for the cases listed below.  In all
-    /// cases the caller (the `data_tasks` spawn wrapper in `reader_loop`)
-    /// logs the error as a **warning** and lets the relay path continue.
     ///
     /// | Situation | Action |
     /// |-----------|--------|
     /// | `P2pReady.tunnel_name` is empty (old server) | `return Ok(())` with warn |
     /// | `tunnel_name` not in client config | `return Err(...)` → warn |
     /// | tunnel has no `service` address | `return Err(...)` → warn |
-    /// | local backend TCP dial fails | `run_p2p_tcp_session` returns `Err` → warn |
+    /// | TCP backend dial fails | `run_p2p_tcp_session` returns `Err` → warn |
+    /// | UDP KCP init / backend connect fails | `run_p2p_udp_session` returns `Err` → warn |
     /// | hole-punch timed out / failed | `return Ok(())` with info |
-    /// | UDP punch succeeded (experimental) | drop socket, `return Ok(())` with info |
     async fn handle_p2p_ready(self: Arc<Self>, ready: P2pReady) -> Result<()> {
         let local_candidates = self.collect_local_p2p_candidates().await;
         let remote_candidates = self.select_remote_candidates(&ready);
@@ -534,8 +522,6 @@ impl Control {
             local_candidates,
             remote_candidates: remote_candidates.clone(),
             timeout: Duration::from_secs(timeout_secs),
-            // UDP experimental path is off by default; enable in config when
-            // testing the UDP forwarder (run_p2p_udp_session_experimental).
             enable_udp: self.cfg.p2p_enable_udp(),
             ..Default::default()
         };
@@ -549,13 +535,10 @@ impl Control {
         );
 
         match punch(cfg).await {
-            // ── TCP: production data-plane path ──────────────────────────────
+            // ── TCP: production data-plane ────────────────────────────────────
             HolePunchResult::Tcp(stream) => {
                 let tunnel_name = ready.tunnel_name.clone();
 
-                // ① Empty tunnel_name — old server did not propagate it.
-                //    We cannot determine the correct local backend without it,
-                //    so fall back to relay rather than dial the wrong service.
                 if tunnel_name.is_empty() {
                     tracing::warn!(
                         token = %ready.token,
@@ -565,9 +548,6 @@ impl Control {
                     return Ok(());
                 }
 
-                // ② Look up local backend address from client config.
-                //    Returns Err if the tunnel is unknown or has no service —
-                //    the spawn wrapper logs it as a warning.
                 let local_addr = self
                     .cfg
                     .tunnels
@@ -590,29 +570,56 @@ impl Control {
                     "P2P TCP hole punch succeeded; attaching to local backend"
                 );
 
-                // ③ Dial local backend and splice streams.
-                //    run_p2p_tcp_session returns Err only when the dial fails;
-                //    the join itself ends with Ok(()) on clean close.
                 run_p2p_tcp_session(stream, &local_addr, &tunnel_name).await
             }
 
-            // ── UDP: experimental, data-plane NOT connected ───────────────────
-            //
-            // Drop the socket and keep relay mode.  To promote UDP to
-            // production, call run_p2p_udp_session_experimental from here
-            // (see client/src/control/p2p.rs) after adding a reliability layer.
+            // ── UDP: production data-plane (KCP reliable layer) ───────────────
             HolePunchResult::Udp(sock) => {
-                let local = sock.local_addr().ok();
-                let peer  = sock.peer_addr().ok();
+                let tunnel_name = ready.tunnel_name.clone();
+
+                // ① Empty tunnel_name — old server did not propagate it.
+                if tunnel_name.is_empty() {
+                    tracing::warn!(
+                        token = %ready.token,
+                        "P2P UDP punch succeeded but P2pReady.tunnel_name is empty \
+                         (old server?); keeping relay mode"
+                    );
+                    return Ok(());
+                }
+
+                // ② Look up local UDP backend address from config.
+                let local_addr: SocketAddr = self
+                    .cfg
+                    .tunnels
+                    .iter()
+                    .find(|t| t.name == tunnel_name)
+                    .map(|t| t.service.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "P2P UDP: tunnel '{}' not found in client config \
+                             or has no service address; keeping relay mode",
+                            tunnel_name
+                        )
+                    })
+                    .and_then(|s| {
+                        s.parse().map_err(|e| {
+                            anyhow!(
+                                "P2P UDP: invalid service address '{}' for tunnel '{}': {}",
+                                s, tunnel_name, e
+                            )
+                        })
+                    })?;
+
                 tracing::info!(
-                    token  = %ready.token,
-                    local  = ?local,
-                    peer   = ?peer,
-                    tunnel = %ready.tunnel_name,
-                    "P2P UDP punch succeeded (experimental — relay mode kept; \
-                     see control/p2p.rs run_p2p_udp_session_experimental)"
+                    token = %ready.token,
+                    tunnel = %tunnel_name,
+                    %local_addr,
+                    "P2P UDP hole punch succeeded; attaching to local backend via KCP"
                 );
-                Ok(())
+
+                // ③ Establish KCP session and splice streams.
+                run_p2p_udp_session(sock, local_addr, &tunnel_name).await
             }
 
             // ── Hole-punch timed out / all candidates failed ──────────────────
@@ -652,17 +659,7 @@ impl Control {
     }
 
     fn is_p2p_initiator(&self, ready: &P2pReady) -> bool {
-        // Heuristic: initiator's observed address is recorded separately;
-        // if our observed addr matches, we are the initiator.
-        // Fallback: treat both sides the same (symmetric punch is fine).
-        if !ready.initiator_observed_addr.is_empty() {
-            // We don't track our own observed addr here, so we conservatively
-            // treat the field as a tiebreaker only when the responder addr is
-            // clearly different — i.e. always use responder_candidates as
-            // remote when we are the initiator, and vice-versa.
-            // The punching algorithm is symmetric so both sides converge.
-        }
-        // Default: compare session order lexicographically as a stable tiebreaker.
+        if !ready.initiator_observed_addr.is_empty() {}
         self.session_id < ready.initiator_observed_addr
     }
 
