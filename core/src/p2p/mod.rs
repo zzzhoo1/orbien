@@ -6,4 +6,4 @@
 
 mod hole_punch;
 
-pub use hole_punch::{HolePunchConfig, HolePunchResult, punch};
+pub use hole_punch::{parse_candidates, HolePunchConfig, HolePunchResult, punch};
