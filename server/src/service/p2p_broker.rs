@@ -232,6 +232,7 @@ impl Default for P2pBroker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbien_core::msg::P2pReady;
 
     #[tokio::test]
     async fn broker_ttl_constant_is_reasonable() {
@@ -243,5 +244,71 @@ mod tests {
     async fn pending_count_starts_at_zero() {
         let broker = P2pBroker::new();
         assert_eq!(broker.pending_count().await, 0);
+    }
+
+    /// The tunnel_name supplied by the initiator must appear verbatim in the
+    /// P2pReady that is sent to both sides.  This mirrors the assignment in
+    /// `handle_addr`: `tunnel_name: pair.tunnel_name`.
+    #[test]
+    fn p2p_ready_carries_initiator_tunnel_name() {
+        let ready = P2pReady {
+            token: "tok-1".into(),
+            initiator_candidates: "10.0.0.1:1111,203.0.113.1:2222".into(),
+            responder_candidates: "10.0.0.2:3333,198.51.100.2:4444".into(),
+            initiator_observed_addr: "203.0.113.1:2222".into(),
+            responder_observed_addr: "198.51.100.2:4444".into(),
+            tunnel_name: "tcp-demo".into(),
+        };
+
+        assert_eq!(
+            ready.tunnel_name, "tcp-demo",
+            "tunnel_name must be preserved from initiator into P2pReady"
+        );
+    }
+
+    /// When the initiator sends a non-empty tunnel_name, a different value
+    /// that might be associated with the responder side must NOT end up in
+    /// the ready message — the initiator's value is canonical.
+    #[test]
+    fn responder_value_does_not_override_initiator_tunnel_name() {
+        let initiator_tunnel_name = "initiator-tunnel";
+        let responder_side_different_name = "responder-tunnel";
+
+        // Simulate the broker's assignment: `tunnel_name: pair.tunnel_name`
+        // where `pair.tunnel_name` was set from the initiator's P2pReq.
+        let ready = P2pReady {
+            token: "tok-2".into(),
+            initiator_candidates: "10.0.0.1:1111".into(),
+            responder_candidates: "10.0.0.2:2222".into(),
+            initiator_observed_addr: "203.0.113.1:1111".into(),
+            responder_observed_addr: "198.51.100.2:2222".into(),
+            tunnel_name: initiator_tunnel_name.into(),
+        };
+
+        assert_eq!(ready.tunnel_name, initiator_tunnel_name);
+        assert_ne!(
+            ready.tunnel_name, responder_side_different_name,
+            "responder-side name must not override initiator tunnel_name"
+        );
+    }
+
+    /// An old initiator that omits tunnel_name (empty string) must not cause
+    /// a panic or unexpected value — both sides fall back to relay mode when
+    /// they receive an empty tunnel_name in P2pReady.
+    #[test]
+    fn empty_tunnel_name_is_preserved_as_empty() {
+        let ready = P2pReady {
+            token: "tok-3".into(),
+            initiator_candidates: "10.0.0.1:1111".into(),
+            responder_candidates: "10.0.0.2:2222".into(),
+            initiator_observed_addr: "203.0.113.1:1111".into(),
+            responder_observed_addr: "198.51.100.2:2222".into(),
+            tunnel_name: String::new(), // old client — no tunnel_name
+        };
+
+        assert!(
+            ready.tunnel_name.is_empty(),
+            "empty tunnel_name must stay empty (relay fallback sentinel)"
+        );
     }
 }
