@@ -9,7 +9,10 @@ use orbien_core::msg::{
     self, Login, Message, MessageReadError, NewDataConn, NewTunnel, P2pAddr, P2pInfo,
     P2pReady, Ping,
 };
-use orbien_core::p2p::{parse_candidates, punch, HolePunchConfig, HolePunchResult};
+use orbien_core::p2p::{
+    parse_candidates, punch, query_public_addrs, HolePunchConfig, HolePunchResult,
+    StunQueryOptions,
+};
 use orbien_core::transport::DynStream;
 use orbien_core::VERSION;
 use std::net::SocketAddr;
@@ -462,7 +465,7 @@ impl Control {
             return Err(anyhow!("broker rejected P2P request: {}", info.error));
         }
 
-        let local_candidates = self.collect_local_p2p_candidates();
+        let local_candidates = self.collect_local_p2p_candidates().await;
         let candidates = join_candidates(&local_candidates);
 
         tracing::info!(
@@ -482,7 +485,7 @@ impl Control {
     }
 
     async fn handle_p2p_ready(self: Arc<Self>, ready: P2pReady) -> Result<()> {
-        let local_candidates = self.collect_local_p2p_candidates();
+        let local_candidates = self.collect_local_p2p_candidates().await;
         let remote_candidates = self.select_remote_candidates(&ready);
 
         if remote_candidates.is_empty() {
@@ -540,8 +543,26 @@ impl Control {
         Ok(())
     }
 
-    fn collect_local_p2p_candidates(&self) -> Vec<SocketAddr> {
-        Vec::new()
+    /// Collect local P2P candidates by querying public STUN servers.
+    ///
+    /// Returns de-duplicated public `SocketAddr`s.  If all STUN queries fail
+    /// the returned `Vec` is empty and the caller should fall back to relay mode.
+    async fn collect_local_p2p_candidates(&self) -> Vec<SocketAddr> {
+        let stun_servers = vec![
+            "stun.miwifi.com:3478".to_string(),
+            "stun.l.google.com:19302".to_string(),
+        ];
+
+        let addrs = query_public_addrs(
+            &stun_servers,
+            StunQueryOptions {
+                timeout: Duration::from_secs(2),
+            },
+        )
+        .await;
+
+        tracing::debug!(candidates = ?addrs, "collected local P2P candidates via STUN");
+        dedup_socket_addrs(addrs)
     }
 
     fn select_remote_candidates(&self, ready: &P2pReady) -> Vec<SocketAddr> {
