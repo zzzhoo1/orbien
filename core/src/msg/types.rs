@@ -215,6 +215,14 @@ pub struct P2pReq {
     /// 0 means "let the OS choose".
     #[serde(default)]
     pub preferred_local_port: u16,
+    /// Name of the tunnel on the initiator side that this P2P session
+    /// should bypass.  The broker echoes this into `P2pReady` so both
+    /// sides know which local backend to dial.
+    ///
+    /// `#[serde(default)]` ensures old nodes that don't send this field
+    /// deserialise to an empty string rather than returning an error.
+    #[serde(default)]
+    pub tunnel_name: String,
 }
 
 /// Server → Client: peer information needed to begin hole-punching.
@@ -256,6 +264,13 @@ pub struct P2pReady {
     /// Server-observed address of the responder.
     #[serde(default)]
     pub responder_observed_addr: String,
+    /// Tunnel name from the initiator's `P2pReq`, echoed to both sides so
+    /// each client knows which local backend to connect to after punching.
+    ///
+    /// `#[serde(default)]` keeps compatibility with old servers that don't
+    /// populate this field — clients fall back to relay mode when empty.
+    #[serde(default)]
+    pub tunnel_name: String,
 }
 
 mod b64_bytes {
@@ -319,5 +334,44 @@ impl Message {
             Self::P2pAddr(_) => TYPE_P2P_ADDR,
             Self::P2pReady(_) => TYPE_P2P_READY,
         }
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+
+    /// Old servers omit `tunnel_name`; deserialization must succeed and
+    /// produce an empty string, not an error.
+    #[test]
+    fn p2p_ready_missing_tunnel_name_deserialises_to_empty() {
+        let json = r#"{"token":"tok","initiator_candidates":"1.2.3.4:1234",
+                       "responder_candidates":"5.6.7.8:5678"}"#;
+        let r: P2pReady = serde_json::from_str(json).expect("deserialise P2pReady");
+        assert!(r.tunnel_name.is_empty(), "expected empty tunnel_name, got {:?}", r.tunnel_name);
+    }
+
+    /// Old clients omit `tunnel_name` in P2pReq; new server must accept it.
+    #[test]
+    fn p2p_req_missing_tunnel_name_deserialises_to_empty() {
+        let json = r#"{"peer_session_id":"sess","token":"tok"}"#;
+        let r: P2pReq = serde_json::from_str(json).expect("deserialise P2pReq");
+        assert!(r.tunnel_name.is_empty(), "expected empty tunnel_name, got {:?}", r.tunnel_name);
+    }
+
+    /// New payload roundtrips correctly.
+    #[test]
+    fn p2p_ready_tunnel_name_roundtrips() {
+        let ready = P2pReady {
+            token: "t".into(),
+            initiator_candidates: "a".into(),
+            responder_candidates: "b".into(),
+            initiator_observed_addr: String::new(),
+            responder_observed_addr: String::new(),
+            tunnel_name: "my-tunnel".into(),
+        };
+        let json = serde_json::to_string(&ready).unwrap();
+        let back: P2pReady = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tunnel_name, "my-tunnel");
     }
 }

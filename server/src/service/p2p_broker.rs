@@ -6,14 +6,15 @@
 //! ```text
 //! Client A (initiator)          Broker                  Client B (responder)
 //!   │                              │                              │
-//!   │── P2pReq {peer=B, token} ───>│                              │
+//!   │── P2pReq {peer=B, token,     │                              │
+//!   │           tunnel_name} ─────>│                              │
 //!   │                              │── P2pInfo {token, peer_addr=A_obs} ──>│
 //!   │<─ P2pInfo {token, peer_addr=B_obs} ──────────────────────────│
-//!   │── P2pAddr {token, candidates_A} ───────────────────────────>│  (via broker)
-//!   │                              │<─ P2pAddr {token, candidates_B} ────────│
-//!   │<─ P2pReady ──────────────────│── P2pReady ─────────────────>│
+//!   │── P2pAddr {token, cands_A} ─>│                              │
+//!   │                              │<─ P2pAddr {token, cands_B} ──│
+//!   │<─ P2pReady {tunnel_name} ────│── P2pReady {tunnel_name} ───>│
 //!   │                              │                              │
-//!   │  (UDP hole-punch / TCP fallback — no more server involvement)
+//!   │  (UDP hole-punch / TCP connect — no more server involvement)
 //! ```
 //!
 //! Pending requests expire after [`BROKER_TTL`] seconds if the peer does not
@@ -45,6 +46,10 @@ struct PendingHalf {
 struct PendingPair {
     initiator: PendingHalf,
     responder: Option<PendingHalf>,
+    /// Tunnel name supplied by the initiator in `P2pReq`; echoed in
+    /// `P2pReady` to both sides so each client knows which backend to dial.
+    /// Empty when the initiator is an old client that did not send the field.
+    tunnel_name: String,
 }
 
 /// Shared broker state, protected by a single `Mutex`.
@@ -69,6 +74,7 @@ impl P2pBroker {
         responder_ctrl: Arc<Control>,
     ) -> Result<()> {
         let token = req.token.clone();
+        let tunnel_name = req.tunnel_name.clone();
 
         self.evict_stale().await;
 
@@ -104,6 +110,7 @@ impl P2pBroker {
                         candidates: None,
                         created_at: Instant::now(),
                     }),
+                    tunnel_name,
                 },
             );
         } // lock released here — I/O below does NOT hold the mutex
@@ -168,6 +175,7 @@ impl P2pBroker {
                     responder_candidates: resp.candidates.unwrap_or_default(),
                     initiator_observed_addr: pair.initiator.observed_addr.to_string(),
                     responder_observed_addr: resp.observed_addr.to_string(),
+                    tunnel_name: pair.tunnel_name,
                 };
                 Some((pair.initiator.control, resp.control, ready))
             } else {
