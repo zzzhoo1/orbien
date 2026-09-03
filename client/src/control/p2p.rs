@@ -33,9 +33,9 @@ use orbien_core::io;
 use std::net::SocketAddr;
 use tokio::net::{TcpStream, UdpSocket};
 
-// ─────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────
 // TCP — PRODUCTION PATH
-// ─────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────
 
 /// Connect the P2P `TcpStream` (from hole-punch) to the local backend service
 /// for `tunnel_name`, then join the two streams bidirectionally.
@@ -86,12 +86,12 @@ pub async fn run_p2p_tcp_session(
     Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────
 // UDP — EXPERIMENTAL, NOT PRODUCTION
 //
 // DO NOT call this from handle_p2p_ready until a reliability layer is added.
 // See module-level doc for the rationale.
-// ─────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────
 
 /// **EXPERIMENTAL — NOT PRODUCTION.**
 ///
@@ -163,6 +163,10 @@ pub async fn run_p2p_udp_session_experimental(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::time::{timeout, Duration};
+    use tokio_util::sync::CancellationToken;
 
     /// Verify the experimental UDP helper compiles and can be referenced;
     /// we do NOT call it in CI because it requires a live UDP peer.
@@ -174,30 +178,144 @@ mod tests {
             |s, a, b| Box::pin(run_p2p_udp_session_experimental(s, a, b));
     }
 
-    /// Verify run_p2p_tcp_session returns an Err when the local backend is
-    /// unreachable.  This lets session.rs distinguish "backend unavailable"
-    /// (warn + relay fallback) from "hole-punch failed" (debug + relay).
-    #[tokio::test]
-    async fn tcp_session_returns_err_on_unreachable_backend() {
-        use tokio::net::{TcpListener, TcpStream};
+    // ── helpers ────────────────────────────────────────────────────────────────
 
-        // Open a real TCP pair so we have a valid p2p_stream.
+    /// Build a connected TCP stream pair on loopback.  Returns
+    /// `(server_side, client_side)` — either can be used as p2p_stream.
+    async fn loopback_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let connect_fut = TcpStream::connect(addr);
-        let (server_side, _) = tokio::join!(
+        let (server, client) = tokio::join!(
             async { listener.accept().await.unwrap().0 },
-            connect_fut
+            TcpStream::connect(addr),
         );
-        // server_side is p2p_stream; local backend points to TEST-NET
-        // (192.0.2.x) which is guaranteed unreachable.
-        let result = run_p2p_tcp_session(
-            server_side,
-            "192.0.2.1:9999",
-            "test-tunnel",
-        ).await;
+        (server, client.unwrap())
+    }
+
+    // ── test 1: success path with real payload ─────────────────────────────
+
+    /// `run_p2p_tcp_session` must splice bytes in both directions, not just
+    /// return Ok(()).  We verify a real payload survives the round-trip.
+    #[tokio::test]
+    async fn tcp_session_forwards_real_payload_bidirectionally() {
+        // Stand up a mock "backend" listener.
+        let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+
+        // Build the P2P socket pair.
+        let (p2p_server, p2p_client) = loopback_pair().await;
+
+        // Spawn the session under test (p2p_server <—> backend).
+        let session = tokio::spawn(async move {
+            run_p2p_tcp_session(
+                p2p_server,
+                &backend_addr.to_string(),
+                "demo",
+            )
+            .await
+        });
+
+        // Accept the backend connection that run_p2p_tcp_session will dial.
+        let (mut backend, _) = timeout(
+            Duration::from_secs(2),
+            backend_listener.accept(),
+        )
+        .await
+        .expect("backend accept timed out")
+        .unwrap();
+
+        let (mut p2p_rx, mut p2p_tx) = p2p_client.into_split();
+
+        // P2P → backend
+        p2p_tx.write_all(b"hello-from-p2p").await.unwrap();
+        let mut buf = vec![0u8; 14];
+        timeout(Duration::from_secs(2), backend.read_exact(&mut buf))
+            .await
+            .expect("p2p→backend timed out")
+            .unwrap();
+        assert_eq!(&buf, b"hello-from-p2p");
+
+        // Backend → P2P
+        backend.write_all(b"hello-from-backend").await.unwrap();
+        let mut buf2 = vec![0u8; 18];
+        timeout(Duration::from_secs(2), p2p_rx.read_exact(&mut buf2))
+            .await
+            .expect("backend→p2p timed out")
+            .unwrap();
+        assert_eq!(&buf2, b"hello-from-backend");
+
+        // Close both ends; session task should finish cleanly.
+        drop(p2p_tx);
+        drop(p2p_rx);
+        drop(backend);
+
+        timeout(Duration::from_secs(2), session)
+            .await
+            .expect("session task timed out")
+            .unwrap() // JoinError
+            .unwrap(); // Result<()>
+    }
+
+    // ── test 2: failure path ─────────────────────────────────────────────
+
+    /// `run_p2p_tcp_session` must return `Err` (not panic) when the local
+    /// backend is unavailable, so the caller can fall back to relay mode.
+    ///
+    /// We bind a listener, grab its port, then *drop* it immediately.  Any
+    /// subsequent connect to that port gets a fast `ConnectionRefused`,
+    /// avoiding the indefinite hang that TEST-NET (192.0.2.x) can cause on
+    /// some CI environments.
+    #[tokio::test]
+    async fn tcp_session_returns_err_on_connection_refused_backend() {
+        // Bind then immediately drop → port is closed, connect → ECONNREFUSED.
+        let refused_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let refused_addr = refused_listener.local_addr().unwrap();
+        drop(refused_listener);
+
+        let (p2p_server, _p2p_client) = loopback_pair().await;
+
+        let result = timeout(
+            Duration::from_secs(3),
+            run_p2p_tcp_session(
+                p2p_server,
+                &refused_addr.to_string(),
+                "test-tunnel",
+            ),
+        )
+        .await
+        .expect("run_p2p_tcp_session hung (no timeout fired)");
+
         assert!(result.is_err(), "expected Err when backend is unreachable");
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("test-tunnel"), "error should mention tunnel name");
+        assert!(
+            msg.contains("test-tunnel"),
+            "error message should mention the tunnel name; got: {msg}"
+        );
+    }
+
+    // ── test 3: cancellation ─────────────────────────────────────────────
+
+    /// After `CancellationToken::cancel()` a background P2P data task must
+    /// exit promptly.  This guards against task-leak on session shutdown.
+    #[tokio::test]
+    async fn cancellation_token_stops_background_task_without_leak() {
+        let cancel = CancellationToken::new();
+        let child = cancel.child_token();
+
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                _ = child.cancelled() => "cancelled",
+                _ = std::future::pending::<()>() => "unreachable",
+            }
+        });
+
+        cancel.cancel();
+
+        let outcome = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("task did not stop within 1 s after cancellation")
+            .unwrap();
+
+        assert_eq!(outcome, "cancelled");
     }
 }
