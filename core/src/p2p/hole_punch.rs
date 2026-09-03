@@ -123,7 +123,6 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
         let token_owned = cfg.token.clone();
 
         tasks.spawn(async move {
-            // Bind to the local candidate address (or 0.0.0.0:0 if none given).
             let sock = UdpSocket::bind(local).await.ok()?;
             sock.connect(remote).await.ok()?;
 
@@ -135,8 +134,8 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
             let mut buf = [0u8; 64];
             let n = timeout(Duration::from_secs(5), sock.recv(&mut buf))
                 .await
-                .ok()?  // discard Elapsed → Option<Result<usize, io::Error>>
-                .ok()?; // discard io::Error → usize
+                .ok()?
+                .ok()?;
             let received_token = &buf[..n.min(token_owned.len())];
             if received_token == token_owned.as_bytes() {
                 Some(sock)
@@ -226,7 +225,6 @@ mod tests {
             ..Default::default()
         };
         let pairs = super::candidate_pairs(&cfg);
-        // 2 locals × 1 remote = 2 pairs
         assert_eq!(pairs.len(), 2);
     }
 
@@ -244,7 +242,6 @@ mod tests {
 
     #[tokio::test]
     async fn punch_returns_failed_on_unreachable_candidates() {
-        // 192.0.2.x is TEST-NET — guaranteed unreachable in any environment.
         let cfg = HolePunchConfig {
             token: "tok".into(),
             local_candidates: vec![],
@@ -256,8 +253,10 @@ mod tests {
         assert!(matches!(punch(cfg).await, HolePunchResult::Failed));
     }
 
-    /// Loopback self-punch: two echo-server sockets reflect probes back so
-    /// `punch()` can verify the token without a drop-rebind race.
+    /// Loopback self-punch: two echo-server tasks reflect every probe back to
+    /// the sender so `punch()` can verify the token.  The echo servers run
+    /// until the test ends (no early break), which prevents the race where
+    /// the server exits before punch() calls recv().
     #[tokio::test]
     async fn udp_self_punch_loopback() {
         let token = "loopback-test-token-123456789012".to_string();
@@ -267,17 +266,14 @@ mod tests {
         let addr_a = sock_a.local_addr().unwrap();
         let addr_b = sock_b.local_addr().unwrap();
 
-        let tok_a = token.clone();
-        let tok_b = token.clone();
-
+        // Echo servers: loop forever reflecting packets back.
+        // tokio will drop the spawned tasks when the test future completes.
         tokio::spawn(async move {
             let mut buf = [0u8; 64];
             loop {
-                if let Ok((n, src)) = sock_a.recv_from(&mut buf).await {
-                    let _ = sock_a.send_to(&buf[..n], src).await;
-                    if buf[..n.min(tok_a.len())] == tok_a.as_bytes()[..n.min(tok_a.len())] {
-                        break;
-                    }
+                match sock_a.recv_from(&mut buf).await {
+                    Ok((n, src)) => { let _ = sock_a.send_to(&buf[..n], src).await; }
+                    Err(_) => break,
                 }
             }
         });
@@ -285,11 +281,9 @@ mod tests {
         tokio::spawn(async move {
             let mut buf = [0u8; 64];
             loop {
-                if let Ok((n, src)) = sock_b.recv_from(&mut buf).await {
-                    let _ = sock_b.send_to(&buf[..n], src).await;
-                    if buf[..n.min(tok_b.len())] == tok_b.as_bytes()[..n.min(tok_b.len())] {
-                        break;
-                    }
+                match sock_b.recv_from(&mut buf).await {
+                    Ok((n, src)) => { let _ = sock_b.send_to(&buf[..n], src).await; }
+                    Err(_) => break,
                 }
             }
         });

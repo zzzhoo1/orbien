@@ -35,26 +35,19 @@ pub const BROKER_TTL: Duration = Duration::from_secs(30);
 
 /// State kept for one half of an in-progress P2P handshake.
 struct PendingHalf {
-    /// Arc to the initiating client's control connection so we can send it
-    /// messages from the broker.
     control: Arc<Control>,
-    /// Server-observed address of the initiator at the time of the request.
     observed_addr: SocketAddr,
-    /// Candidate addresses reported by this side (set after P2pAddr arrives).
     candidates: Option<String>,
-    /// When this entry was created — used for TTL eviction.
     created_at: Instant,
 }
 
 /// A pair of halves — initiator + responder — keyed by the shared broker token.
 struct PendingPair {
     initiator: PendingHalf,
-    /// Responder half is inserted when the peer accepts the request.
     responder: Option<PendingHalf>,
 }
 
 /// Shared broker state, protected by a single `Mutex`.
-/// Contention is low: broker messages are rare compared to data traffic.
 pub struct P2pBroker {
     pending: Mutex<HashMap<String, PendingPair>>,
 }
@@ -68,14 +61,6 @@ impl P2pBroker {
 
     // ── Step 1: initiator sends P2pReq ────────────────────────────────────────
 
-    /// Called when the server receives a `P2pReq` on the initiator's control
-    /// connection.
-    ///
-    /// 1. Looks up the responder's `Control` by `peer_session_id`.
-    /// 2. Sends `P2pInfo` to the responder ("someone wants to punch through
-    ///    to you").
-    /// 3. Records the pending pair so we can complete the exchange when
-    ///    `P2pAddr` messages arrive.
     pub async fn handle_req(
         &self,
         req: P2pReq,
@@ -85,118 +70,119 @@ impl P2pBroker {
     ) -> Result<()> {
         let token = req.token.clone();
 
-        // Evict stale entries before inserting a new one.
         self.evict_stale().await;
 
-        // Tell the responder: "client A wants to connect directly to you".
+        let responder_addr = responder_ctrl.peer_addr();
+
+        // Build both messages before taking the lock.
         let info_to_responder = Message::P2pInfo(P2pInfo {
             token: token.clone(),
             peer_addr: initiator_peer.to_string(),
             error: String::new(),
         });
-        responder_ctrl
-            .send_p2p_msg(info_to_responder)
-            .await
-            .map_err(|e| anyhow!("send P2pInfo to responder: {e}"))?;
-
-        // Also send P2pInfo to the initiator so it knows the broker accepted
-        // the request (peer_addr will be filled in once the responder reports
-        // its observed address via P2pAddr).
-        let responder_addr = responder_ctrl.peer_addr();
         let info_to_initiator = Message::P2pInfo(P2pInfo {
             token: token.clone(),
             peer_addr: responder_addr.to_string(),
             error: String::new(),
         });
+
+        // Insert into the map first, then send — keeps lock scope minimal.
+        {
+            let mut map = self.pending.lock().await;
+            map.insert(
+                token.clone(),
+                PendingPair {
+                    initiator: PendingHalf {
+                        control: Arc::clone(&initiator_ctrl),
+                        observed_addr: initiator_peer,
+                        candidates: None,
+                        created_at: Instant::now(),
+                    },
+                    responder: Some(PendingHalf {
+                        control: Arc::clone(&responder_ctrl),
+                        observed_addr: responder_addr,
+                        candidates: None,
+                        created_at: Instant::now(),
+                    }),
+                },
+            );
+        } // lock released here — I/O below does NOT hold the mutex
+
+        responder_ctrl
+            .send_p2p_msg(info_to_responder)
+            .await
+            .map_err(|e| anyhow!("send P2pInfo to responder: {e}"))?;
+
         initiator_ctrl
             .send_p2p_msg(info_to_initiator)
             .await
             .map_err(|e| anyhow!("send P2pInfo to initiator: {e}"))?;
 
-        let mut map = self.pending.lock().await;
-        map.insert(
-            token,
-            PendingPair {
-                initiator: PendingHalf {
-                    control: initiator_ctrl,
-                    observed_addr: initiator_peer,
-                    candidates: None,
-                    created_at: Instant::now(),
-                },
-                responder: Some(PendingHalf {
-                    control: responder_ctrl,
-                    observed_addr: responder_addr,
-                    candidates: None,
-                    created_at: Instant::now(),
-                }),
-            },
-        );
         Ok(())
     }
 
     // ── Step 2: a client sends P2pAddr ────────────────────────────────────────
 
-    /// Called when a client sends a `P2pAddr` ("here are my candidate addrs").
-    ///
-    /// We store the candidates for this side.  When *both* sides have reported
-    /// their candidates we send `P2pReady` to each and remove the entry.
     pub async fn handle_addr(
         &self,
         addr_msg: P2pAddr,
         from_session_id: &str,
     ) -> Result<()> {
-        let token = &addr_msg.token;
-        let mut map = self.pending.lock().await;
+        let token = addr_msg.token.clone();
 
-        let pair = map
-            .get_mut(token)
-            .ok_or_else(|| anyhow!("P2pAddr: unknown token {token}"))?;
+        // --- critical section: read/update map state only, no I/O ---
+        let ready_pair: Option<(Arc<Control>, Arc<Control>, P2pReady)> = {
+            let mut map = self.pending.lock().await;
 
-        // Determine which side is sending.
-        let from_initiator =
-            pair.initiator.control.session_id() == from_session_id;
+            let pair = map
+                .get_mut(&token)
+                .ok_or_else(|| anyhow!("P2pAddr: unknown token {token}"))?;
 
-        if from_initiator {
-            pair.initiator.candidates = Some(addr_msg.candidates.clone());
-        } else if let Some(ref mut resp) = pair.responder {
-            if resp.control.session_id() == from_session_id {
-                resp.candidates = Some(addr_msg.candidates.clone());
+            let from_initiator = pair.initiator.control.session_id() == from_session_id;
+
+            if from_initiator {
+                pair.initiator.candidates = Some(addr_msg.candidates.clone());
+            } else if let Some(ref mut resp) = pair.responder {
+                if resp.control.session_id() == from_session_id {
+                    resp.candidates = Some(addr_msg.candidates.clone());
+                } else {
+                    return Err(anyhow!("P2pAddr from unknown session {from_session_id}"));
+                }
             } else {
-                return Err(anyhow!("P2pAddr from unknown session {from_session_id}"));
+                return Err(anyhow!("P2pAddr: no responder for token {token}"));
             }
-        } else {
-            return Err(anyhow!("P2pAddr: no responder for token {token}"));
-        }
 
-        // Check if both sides have now reported.
-        let both_ready = pair.initiator.candidates.is_some()
-            && pair
-                .responder
-                .as_ref()
-                .map(|r| r.candidates.is_some())
-                .unwrap_or(false);
+            let both_ready = pair.initiator.candidates.is_some()
+                && pair
+                    .responder
+                    .as_ref()
+                    .map(|r| r.candidates.is_some())
+                    .unwrap_or(false);
 
-        if both_ready {
-            // Extract and remove.
-            let pair = map.remove(token).unwrap();
-            let resp = pair.responder.unwrap();
+            if both_ready {
+                let pair = map.remove(&token).unwrap();
+                let resp = pair.responder.unwrap();
+                let ready = P2pReady {
+                    token: token.clone(),
+                    initiator_candidates: pair.initiator.candidates.unwrap_or_default(),
+                    responder_candidates: resp.candidates.unwrap_or_default(),
+                    initiator_observed_addr: pair.initiator.observed_addr.to_string(),
+                    responder_observed_addr: resp.observed_addr.to_string(),
+                };
+                Some((pair.initiator.control, resp.control, ready))
+            } else {
+                None
+            }
+        }; // lock released here
 
-            let ready = P2pReady {
-                token: token.clone(),
-                initiator_candidates: pair.initiator.candidates.unwrap_or_default(),
-                responder_candidates: resp.candidates.unwrap_or_default(),
-                initiator_observed_addr: pair.initiator.observed_addr.to_string(),
-                responder_observed_addr: resp.observed_addr.to_string(),
-            };
-
-            // Send P2pReady to both sides.  Failures are logged but do not
-            // propagate — the handshake is best-effort once we get here.
+        // --- I/O outside the lock ---
+        if let Some((initiator_ctrl, responder_ctrl, ready)) = ready_pair {
             let msg_i = Message::P2pReady(ready.clone());
             let msg_r = Message::P2pReady(ready);
-
-            let send_i = pair.initiator.control.send_p2p_msg(msg_i);
-            let send_r = resp.control.send_p2p_msg(msg_r);
-            let (ri, rr) = tokio::join!(send_i, send_r);
+            let (ri, rr) = tokio::join!(
+                initiator_ctrl.send_p2p_msg(msg_i),
+                responder_ctrl.send_p2p_msg(msg_r),
+            );
             if let Err(e) = ri {
                 tracing::warn!(error = %e, "P2pReady send to initiator failed");
             }
@@ -204,6 +190,7 @@ impl P2pBroker {
                 tracing::warn!(error = %e, "P2pReady send to responder failed");
             }
         }
+
         Ok(())
     }
 
