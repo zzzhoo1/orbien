@@ -18,6 +18,10 @@
 //! backend socket and splices both streams with `orbien_core::io::join`.
 //! Error / fallback semantics are identical to the TCP path.
 //!
+//! The local UDP socket is wrapped in [`UdpStreamAdapter`] so that
+//! `io::join` can write *into* it (KCP → backend direction) as well as
+//! read from it (backend → KCP direction).
+//!
 //! ## UDP legacy (experimental — kept for lab use)
 //!
 //! [`run_p2p_udp_session_experimental`] is the original raw forwarder.
@@ -26,11 +30,85 @@
 use anyhow::{anyhow, Result};
 use orbien_core::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpStream, UdpSocket};
 
 // Conservative per-packet MTU for KCP: 1200 bytes leaves room for outer
 // UDP/IP headers on any typical path (Ethernet, PPPoE, VPN).
 const KCP_MTU: usize = 1200;
+
+// ───────────────────────────────────────────────────────────────────
+// UdpStreamAdapter — bidirectional AsyncRead + AsyncWrite over UDP
+// ───────────────────────────────────────────────────────────────────
+
+/// A thin wrapper around a **connected** `UdpSocket` that implements both
+/// [`AsyncRead`] and [`AsyncWrite`], allowing it to be used as one side of
+/// `io::join`.
+///
+/// # Datagram boundary contract
+///
+/// `poll_read` returns exactly one datagram per call (the bytes that arrived
+/// in a single UDP `recv`).  `poll_write` sends exactly one datagram per call
+/// and always reports `n = buf.len()` on success — it never asks the caller
+/// to retry a partial write.  This preserves the datagram boundary that the
+/// local backend expects while appearing as a byte stream to `io::join`.
+///
+/// # Flush / shutdown
+///
+/// Both are no-ops; UDP has no connection teardown concept at the socket API
+/// level.
+struct UdpStreamAdapter {
+    sock: Arc<UdpSocket>,
+}
+
+impl UdpStreamAdapter {
+    fn new(sock: Arc<UdpSocket>) -> Self {
+        Self { sock }
+    }
+}
+
+impl AsyncRead for UdpStreamAdapter {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.sock.poll_recv(cx, buf)
+    }
+}
+
+impl AsyncWrite for UdpStreamAdapter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.sock.poll_send(cx, buf) {
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(buf.len())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // UDP has no kernel send buffer that needs explicit flushing.
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // UDP sockets have no graceful close; nothing to do.
+        Poll::Ready(Ok(()))
+    }
+}
 
 // ───────────────────────────────────────────────────────────────────
 // TCP — PRODUCTION PATH
@@ -54,8 +132,6 @@ pub async fn run_p2p_tcp_session(
     local_addr: &str,
     tunnel_name: &str,
 ) -> Result<()> {
-    // Dial the local backend.  Failure here is returned as Err so that the
-    // spawn wrapper in session.rs can log it and fall back to relay mode.
     let local = TcpStream::connect(local_addr).await.map_err(|e| {
         anyhow!(
             "P2P TCP: dial local backend '{}' for tunnel '{}': {}",
@@ -65,7 +141,6 @@ pub async fn run_p2p_tcp_session(
         )
     })?;
 
-    // Reduce latency on both legs; ignore errors (sockets may not support it).
     orbien_core::net::enable_nodelay(&local);
     orbien_core::net::enable_nodelay(&p2p_stream);
 
@@ -75,8 +150,6 @@ pub async fn run_p2p_tcp_session(
         "P2P TCP session: joining p2p <-> local backend"
     );
 
-    // Bidirectional splice.  io::join runs until either side closes or errors.
-    // We treat any join error as a debug-level event (normal connection close).
     if let Err(e) = io::join(p2p_stream, local).await {
         tracing::debug!(tunnel = %tunnel_name, error = %e, "P2P TCP join ended");
     } else {
@@ -96,8 +169,14 @@ pub async fn run_p2p_tcp_session(
 /// # Design
 /// A `KcpStream` is layered on the punched socket to provide ordering and
 /// retransmission.  A second `UdpSocket` bound on loopback talks to the
-/// local service.  Both ends are then spliced by `io::join`, which terminates
-/// when either side closes or errors.
+/// local service, wrapped in [`UdpStreamAdapter`] to provide
+/// `AsyncRead + AsyncWrite` so that `io::join` can splice both directions.
+///
+/// # Datagram boundaries
+/// `UdpStreamAdapter::poll_write` sends each `io::join` write as a single
+/// UDP datagram.  KCP segments arriving in one `poll_read` call are
+/// forwarded as one datagram.  Backends that parse datagrams independently
+/// will see correct framing; stream-oriented backends are unaffected.
 ///
 /// # MTU
 /// Per-packet buffer is capped at [`KCP_MTU`] (1200 bytes) to avoid
@@ -143,7 +222,8 @@ pub async fn run_p2p_udp_session(
             )
         })?;
 
-    // Bind a loopback UDP socket and connect it to the local service.
+    // Bind a loopback UDP socket, connect it to the local service, then wrap
+    // it in UdpStreamAdapter so io::join can splice both directions.
     let local_sock = UdpSocket::bind("127.0.0.1:0").await.map_err(|e| {
         anyhow!(
             "P2P UDP: bind loopback socket for tunnel '{}': {}",
@@ -159,20 +239,7 @@ pub async fn run_p2p_udp_session(
             e
         )
     })?;
-
-    // Wrap the local UDP socket as an async stream so io::join can splice it.
-    use tokio_util::udp::UdpFramed;
-    use tokio_util::codec::BytesCodec;
-    use tokio_util::io::StreamReader;
-    use futures_util::StreamExt;
-    use bytes::Bytes;
-
-    // Build a framed UDP stream: each datagram becomes one Bytes chunk.
-    let framed = UdpFramed::new(local_sock, BytesCodec::new())
-        .map(|r| r.map(|(b, _)| b.freeze()).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, e)
-        }));
-    let local_stream = StreamReader::new(framed);
+    let local_adapter = UdpStreamAdapter::new(Arc::new(local_sock));
 
     tracing::info!(
         tunnel = %tunnel_name,
@@ -180,7 +247,7 @@ pub async fn run_p2p_udp_session(
         "P2P UDP session: joining kcp <-> local backend"
     );
 
-    if let Err(e) = io::join(kcp_stream, local_stream).await {
+    if let Err(e) = io::join(kcp_stream, local_adapter).await {
         tracing::debug!(tunnel = %tunnel_name, error = %e, "P2P UDP join ended");
     } else {
         tracing::debug!(tunnel = %tunnel_name, "P2P UDP join closed cleanly");
@@ -209,7 +276,6 @@ pub async fn run_p2p_udp_session_experimental(
     local_svc: SocketAddr,
     buf_size: usize,
 ) -> Result<()> {
-    use std::sync::Arc;
     use tokio::net::UdpSocket as TokioUdp;
 
     let local_sock = TokioUdp::bind("127.0.0.1:0").await?;
@@ -260,8 +326,9 @@ pub async fn run_p2p_udp_session_experimental(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::{TcpListener, TcpStream, UdpSocket};
     use tokio::time::{timeout, Duration};
     use tokio_util::sync::CancellationToken;
 
@@ -274,7 +341,7 @@ mod tests {
             |s, a, b| Box::pin(run_p2p_udp_session_experimental(s, a, b));
     }
 
-    // ── helpers ────────────────────────────────────────────────────────────────
+    // ── helpers ────────────────────────────────────────────────────────────
 
     async fn loopback_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -286,7 +353,40 @@ mod tests {
         (server, client.unwrap())
     }
 
-    // ── TCP test 1: success path ───────────────────────────────────────────
+    // ── UdpStreamAdapter unit test: bidirectional loopback ─────────────────
+    //
+    // Two connected UDP sockets, each wrapped in UdpStreamAdapter.
+    // Write bytes through one adapter, read them back through the other.
+    // Verifies both AsyncWrite (poll_send path) and AsyncRead (poll_recv path).
+    #[tokio::test]
+    async fn udp_adapter_is_truly_bidirectional() {
+        let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr_a = sock_a.local_addr().unwrap();
+        let addr_b = sock_b.local_addr().unwrap();
+        sock_a.connect(addr_b).await.unwrap();
+        sock_b.connect(addr_a).await.unwrap();
+
+        let mut adapter_a = UdpStreamAdapter::new(Arc::new(sock_a));
+        let mut adapter_b = UdpStreamAdapter::new(Arc::new(sock_b));
+
+        // a → b
+        timeout(Duration::from_secs(2), adapter_a.write_all(b"ping"))
+            .await.expect("write timed out").unwrap();
+        let mut buf = vec![0u8; 4];
+        timeout(Duration::from_secs(2), adapter_b.read_exact(&mut buf))
+            .await.expect("read timed out").unwrap();
+        assert_eq!(&buf, b"ping");
+
+        // b → a
+        timeout(Duration::from_secs(2), adapter_b.write_all(b"pong"))
+            .await.expect("write timed out").unwrap();
+        timeout(Duration::from_secs(2), adapter_a.read_exact(&mut buf))
+            .await.expect("read timed out").unwrap();
+        assert_eq!(&buf, b"pong");
+    }
+
+    // ── TCP test 1: success path ────────────────────────────────────────────
 
     #[tokio::test]
     async fn tcp_session_forwards_real_payload_bidirectionally() {
@@ -325,7 +425,7 @@ mod tests {
             .await.expect("session task timed out").unwrap().unwrap();
     }
 
-    // ── TCP test 2: failure path ───────────────────────────────────────────
+    // ── TCP test 2: failure path ────────────────────────────────────────────
 
     #[tokio::test]
     async fn tcp_session_returns_err_on_connection_refused_backend() {
@@ -347,7 +447,7 @@ mod tests {
         assert!(msg.contains("test-tunnel"), "error should mention tunnel name; got: {msg}");
     }
 
-    // ── TCP test 3: cancellation ───────────────────────────────────────────
+    // ── TCP test 3: cancellation ────────────────────────────────────────────
 
     #[tokio::test]
     async fn cancellation_token_stops_background_task_without_leak() {
@@ -367,11 +467,7 @@ mod tests {
         assert_eq!(outcome, "cancelled");
     }
 
-    // ── UDP test 1: function signature compiles and type-checks ───────────────
-    //
-    // Full end-to-end UDP payload test requires a running KCP peer.
-    // We verify the production function exists and its signature is correct.
-    // The KCP handshake path is exercised by kcp-tokio's own test suite.
+    // ── UDP test 1: function signature compiles and type-checks ─────────────
     #[test]
     fn udp_session_production_fn_exists() {
         let _: fn(UdpSocket, SocketAddr, &str) ->
@@ -379,26 +475,23 @@ mod tests {
             |s, a, n| Box::pin(run_p2p_udp_session(s, a, n));
     }
 
-    // ── UDP test 2: unreachable backend returns Err ────────────────────────
+    // ── UDP test 2: unreachable backend returns Err ─────────────────────────
     //
-    // Bind two connected UDP sockets (peer pair on loopback), then try to
-    // connect the KCP session to a backend address that immediately refuses.
-    // KCP connect itself should fail fast when the peer socket is dropped.
+    // sock_a is connected to sock_b (which is not a KCP peer), so
+    // KcpStream::connect_with_config will time out waiting for a KCP
+    // handshake.  The outer 4s timeout converts that into an Err, which is
+    // what the production fallback path relies on.
     #[tokio::test]
     async fn udp_session_returns_err_on_unreachable_backend() {
-        // A deliberately closed UDP addr (bind then drop).
         let refused = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let refused_addr: SocketAddr = refused.local_addr().unwrap();
         drop(refused);
 
-        // A connected UDP socket pair so p2p_sock has a valid peer_addr.
         let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr_b = sock_b.local_addr().unwrap();
         sock_a.connect(addr_b).await.unwrap();
 
-        // KCP connect will time out (no peer responds); wrap with a short
-        // outer timeout so the test does not block CI.
         let result = timeout(
             Duration::from_secs(4),
             run_p2p_udp_session(sock_a, refused_addr, "udp-test-tunnel"),
@@ -412,18 +505,17 @@ mod tests {
         );
     }
 
-    // ── UDP test 3: cancellation exits within deadline ─────────────────────
+    // ── UDP test 3: cancellation exits within deadline ──────────────────────
     //
-    // Cancellation behaviour is already verified by the TCP test above (the
-    // CancellationToken mechanics are independent of transport).  This test
-    // adds a guard specific to the UDP spawn pattern used in session.rs.
+    // Verifies the tokio::select! + CancellationToken pattern used in
+    // session.rs to wrap run_p2p_udp_session.  The function itself is not
+    // called here because KCP handshake requires a live peer; the cancellation
+    // contract is transport-independent.
     #[tokio::test]
     async fn udp_session_cancellation_exits_within_deadline() {
         let cancel = CancellationToken::new();
         let child = cancel.child_token();
 
-        // Simulate the spawn pattern from handle_p2p_ready:
-        // a long-running future raced against cancellation.
         let task = tokio::spawn(async move {
             tokio::select! {
                 _ = child.cancelled() => "cancelled",
