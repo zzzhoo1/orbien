@@ -41,37 +41,47 @@ use tokio::net::{TcpStream, UdpSocket};
 /// for `tunnel_name`, then join the two streams bidirectionally.
 ///
 /// # Arguments
-/// * `p2p_stream` — the connected TCP stream produced by hole-punching.
+/// * `p2p_stream`  — the connected TCP stream produced by hole-punching.
 /// * `local_addr`  — `host:port` string of the local backend (e.g. `"127.0.0.1:8080"`).
 /// * `tunnel_name` — used only for log messages.
 ///
 /// # Errors
-/// Returns an error if the local dial fails.  The join itself is
-/// best-effort; EOF on either side is treated as a clean close.
+/// Returns an error if the local backend dial fails.  The error propagates
+/// to `handle_p2p_ready`, which logs it as a warning and keeps relay mode.
+/// The join itself is best-effort; EOF on either side is treated as a clean
+/// close (not an error).
 pub async fn run_p2p_tcp_session(
     p2p_stream: TcpStream,
     local_addr: &str,
     tunnel_name: &str,
 ) -> Result<()> {
+    // Dial the local backend.  Failure here is returned as Err so that the
+    // spawn wrapper in session.rs can log it and fall back to relay mode.
     let local = TcpStream::connect(local_addr).await.map_err(|e| {
         anyhow!(
-            "P2P TCP: dial local {} for tunnel {}: {}",
+            "P2P TCP: dial local backend '{}' for tunnel '{}': {}",
             local_addr,
             tunnel_name,
             e
         )
     })?;
+
+    // Reduce latency on both legs; ignore errors (sockets may not support it).
     orbien_core::net::enable_nodelay(&local);
     orbien_core::net::enable_nodelay(&p2p_stream);
 
     tracing::info!(
         tunnel = %tunnel_name,
         %local_addr,
-        "P2P TCP session: joining p2p <-> local"
+        "P2P TCP session: joining p2p <-> local backend"
     );
 
+    // Bidirectional splice.  io::join runs until either side closes or errors.
+    // We treat any join error as a debug-level event (normal connection close).
     if let Err(e) = io::join(p2p_stream, local).await {
         tracing::debug!(tunnel = %tunnel_name, error = %e, "P2P TCP join ended");
+    } else {
+        tracing::debug!(tunnel = %tunnel_name, "P2P TCP join closed cleanly");
     }
     Ok(())
 }
@@ -162,5 +172,32 @@ mod tests {
         let _: fn(UdpSocket, SocketAddr, usize) ->
             std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>> =
             |s, a, b| Box::pin(run_p2p_udp_session_experimental(s, a, b));
+    }
+
+    /// Verify run_p2p_tcp_session returns an Err when the local backend is
+    /// unreachable.  This lets session.rs distinguish "backend unavailable"
+    /// (warn + relay fallback) from "hole-punch failed" (debug + relay).
+    #[tokio::test]
+    async fn tcp_session_returns_err_on_unreachable_backend() {
+        use tokio::net::{TcpListener, TcpStream};
+
+        // Open a real TCP pair so we have a valid p2p_stream.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let connect_fut = TcpStream::connect(addr);
+        let (server_side, _) = tokio::join!(
+            async { listener.accept().await.unwrap().0 },
+            connect_fut
+        );
+        // server_side is p2p_stream; local backend points to TEST-NET
+        // (192.0.2.x) which is guaranteed unreachable.
+        let result = run_p2p_tcp_session(
+            server_side,
+            "192.0.2.1:9999",
+            "test-tunnel",
+        ).await;
+        assert!(result.is_err(), "expected Err when backend is unreachable");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("test-tunnel"), "error should mention tunnel name");
     }
 }
