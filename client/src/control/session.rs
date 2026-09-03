@@ -6,10 +6,13 @@ use anyhow::{anyhow, Result};
 use orbien_core::auth;
 use orbien_core::config::ClientConfig;
 use orbien_core::msg::{
-    self, Login, Message, MessageReadError, NewDataConn, NewTunnel, Ping,
+    self, Login, Message, MessageReadError, NewDataConn, NewTunnel, P2pAddr, P2pInfo,
+    P2pReady, Ping,
 };
+use orbien_core::p2p::{parse_candidates, punch, HolePunchConfig, HolePunchResult};
 use orbien_core::transport::DynStream;
 use orbien_core::VERSION;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -311,6 +314,25 @@ impl Control {
                         );
                     }
                 }
+                Message::P2pInfo(info) => {
+                    if let Err(e) = self.handle_p2p_info(info).await {
+                        tracing::warn!(error = %e, "failed to handle P2pInfo; keep relay mode");
+                    }
+                }
+                Message::P2pReady(ready) => {
+                    let ctl = Arc::clone(&self);
+                    let cancel = self.cancel.clone();
+                    self.data_tasks.lock().await.spawn(async move {
+                        tokio::select! {
+                            _ = cancel.cancelled() => {}
+                            res = ctl.handle_p2p_ready(ready) => {
+                                if let Err(e) = res {
+                                    tracing::warn!(error = %e, "P2P punch failed; keep relay mode");
+                                }
+                            }
+                        }
+                    });
+                }
                 Message::Pong(_) => {
                     self.last_pong_unix.store(now_secs(), Ordering::Relaxed);
                     tracing::trace!("pong");
@@ -434,6 +456,118 @@ impl Control {
 
         self.tunnels.handle_data_conn(&start, data).await
     }
+
+    async fn handle_p2p_info(&self, info: P2pInfo) -> Result<()> {
+        if !info.error.is_empty() {
+            return Err(anyhow!("broker rejected P2P request: {}", info.error));
+        }
+
+        let local_candidates = self.collect_local_p2p_candidates();
+        let candidates = join_candidates(&local_candidates);
+
+        tracing::info!(
+            token = %info.token,
+            peer_addr = %info.peer_addr,
+            candidates = %candidates,
+            "received P2pInfo; reporting local candidates"
+        );
+
+        let msg = Message::P2pAddr(P2pAddr {
+            token: info.token,
+            candidates,
+        });
+        let mut writer = self.writer.lock().await;
+        msg::write_msg(&mut *writer, &msg).await?;
+        Ok(())
+    }
+
+    async fn handle_p2p_ready(self: Arc<Self>, ready: P2pReady) -> Result<()> {
+        let local_candidates = self.collect_local_p2p_candidates();
+        let remote_candidates = self.select_remote_candidates(&ready);
+
+        if remote_candidates.is_empty() {
+            tracing::warn!(
+                token = %ready.token,
+                "P2P ready received but remote candidate set is empty; keep relay mode"
+            );
+            return Ok(());
+        }
+
+        let timeout_secs = self.effective_p2p_timeout_secs();
+        let cfg = HolePunchConfig {
+            token: ready.token.clone(),
+            local_candidates,
+            remote_candidates: remote_candidates.clone(),
+            timeout: Duration::from_secs(timeout_secs),
+            ..Default::default()
+        };
+
+        tracing::info!(
+            token = %ready.token,
+            remote_candidates = ?remote_candidates,
+            timeout_secs,
+            "received P2pReady; start hole punching"
+        );
+
+        match punch(cfg).await {
+            HolePunchResult::Udp(sock) => {
+                let local = sock.local_addr().ok();
+                let peer = sock.peer_addr().ok();
+                tracing::info!(
+                    token = %ready.token,
+                    local = ?local,
+                    peer = ?peer,
+                    "P2P UDP hole punch succeeded; direct socket established (not yet attached to tunnel manager, keeping relay mode for data plane)"
+                );
+                drop(sock);
+            }
+            HolePunchResult::Tcp(stream) => {
+                let local = stream.local_addr().ok();
+                let peer = stream.peer_addr().ok();
+                tracing::info!(
+                    token = %ready.token,
+                    local = ?local,
+                    peer = ?peer,
+                    "P2P TCP direct connect succeeded; stream established (not yet attached to tunnel manager, keeping relay mode for data plane)"
+                );
+                drop(stream);
+            }
+            HolePunchResult::Failed => {
+                tracing::warn!(token = %ready.token, "P2P punch failed; fall back to relay mode");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_local_p2p_candidates(&self) -> Vec<SocketAddr> {
+        Vec::new()
+    }
+
+    fn select_remote_candidates(&self, ready: &P2pReady) -> Vec<SocketAddr> {
+        let mut out = Vec::new();
+        out.extend(parse_candidates(&ready.initiator_candidates));
+        out.extend(parse_candidates(&ready.responder_candidates));
+        if let Ok(addr) = ready.initiator_observed_addr.parse() {
+            out.push(addr);
+        }
+        if let Ok(addr) = ready.responder_observed_addr.parse() {
+            out.push(addr);
+        }
+        dedup_socket_addrs(out)
+    }
+
+    fn effective_p2p_timeout_secs(&self) -> u64 {
+        let hb = self.effective_pong_timeout();
+        if hb > 0 {
+            return hb as u64;
+        }
+        let ping = self.effective_ping_interval();
+        if ping > 0 {
+            return (ping.saturating_mul(3)).max(5) as u64;
+        }
+        10
+    }
 }
 
 enum ReaderEnd {
@@ -499,6 +633,27 @@ fn normalize_remote_addr(server_addr: &str, remote_addr: &str) -> String {
         }
     }
     remote.to_string()
+}
+
+fn join_candidates(addrs: &[SocketAddr]) -> String {
+    addrs
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn dedup_socket_addrs(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for addr in addrs {
+        if seen.insert(addr) {
+            out.push(addr);
+        }
+    }
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
