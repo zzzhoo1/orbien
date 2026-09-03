@@ -5,5 +5,7 @@
 //! the server has exchanged addresses via `P2pReady`.
 
 mod hole_punch;
+pub mod stun;
 
-pub use hole_punch::{parse_candidates, HolePunchConfig, HolePunchResult, punch};
+pub use hole_punch::{parse_candidates, punch, HolePunchConfig, HolePunchResult};
+pub use stun::{query_public_addr, query_public_addrs, query_public_addr_with_socket, StunQueryOptions};
