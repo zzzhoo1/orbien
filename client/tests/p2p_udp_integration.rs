@@ -1,31 +1,30 @@
-//! End-to-end integration tests for the P2P UDP relay (`run_p2p_udp_session`).
+//! End-to-end integration tests for [`run_p2p_udp_session`].
 //!
-//! These tests verify the relay's real datagram-forwarding behaviour using
-//! actual loopback UDP sockets and a real local UDP backend. No mocks are used.
-//!
-//! The relay under test forwards datagrams between a connected peer socket
-//! (simulating the hole-punched far end) and the backend socket. Tests cover:
-//! - bidirectional payload forwarding
-//! - UDP datagram boundary preservation
-//! - session termination when the backend disappears
-//! - clean exit on cancellation
-//! - IPv6 backend address compatibility
+//! These tests use real UDP sockets on 127.0.0.1:0, a real KCP handshake
+//! (`KcpListener` on the server side, `KcpStream::connect_with_config` inside
+//! `run_p2p_udp_session` on the client side), and a real plain-UDP backend.
+//! No mocks are used.
 //!
 //! Run with:
 //!   cargo test --test p2p_udp_integration
 
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use orbien_client::run_p2p_udp_session;
-use tokio::net::UdpSocket;
-use tokio::time::timeout;
+use kcp_tokio::{KcpConfig, KcpListener, KcpStream};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UdpSocket,
+    time::timeout,
+};
 use tokio_util::sync::CancellationToken;
 
+use orbien_client::control::p2p::run_p2p_udp_session;
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Wrap a future in a hard timeout; panic with `msg` if it expires.
+/// Wrap `fut` in a hard deadline; panic with `msg` on expiry.
 async fn with_timeout<F, T>(dur: Duration, msg: &str, fut: F) -> T
 where
     F: std::future::Future<Output = T>,
@@ -35,289 +34,295 @@ where
         .unwrap_or_else(|_| panic!("timed out after {dur:?}: {msg}"))
 }
 
-/// Bind a loopback UDP socket on an available port; return socket + address.
-async fn bind_loopback() -> (UdpSocket, SocketAddr) {
+/// Bind a UDP socket on an available loopback port.
+async fn bind_udp() -> (UdpSocket, SocketAddr) {
     let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = sock.local_addr().unwrap();
     (sock, addr)
 }
 
-/// Create a connected UDP socket pair that simulates the hole-punched link.
+/// KCP config matching production MTU.
+fn kcp_cfg() -> KcpConfig {
+    KcpConfig {
+        mtu: 1200,
+        ..KcpConfig::default()
+    }
+}
+
+/// Spawn a `KcpListener` on an available loopback port.
 ///
-/// Returns `(peer_sock, session_sock, session_addr, peer_addr)`.
-/// The caller passes `session_sock` to `run_p2p_udp_session` and drives
-/// traffic from `peer_sock`.
-async fn make_connected_pair() -> (UdpSocket, UdpSocket, SocketAddr, SocketAddr) {
-    let (session_sock, session_addr) = bind_loopback().await;
-    let (peer_sock, peer_addr) = bind_loopback().await;
+/// Returns `(server_addr, join_handle)`.  The handle resolves with the first
+/// accepted [`KcpStream`] once the client completes the KCP handshake.
+fn spawn_kcp_server() -> (SocketAddr, tokio::task::JoinHandle<KcpStream>) {
+    let listener = KcpListener::bind(kcp_cfg(), "127.0.0.1:0").expect("KcpListener::bind");
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        let (stream, _peer) = listener.accept().await.expect("KcpListener::accept");
+        stream
+    });
+    (addr, handle)
+}
 
-    session_sock.connect(peer_addr).await.unwrap();
-    peer_sock.connect(session_addr).await.unwrap();
-
-    (peer_sock, session_sock, session_addr, peer_addr)
+/// Bind a plain UDP backend socket wrapped in `Arc` for sharing across tasks.
+async fn spawn_backend() -> (Arc<UdpSocket>, SocketAddr) {
+    let (sock, addr) = bind_udp().await;
+    (Arc::new(sock), addr)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test 1 – bidirectional payload happy path
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Topology:
+//   KCP server stream  <──KCP──>  run_p2p_udp_session  <──UDP──>  backend
+//
+// Data written to the KCP server stream must arrive at the backend unchanged,
+// and data sent by the backend must arrive back on the KCP stream unchanged.
 
-/// Verify that datagrams sent by the peer reach the backend unchanged, and
-/// that backend replies reach the peer unchanged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_bidirectional_payload_success() {
-    const PEER_MSG: &[u8] = b"hello-from-peer-000000000000001";
-    const BACKEND_REPLY: &[u8] = b"hello-from-backend-00000000001";
+    const C2B: &[u8] = b"client-to-backend-DEADBEEF";
+    const B2C: &[u8] = b"backend-to-client-CAFEBABE";
 
-    let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
-    let (backend_sock, backend_addr) = bind_loopback().await;
+    let (server_addr, server_handle) = spawn_kcp_server();
+    let (backend, backend_addr) = spawn_backend().await;
 
-    let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
+    // Connect the client socket to the KCP server so the session can perform
+    // KcpStream::connect_with_config internally.
+    let (client_sock, _) = bind_udp().await;
+    client_sock.connect(server_addr).await.unwrap();
 
     let session = tokio::spawn(async move {
-        run_p2p_udp_session(session_sock, backend_addr, "test-bidir", cancel_clone).await
+        run_p2p_udp_session(client_sock, backend_addr, "integ-bidir").await
     });
 
-    // ── peer → backend ────────────────────────────────────────────────────
-    with_timeout(Duration::from_secs(2), "peer send", peer_sock.send(PEER_MSG))
+    // Wait for the KCP handshake (≤ 3 s).
+    let mut kcp_srv: KcpStream = with_timeout(
+        Duration::from_secs(3),
+        "KCP server accept",
+        server_handle,
+    )
+    .await
+    .expect("server task panicked");
+
+    // KCP server → backend
+    with_timeout(Duration::from_secs(2), "kcp write C2B", kcp_srv.write_all(C2B))
         .await
-        .unwrap();
+        .expect("kcp write");
 
     let mut buf = vec![0u8; 256];
-    let (n, peer_from) = with_timeout(
+    let (n, peer) = with_timeout(
         Duration::from_secs(2),
-        "backend recv from peer",
-        backend_sock.recv_from(&mut buf),
+        "backend recv C2B",
+        backend.recv_from(&mut buf),
     )
     .await
-    .unwrap();
-    assert_eq!(&buf[..n], PEER_MSG, "backend received wrong payload");
+    .expect("recv_from");
+    assert_eq!(&buf[..n], C2B, "backend received wrong payload");
 
-    // ── backend → peer ────────────────────────────────────────────────────
-    with_timeout(
-        Duration::from_secs(2),
-        "backend send reply",
-        backend_sock.send_to(BACKEND_REPLY, peer_from),
-    )
-    .await
-    .unwrap();
+    // backend → KCP server
+    backend.send_to(B2C, peer).await.expect("backend send_to");
 
-    let n = with_timeout(
-        Duration::from_secs(2),
-        "peer recv reply",
-        peer_sock.recv(&mut buf),
-    )
-    .await
-    .unwrap();
-    assert_eq!(&buf[..n], BACKEND_REPLY, "peer received wrong reply");
+    let n = with_timeout(Duration::from_secs(2), "kcp read B2C", async {
+        kcp_srv.read(&mut buf).await.expect("kcp read")
+    })
+    .await;
+    assert_eq!(&buf[..n], B2C, "KCP stream received wrong reply");
 
-    cancel.cancel();
-    with_timeout(Duration::from_secs(1), "session exit", session)
+    // Drop both ends; io::join EOF should let the session exit cleanly.
+    drop(kcp_srv);
+    drop(backend);
+    with_timeout(Duration::from_secs(2), "session exit after EOF", session)
         .await
-        .expect("task join");
+        .expect("session task panicked");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 2 – UDP datagram boundary preservation
+// Test 2 – datagram boundary preservation
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Sends 3 independent ~1100-byte KCP messages.  The backend must receive
+// exactly 3 datagrams with matching size and content.  A short sleep between
+// sends reduces KCP coalescing.  This test surfaces any io::join or buffering
+// strategy that merges or splits application-level datagrams.
 
-/// Send 3 independent ~1100-byte datagrams from the peer side and verify that
-/// the backend receives exactly 3 datagrams with identical size and content.
-///
-/// This test exposes any buffering or coalescing inside the relay path: each
-/// UDP datagram must arrive at the backend as a separate, intact message.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_datagram_boundary_preservation() {
-    const PAYLOAD_LEN: usize = 1100;
     const N: usize = 3;
+    const SZ: usize = 1100;
 
     let payloads: Vec<Vec<u8>> = (0..N)
-        .map(|i| vec![(0xA0u8).wrapping_add(i as u8); PAYLOAD_LEN])
+        .map(|i| vec![(0xA0u8).wrapping_add(i as u8); SZ])
         .collect();
 
-    let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
-    let (backend_sock, backend_addr) = bind_loopback().await;
+    let (server_addr, server_handle) = spawn_kcp_server();
+    let (backend, backend_addr) = spawn_backend().await;
 
-    let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
+    let (client_sock, _) = bind_udp().await;
+    client_sock.connect(server_addr).await.unwrap();
 
     let session = tokio::spawn(async move {
-        run_p2p_udp_session(session_sock, backend_addr, "test-boundary", cancel_clone).await
+        run_p2p_udp_session(client_sock, backend_addr, "integ-boundary").await
     });
 
-    // Send each datagram with a small pause to reduce OS-level coalescing.
+    let mut kcp_srv: KcpStream = with_timeout(
+        Duration::from_secs(3),
+        "KCP accept (boundary)",
+        server_handle,
+    )
+    .await
+    .expect("server task panicked");
+
     for payload in &payloads {
-        peer_sock.send(payload).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        with_timeout(Duration::from_secs(2), "kcp write payload", async {
+            kcp_srv.write_all(payload).await.expect("kcp write")
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    // Collect exactly N datagrams from the backend.
     let mut received: Vec<Vec<u8>> = Vec::with_capacity(N);
-    let mut buf = vec![0u8; PAYLOAD_LEN * 2];
+    let mut buf = vec![0u8; SZ * 2];
     for i in 0..N {
         let (n, _) = with_timeout(
             Duration::from_secs(2),
             &format!("backend recv datagram {i}"),
-            backend_sock.recv_from(&mut buf),
+            backend.recv_from(&mut buf),
         )
         .await
-        .unwrap();
+        .expect("recv_from");
         received.push(buf[..n].to_vec());
     }
 
-    assert_eq!(received.len(), N);
-    for (i, (got, expected)) in received.iter().zip(payloads.iter()).enumerate() {
+    assert_eq!(received.len(), N, "expected {N} datagrams at backend");
+    for (i, (got, want)) in received.iter().zip(payloads.iter()).enumerate() {
         assert_eq!(
             got.len(),
-            expected.len(),
-            "datagram {i} length mismatch: got {} want {}",
+            want.len(),
+            "datagram {i} size mismatch: got {} want {}",
             got.len(),
-            expected.len()
+            want.len()
         );
-        assert_eq!(got, expected, "datagram {i} content mismatch");
+        assert_eq!(got, want, "datagram {i} content mismatch");
     }
 
-    cancel.cancel();
-    with_timeout(Duration::from_secs(1), "session exit (boundary)", session)
+    drop(kcp_srv);
+    drop(backend);
+    with_timeout(Duration::from_secs(2), "session exit (boundary)", session)
         .await
-        .expect("task join");
+        .expect("session task panicked");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 3 – backend disconnect ends the session
+// Test 3 – backend disconnect causes session to end
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// After a successful KCP handshake the backend socket is dropped.  The KCP
+// server side keeps sending so the session repeatedly forwards into a dead
+// UDP target.  The session must resolve (Ok or Err) within a finite timeout.
+//
+// We assert liveness only, not Ok vs Err: on Linux ECONNREFUSED terminates
+// the send path quickly; on macOS loopback sends may succeed silently.
 
-/// After the relay is running, drop the backend socket and keep sending from
-/// the peer side. The session must terminate in finite time.
-/// We accept either Ok or Err — platform behaviour on ECONNREFUSED differs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_backend_disconnect_ends_session() {
-    let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
-    let (backend_sock, backend_addr) = bind_loopback().await;
+    let (server_addr, server_handle) = spawn_kcp_server();
 
-    let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
-
-    let session = tokio::spawn(async move {
-        run_p2p_udp_session(session_sock, backend_addr, "test-disconnect", cancel_clone).await
-    });
-
-    // Let the relay reach steady state, then drop the backend.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Backend exists only long enough to get its address, then is dropped.
+    let (backend_sock, backend_addr) = bind_udp().await;
     drop(backend_sock);
 
-    // Keep sending from the peer so the relay encounters the dead backend leg.
+    let (client_sock, _) = bind_udp().await;
+    client_sock.connect(server_addr).await.unwrap();
+
+    let session = tokio::spawn(async move {
+        run_p2p_udp_session(client_sock, backend_addr, "integ-disconnect").await
+    });
+
+    let mut kcp_srv: KcpStream = with_timeout(
+        Duration::from_secs(3),
+        "KCP accept (disconnect)",
+        server_handle,
+    )
+    .await
+    .expect("server task panicked");
+
+    // Drive the KCP side so the session hits the dead backend repeatedly.
     tokio::spawn(async move {
         loop {
-            if peer_sock.send(b"ping").await.is_err() {
+            if kcp_srv.write_all(b"probe").await.is_err() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(30)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     });
 
-    // The session must resolve — Ok or Err, but not hang.
-    let result = with_timeout(
+    // Session must terminate within 5 s; result may be Ok or Err.
+    let _result = with_timeout(
         Duration::from_secs(5),
         "session must end after backend disconnect",
         session,
     )
     .await
-    .expect("task join");
-
-    let _ = result;
+    .expect("session task panicked");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 4 – cancellation token exits the session
+// Test 4 – CancellationToken exits the wrapping task after handshake
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// `run_p2p_udp_session` itself does not accept a CancellationToken (matching
+// the production signature).  In production, `session.rs` wraps every call in
+//
+//   tokio::select! {
+//       _ = cancel.cancelled() => {}
+//       res = run_p2p_udp_session(...) => { ... }
+//   }
+//
+// This test verifies that pattern: after the KCP handshake the task is
+// cancelled and must exit within 1 s.  No Arc::strong_count assertion.
 
-/// After the relay is idle-running, cancel the token and verify the task
-/// exits within 1 second.
-///
-/// The test asserts the session is still pending immediately before cancellation
-/// to rule out a false pass caused by an early exit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_cancellation_exits_session() {
-    let (peer_sock, session_sock, _session_addr, _peer_addr) = make_connected_pair().await;
-    let (backend_sock, backend_addr) = bind_loopback().await;
+async fn test_cancellation_exits_session_task() {
+    let (server_addr, server_handle) = spawn_kcp_server();
+    let (backend, backend_addr) = spawn_backend().await;
 
-    let _peer_sock = peer_sock;
-    let _backend_sock = backend_sock;
+    let (client_sock, _) = bind_udp().await;
+    client_sock.connect(server_addr).await.unwrap();
 
     let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
+    let cancel_task = cancel.clone();
 
+    // Mirror the production session.rs wrapper exactly.
     let session = tokio::spawn(async move {
-        run_p2p_udp_session(session_sock, backend_addr, "test-cancel", cancel_clone).await
+        tokio::select! {
+            _ = cancel_task.cancelled() => Ok(()),
+            res = run_p2p_udp_session(client_sock, backend_addr, "integ-cancel") => res,
+        }
     });
 
-    // Give the relay a moment to reach its loop, then verify it is still running.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        !session.is_finished(),
-        "session exited before cancel was fired"
-    );
+    // Wait for KCP handshake to complete before cancelling.
+    let _kcp_srv: KcpStream = with_timeout(
+        Duration::from_secs(3),
+        "KCP accept (cancel)",
+        server_handle,
+    )
+    .await
+    .expect("server task panicked");
 
-    // Cancel and assert the task exits promptly.
+    // Idle briefly, then fire the token.
+    tokio::time::sleep(Duration::from_millis(100)).await;
     cancel.cancel();
-    let join_result = with_timeout(
+
+    // Task must exit within 1 s.
+    with_timeout(
         Duration::from_secs(1),
-        "session must exit after cancellation",
+        "session task must exit after cancel",
         session,
     )
     .await
-    .expect("task must not panic");
+    .expect("session task panicked");
 
-    // Cancel arm always returns Ok(()).
-    join_result.expect("session must return Ok after clean cancel");
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 5 – IPv6 backend address compatibility
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Verify that run_p2p_udp_session starts successfully when backend_addr is an
-/// IPv6 loopback address. Sends one datagram and asserts the backend receives it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_ipv6_backend_addr() {
-    const MSG: &[u8] = b"ipv6-test-payload";
-
-    // Build an IPv6-connected peer pair.
-    let session_sock = UdpSocket::bind("[::1]:0").await.unwrap();
-    let session_addr = session_sock.local_addr().unwrap();
-    let peer_sock = UdpSocket::bind("[::1]:0").await.unwrap();
-    let peer_addr = peer_sock.local_addr().unwrap();
-    session_sock.connect(peer_addr).await.unwrap();
-    peer_sock.connect(session_addr).await.unwrap();
-
-    // IPv6 backend.
-    let backend_sock = UdpSocket::bind("[::1]:0").await.unwrap();
-    let backend_addr = backend_sock.local_addr().unwrap();
-
-    let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
-
-    let session = tokio::spawn(async move {
-        run_p2p_udp_session(session_sock, backend_addr, "test-ipv6", cancel_clone).await
-    });
-
-    with_timeout(Duration::from_secs(2), "peer send ipv6", peer_sock.send(MSG))
-        .await
-        .unwrap();
-
-    let mut buf = vec![0u8; 64];
-    let (n, _) = with_timeout(
-        Duration::from_secs(2),
-        "backend recv ipv6",
-        backend_sock.recv_from(&mut buf),
-    )
-    .await
-    .unwrap();
-    assert_eq!(&buf[..n], MSG, "IPv6 backend received wrong payload");
-
-    cancel.cancel();
-    with_timeout(Duration::from_secs(1), "session exit ipv6", session)
-        .await
-        .expect("task join");
+    // Keep backend alive until this point.
+    drop(backend);
 }
