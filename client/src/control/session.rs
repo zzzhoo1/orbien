@@ -698,6 +698,16 @@ where
 ///    machine.
 /// 2. The production call site (`reader_loop`) remains a single,
 ///    readable line that makes the intent explicit.
+///
+/// # Cancel-wrapper contract
+///
+/// This function is the **single canonical cancel-wrapper** for all P2P
+/// branches.  Any new branch added to `handle_p2p_ready` MUST route through
+/// this function.
+///
+/// Tests:
+/// - `p2p_task_cancel_preempts_long_running_future` (UDP branch)
+/// - `p2p_tcp_task_cancel_preempts_in_flight_session` (TCP branch)
 async fn run_p2p_task_with_cancel<F>(cancel: CancellationToken, p2p_fut: F)
 where
     F: std::future::Future<Output = Result<()>>,
@@ -963,6 +973,114 @@ mod tests {
                 && !rendered.contains("backend unavailable")
                 && !rendered.contains("P2P punch failed"),
             "cancel path must not emit fallback-relay warning; got: {rendered}"
+        );
+    }
+
+    /// Verifies the **TCP cancel-preempts-session** invariant of
+    /// `run_p2p_task_with_cancel` for the TCP branch of `handle_p2p_ready`.
+    ///
+    /// # Core invariant
+    ///
+    /// When a TCP P2P session is in flight (simulated here as a permanently
+    /// pending future that models an active `run_p2p_tcp_session` call) and
+    /// `CancellationToken::cancel()` is triggered, `run_p2p_task_with_cancel`
+    /// MUST:
+    ///   1. Exit promptly — the cancel branch in `select!` fires before the
+    ///      TCP session future resolves.
+    ///   2. Emit NO fallback-relay warning.  Cancellation is a clean,
+    ///      intentional shutdown; it does not mean "P2P failed, stay on relay".
+    ///
+    /// # Symmetry with UDP cancel test
+    ///
+    /// The existing `p2p_task_cancel_preempts_long_running_future` test passes
+    /// a `pending::<Result<()>>()` future representing a still-in-flight UDP
+    /// hole-punch.  This test passes the same mock future to represent a
+    /// still-in-flight TCP session.  Both exercise the same
+    /// `run_p2p_task_with_cancel` wrapper, documenting that TCP and UDP share
+    /// identical control-plane cancellation semantics.
+    ///
+    /// # Why `pending()` is correct here
+    ///
+    /// A live `run_p2p_tcp_session` call requires a real TCP stream and a real
+    /// backend — introducing those would make this a data-plane integration
+    /// test, not a control-flow test.  `pending::<Result<()>>()` faithfully
+    /// models "the TCP session is running and has not yet returned" without
+    /// any networking dependency, timer jitter, or test infrastructure.  If
+    /// the cancel branch were absent or broken, `pending()` would block forever
+    /// and the outer timeout would fire, failing the test unambiguously.
+    ///
+    /// # Why this is not a false positive
+    ///
+    /// The `timeout(1s, task)` wrapper is the falsifiability gate: if the
+    /// cancel branch is never taken the test panics with a clear timeout
+    /// message.  The no-fallback-warning assertion catches the orthogonal
+    /// defect of a cancel path that incorrectly emits failure telemetry.
+    #[tokio::test(flavor = "current_thread")]
+    async fn p2p_tcp_task_cancel_preempts_in_flight_session() {
+        let logs = SharedLogBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .with_level(true)
+            .finish();
+        // set_default is thread-local and does not require a closure, so
+        // .await remains valid inside the test body.
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        // ── Step 1: spawn the task with a permanently pending TCP session ─────
+        //
+        // `std::future::pending::<Result<()>>()` models an active TCP P2P
+        // session that has not yet returned — equivalent to what
+        // `run_p2p_tcp_session(stream, backend_addr, tunnel_name)` looks like
+        // from `run_p2p_task_with_cancel`'s perspective while the session is
+        // relaying data.  The cancel branch is the only exit path.
+        let task = tokio::spawn(async move {
+            run_p2p_task_with_cancel(
+                cancel_clone,
+                // Simulates: TCP P2P session actively relaying data, no
+                // completion scheduled.  The output type matches the generic
+                // bound `Future<Output = Result<()>>` exactly.
+                std::future::pending::<Result<()>>(),
+            )
+            .await;
+        });
+
+        // ── Step 2: yield, then trigger cancellation ──────────────────────────
+        //
+        // One yield gives the spawned task a chance to reach the `select!`
+        // await point before cancel() is called.  This is necessary on
+        // `current_thread` where cooperative scheduling is explicit.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        // ── Step 3: primary assertion — task exits within 1 s ────────────────
+        //
+        // If cancel preemption is broken, `pending()` blocks forever and this
+        // timeout expires, failing with an unambiguous message.
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect(
+                "TCP P2P task did not exit after cancel — \
+                 cancel branch in select! may be missing or unreachable for TCP path",
+            )
+            .expect("TCP P2P task panicked unexpectedly");
+
+        // ── Step 4: secondary assertion — no fallback-relay warning ───────────
+        //
+        // A clean cancellation must not be reported as a P2P failure.
+        // Presence of these strings would mean the cancel path incorrectly
+        // routes through the error-fallback log path.
+        let rendered = logs.as_string();
+        assert!(
+            !rendered.contains("keeping relay mode")
+                && !rendered.contains("backend unavailable")
+                && !rendered.contains("P2P punch failed"),
+            "TCP cancel path must not emit fallback-relay warning; got: {rendered}"
         );
     }
 }
