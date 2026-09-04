@@ -818,28 +818,31 @@ mod tests {
             .with_level(true)
             .finish();
 
+        // set_default installs the subscriber on the current thread and returns
+        // a DefaultGuard.  The subscriber stays active as long as _guard is
+        // alive (the whole test body).  No closure is needed, so .await is
+        // valid in this async fn context with no extra wrapping.
+        let _guard = tracing::subscriber::set_default(subscriber);
+
         let (continued_tx, continued_rx) = oneshot::channel::<()>();
 
-        tracing::subscriber::with_default(subscriber, || async {
-            let task = tokio::spawn(async move {
-                consume_p2p_ready_result_with_fallback_log(async {
-                    Err(anyhow!(
-                        "P2P UDP: KCP connect failed for tunnel 'demo': connect timeout"
-                    ))
-                })
-                .await;
+        let task = tokio::spawn(async move {
+            consume_p2p_ready_result_with_fallback_log(async {
+                Err(anyhow!(
+                    "P2P UDP: KCP connect failed for tunnel 'demo': connect timeout"
+                ))
+            })
+            .await;
 
-                // Execution reaching here proves the Err was consumed and
-                // control flow was not interrupted — relay fallback is intact.
-                let _ = continued_tx.send(());
-            });
+            // Execution reaching here proves the Err was consumed and
+            // control flow was not interrupted — relay fallback is intact.
+            let _ = continued_tx.send(());
+        });
 
-            timeout(Duration::from_secs(1), task)
-                .await
-                .expect("fallback task hung — possible infinite loop or deadlock")
-                .expect("fallback task panicked — Err must not propagate");
-        }
-        .await);
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("fallback task hung — possible infinite loop or deadlock")
+            .expect("fallback task panicked — Err must not propagate");
 
         // ── Primary assertion: state ──────────────────────────────────────────
         timeout(Duration::from_secs(1), continued_rx)
@@ -853,7 +856,7 @@ mod tests {
             rendered.contains("keeping relay mode")
                 || rendered.contains("backend unavailable")
                 || rendered.contains("P2P punch failed"),
-            "fallback warning log missing expected relay/fallback semantics; got: {rendered}"
+            "fallback warning log missing expected relay/fallback phrase; got: {rendered}"
         );
     }
 }
