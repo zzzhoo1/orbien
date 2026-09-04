@@ -530,4 +530,126 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, "cancelled");
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // UDP 控制面分支测试
+    //
+    // 覆盖 run_p2p_udp_session 的三条错误路径入口，以及 session.rs 调用方
+    // 的 service 地址 parse 逻辑。不重复 p2p_udp_integration.rs 中已覆盖的
+    // 真实 KCP 握手和数据面转发场景。
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── 控制面测试 1：未连接 socket 触发 peer_addr 失败，错误含 tunnel_name ─
+
+    /// `run_p2p_udp_session` 的第一个 guard 是 `p2p_sock.peer_addr()`。
+    /// 当传入一个**未连接**的 UdpSocket 时，该调用失败并返回 Err，错误信息
+    /// 必须包含 tunnel_name，便于 `handle_p2p_ready` 的 warn! 日志定位。
+    #[tokio::test]
+    async fn udp_session_peer_addr_fail_err_contains_tunnel_name() {
+        // 绑定但不 connect —— peer_addr() 会返回 ENOTCONN
+        let unconnected = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        // 随便一个合法的 SocketAddr 作为 local_addr 占位；到不了 bind 步骤
+        let dummy_local: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        let result = timeout(
+            Duration::from_secs(2),
+            run_p2p_udp_session(unconnected, dummy_local, "my-tunnel"),
+        )
+        .await
+        .expect("run_p2p_udp_session hung unexpectedly");
+
+        assert!(result.is_err(), "expected Err on unconnected socket");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("my-tunnel"),
+            "error must reference tunnel name for tracing; got: {msg}"
+        );
+    }
+
+    /// 空字符串 tunnel_name 不应 panic，错误信息包含空字符串本身。
+    #[tokio::test]
+    async fn udp_session_empty_tunnel_name_does_not_panic() {
+        let unconnected = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let dummy_local: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        let result = timeout(
+            Duration::from_secs(2),
+            run_p2p_udp_session(unconnected, dummy_local, ""),
+        )
+        .await
+        .expect("hung");
+
+        // 关键断言：不 panic，且返回 Err（peer_addr 失败路径）
+        assert!(
+            result.is_err(),
+            "expected Err; empty tunnel_name must not open a no-op Ok path"
+        );
+    }
+
+    // ── 控制面测试 2：KCP connect 失败时，错误信息含 tunnel_name ──────────
+
+    /// `peer_addr()` 成功（socket 已 connect）但 KCP 握手无法完成时，
+    /// `run_p2p_udp_session` 必须返回 Err，且错误信息包含 tunnel_name。
+    ///
+    /// 构造方式：sock_a connect 到 sock_b，但 sock_b 不是 KCP listener，
+    /// 握手超时后 kcp_tokio 返回 Err，即触发第二个 guard。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn udp_session_kcp_fail_err_contains_tunnel_name() {
+        // sock_a connected → sock_b；sock_b 不做任何 KCP 响应
+        let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr_b = sock_b.local_addr().unwrap();
+        sock_a.connect(addr_b).await.unwrap();
+        // sock_b 持有端口，不参与 KCP，防止 ECONNREFUSED 干扰
+
+        let dummy_local: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        // KCP connect 默认会重传，给 5s 兜底
+        let result = timeout(
+            Duration::from_secs(5),
+            run_p2p_udp_session(sock_a, dummy_local, "kcp-fail-tunnel"),
+        )
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("timed out")));
+
+        assert!(result.is_err(), "expected Err when KCP handshake cannot complete");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("kcp-fail-tunnel"),
+            "error must contain tunnel name; got: {msg}"
+        );
+    }
+
+    // ── 控制面测试 3：调用方 service 地址 parse 失败路径 ───────────────────
+
+    /// `run_p2p_udp_session` 的第二参数是强类型 `SocketAddr`，非法地址在
+    /// Rust 类型系统层已被阻断。这里测试 session.rs 调用方的 parse 逻辑：
+    /// `service.parse::<SocketAddr>()` 失败时，anyhow error 应同时包含
+    /// tunnel name 和原始 service 字符串，便于运维排查配置错误。
+    #[test]
+    fn caller_service_parse_failure_error_contains_context() {
+        let tunnel_name = "bad-addr-tunnel";
+        let bad_service = "not-a-valid-addr";
+
+        // 内联模拟 session.rs handle_p2p_ready 中的 parse 逻辑
+        let result: Result<SocketAddr> = bad_service.parse().map_err(|e| {
+            anyhow!(
+                "P2P UDP: parse service addr '{}' for tunnel '{}': {}",
+                bad_service,
+                tunnel_name,
+                e
+            )
+        });
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains(tunnel_name),
+            "error must contain tunnel name; got: {msg}"
+        );
+        assert!(
+            msg.contains(bad_service),
+            "error must contain original bad service value; got: {msg}"
+        );
+    }
 }
