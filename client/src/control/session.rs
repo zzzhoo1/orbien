@@ -693,7 +693,7 @@ where
 ///   P2P future to completion and emits a warning only if it returns `Err`.
 ///
 /// Extracting this into a named function achieves two goals:
-/// 1. Tests can call it directly with controlled inputs (a long-sleep future
+/// 1. Tests can call it directly with controlled inputs (a pending future
 ///    and a hot cancel token) without going through the full `Control` state
 ///    machine.
 /// 2. The production call site (`reader_loop`) remains a single,
@@ -881,19 +881,26 @@ mod tests {
     ///
     /// Core invariants under test:
     /// 1. When `cancel` is triggered while the P2P future is still in-flight
-    ///    (simulated with `sleep(30s)`), `select!` picks the cancel branch and
-    ///    the task exits well within the long-sleep duration.
+    ///    (simulated with `std::future::pending()`), `select!` picks the cancel
+    ///    branch and the task exits promptly — the pending future is never resolved.
     /// 2. The cancel path emits NO fallback-relay warning.  Cancellation is a
     ///    clean, intentional shutdown — the relay was never needed because the
     ///    session itself is going away.  Emitting a warning would be misleading.
-    /// 3. The task completes within a tight wall-clock budget (1 s), which would
-    ///    be impossible if the 30 s sleep were allowed to run to completion first.
+    /// 3. The task completes within a tight wall-clock budget (1 s), which is
+    ///    trivially satisfied once the cancel branch fires.
+    ///
+    /// Why `pending()` is the right mock here:
+    ///    `std::future::pending::<Result<()>>()` is unconditionally unresolvable
+    ///    and carries no dependency on the timer subsystem.  It is semantically
+    ///    equivalent to "hole-punch still in progress, with no scheduled
+    ///    completion time" — which is exactly the scenario under test.
+    ///    Unlike `sleep(N)`, there is no finite N that could race with CI
+    ///    scheduling jitter.
     ///
     /// Why this is not a false positive:
-    ///    The long-sleep future (30 s) ensures the two select! branches cannot
-    ///    both be ready simultaneously.  If the cancel branch were NOT taken, the
-    ///    outer `timeout(1s, ...)` would expire and the test would fail with a
-    ///    timeout panic — a hard, unambiguous failure rather than a silent pass.
+    ///    If the cancel branch were NOT taken, `pending()` would block forever
+    ///    and the outer `timeout(1s, ...)` would expire, failing the test with
+    ///    an unambiguous timeout panic.
     #[tokio::test(flavor = "current_thread")]
     async fn p2p_task_cancel_preempts_long_running_future() {
         let logs = SharedLogBuf::default();
@@ -910,21 +917,17 @@ mod tests {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
 
-        // ── Step 1: spawn the task with a long-running P2P future ────────────
+        // ── Step 1: spawn the task with a permanently pending P2P future ─────
         //
-        // The P2P future sleeps for 30 s, far beyond the 1 s test budget.
-        // Under correct behaviour the cancel branch fires first and the sleep
-        // is never awaited to completion.
+        // `std::future::pending::<Result<()>>()` never resolves, accurately
+        // modelling a hole-punch that is still in flight with no timeout of
+        // its own.  The cancel branch is the only exit path.
         let task = tokio::spawn(async move {
             run_p2p_task_with_cancel(
                 cancel_clone,
-                async {
-                    // Simulate: hole-punch still in progress.
-                    // 30 s >> 1 s test budget — any slip-through would be caught
-                    // by the outer timeout below.
-                    sleep(Duration::from_secs(30)).await;
-                    Ok(())
-                },
+                // Simulate: hole-punch in progress, no completion scheduled.
+                // Output type Result<()> matches the generic bound directly.
+                std::future::pending::<Result<()>>(),
             )
             .await;
         });
@@ -938,7 +941,7 @@ mod tests {
 
         // ── Step 3: primary assertion — task exits within 1 s ────────────────
         //
-        // If the cancel branch were NOT taken, the task would block on sleep(30s)
+        // If the cancel branch were NOT taken, `pending()` would block forever
         // and this timeout would fire, failing the test unambiguously.
         timeout(Duration::from_secs(1), task)
             .await
