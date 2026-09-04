@@ -166,21 +166,10 @@ pub async fn run_p2p_tcp_session(
 /// service for `tunnel_name` using KCP as the reliability layer, then join
 /// both streams bidirectionally.
 ///
-/// # Design
-/// A `KcpStream` is layered on the punched socket to provide ordering and
-/// retransmission.  A second `UdpSocket` bound on loopback talks to the
-/// local service, wrapped in [`UdpStreamAdapter`] to provide
-/// `AsyncRead + AsyncWrite` so that `io::join` can splice both directions.
-///
-/// # Datagram boundaries
-/// `UdpStreamAdapter::poll_write` sends each `io::join` write as a single
-/// UDP datagram.  KCP segments arriving in one `poll_read` call are
-/// forwarded as one datagram.  Backends that parse datagrams independently
-/// will see correct framing; stream-oriented backends are unaffected.
-///
-/// # MTU
-/// Per-packet buffer is capped at [`KCP_MTU`] (1200 bytes) to avoid
-/// fragmentation on any realistic path.
+/// This is a thin wrapper around [`run_p2p_udp_session_with_config`] that
+/// supplies the production-default KCP configuration (MTU 1200, all other
+/// fields from `KcpConfig::default()`).  The public signature is stable and
+/// must not be changed.
 ///
 /// # Arguments
 /// * `p2p_sock`    — connected `UdpSocket` from hole-punch.
@@ -196,7 +185,46 @@ pub async fn run_p2p_udp_session(
     local_addr: SocketAddr,
     tunnel_name: &str,
 ) -> Result<()> {
-    use kcp_tokio::{KcpConfig, KcpStream};
+    use kcp_tokio::KcpConfig;
+    let cfg = KcpConfig {
+        mtu: KCP_MTU,
+        ..KcpConfig::default()
+    };
+    run_p2p_udp_session_with_config(p2p_sock, local_addr, tunnel_name, cfg).await
+}
+
+/// Inner implementation of the UDP P2P session, accepting an explicit
+/// [`kcp_tokio::KcpConfig`].
+///
+/// # Visibility
+/// `pub(crate)` — reachable from tests inside this crate (including
+/// integration tests in `client/tests/`) but not exported as a stable public
+/// API.  Callers that need the production defaults should use
+/// [`run_p2p_udp_session`].  Tests that need a short `connect_timeout` for
+/// deterministic failure assertions should call this function directly.
+///
+/// # Design
+/// A `KcpStream` is layered on the punched socket to provide ordering and
+/// retransmission.  A second `UdpSocket` bound on loopback talks to the
+/// local service, wrapped in [`UdpStreamAdapter`] to provide
+/// `AsyncRead + AsyncWrite` so that `io::join` can splice both directions.
+///
+/// # Datagram boundaries
+/// `UdpStreamAdapter::poll_write` sends each `io::join` write as a single
+/// UDP datagram.  KCP segments arriving in one `poll_read` call are
+/// forwarded as one datagram.  Backends that parse datagrams independently
+/// will see correct framing; stream-oriented backends are unaffected.
+///
+/// # MTU
+/// The MTU in the supplied `cfg` is used as-is.  The production default is
+/// [`KCP_MTU`] (1200 bytes).
+pub(crate) async fn run_p2p_udp_session_with_config(
+    p2p_sock: UdpSocket,
+    local_addr: SocketAddr,
+    tunnel_name: &str,
+    cfg: kcp_tokio::KcpConfig,
+) -> Result<()> {
+    use kcp_tokio::KcpStream;
 
     let peer_addr = p2p_sock.peer_addr().map_err(|e| {
         anyhow!(
@@ -205,11 +233,6 @@ pub async fn run_p2p_udp_session(
             e
         )
     })?;
-
-    let cfg = KcpConfig {
-        mtu: KCP_MTU,
-        ..KcpConfig::default()
-    };
 
     // Wrap the punched socket in a KCP stream (reliable + ordered).
     let kcp_stream = KcpStream::connect_with_config(&cfg, p2p_sock, peer_addr)
@@ -475,6 +498,19 @@ mod tests {
             |s, a, n| Box::pin(run_p2p_udp_session(s, a, n));
     }
 
+    // ── UDP test 1b: with_config variant is reachable from test module ──────
+    //
+    // Verifies the pub(crate) helper compiles and has the expected signature.
+    // Does not exercise any runtime behaviour — that is covered by the
+    // kcp_fail test below.
+    #[test]
+    fn udp_session_with_config_fn_exists() {
+        use kcp_tokio::KcpConfig;
+        let _: fn(UdpSocket, SocketAddr, &str, KcpConfig) ->
+            std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>> =
+            |s, a, n, c| Box::pin(run_p2p_udp_session_with_config(s, a, n, c));
+    }
+
     // ── UDP test 2: unreachable backend returns Err ─────────────────────────
     //
     // sock_a is connected to sock_b (which is not a KCP peer), so
@@ -589,21 +625,20 @@ mod tests {
     // ── 控制面测试 2：KCP connect 失败时，错误信息含 tunnel_name ──────────
 
     /// `peer_addr()` 成功（socket 已 connect）但 KCP 握手无法完成时，
-    /// `run_p2p_udp_session` 必须返回 Err，且错误信息包含 tunnel_name。
+    /// `run_p2p_udp_session_with_config` 必须在 `connect_timeout` 内返回
+    /// `Err`，且错误信息包含 tunnel_name。
     ///
-    /// 构造方式：sock_a connect 到 sock_b，但 sock_b 不是 KCP listener，
-    /// 握手超时后 kcp_tokio 返回 Err，即触发第二个 guard。
+    /// 使用 `run_p2p_udp_session_with_config`（`pub(crate)` helper）并注入
+    /// 极短的 `connect_timeout`（300 ms）+ `max_retries = 1`，使 KCP 在
+    /// 窗口内确定失败，将原来"不挂起"的弱断言升级为"确定 Err + 消息校验"
+    /// 的强断言。
     ///
-    /// 约束说明：`run_p2p_udp_session` 内部使用 `KcpConfig::default()`，
-    /// connect_timeout ≈ 30s，测试侧无法注入更短的配置，也不依赖平台
-    /// ICMP 行为强迫 KCP 在窗口内失败。因此 2s 的外层 timeout 先到期是
-    /// 正常结果，不是测试失败。
-    ///
-    /// 验证的两个不变量：
-    ///   1. 函数不会永久挂起（由 timeout 保护）。
-    ///   2. 若 KCP 在窗口内确实自己失败，错误信息必须包含 tunnel_name。
+    /// 生产路径 `run_p2p_udp_session` 使用 `KcpConfig::default()`（约 30s
+    /// 超时），行为不受影响。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn udp_session_kcp_fail_err_contains_tunnel_name() {
+        use kcp_tokio::KcpConfig;
+
         // sock_a connected → sock_b；sock_b 不做任何 KCP 响应
         let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -613,30 +648,30 @@ mod tests {
 
         let dummy_local: SocketAddr = "127.0.0.1:1".parse().unwrap();
 
-        // KcpConfig::default() 的 connect_timeout ≈ 30s，2s 窗口内
-        // timeout 通常先到期；match 分开两条路径，避免伪造错误消息后
-        // 断言 tunnel_name 这一结构性错误。
-        match timeout(
-            Duration::from_secs(2),
-            run_p2p_udp_session(sock_a, dummy_local, "kcp-fail-tunnel"),
+        // 注入短超时配置：300 ms connect_timeout + 1 次重传即放弃。
+        // KCP 会在 300 ms 内确定失败并返回 Err，无需依赖外层 timeout 兜底。
+        let short_cfg = KcpConfig {
+            mtu: KCP_MTU,
+            connect_timeout: std::time::Duration::from_millis(300),
+            max_retries: 1,
+            ..KcpConfig::default()
+        };
+
+        // 用 1s 外层 timeout 作为 CI 防挂保护（正常应在 300ms 内返回）
+        let result = timeout(
+            Duration::from_secs(1),
+            run_p2p_udp_session_with_config(sock_a, dummy_local, "kcp-fail-tunnel", short_cfg),
         )
         .await
-        {
-            Ok(result) => {
-                // KCP 在窗口内自己失败：验证错误信息包含 tunnel_name
-                assert!(result.is_err(), "expected Err when KCP handshake cannot complete");
-                let msg = result.unwrap_err().to_string();
-                assert!(
-                    msg.contains("kcp-fail-tunnel"),
-                    "error must contain tunnel name; got: {msg}"
-                );
-            }
-            Err(_elapsed) => {
-                // KCP 仍在重传中，函数未挂起，符合预期。
-                // tunnel_name 注入的格式正确性由 peer_addr 失败路径的
-                // udp_session_peer_addr_fail_err_contains_tunnel_name 覆盖。
-            }
-        }
+        .expect("run_p2p_udp_session_with_config hung beyond 1s — KCP short timeout not respected");
+
+        // 此处是确定性断言，不再需要 match 分支
+        assert!(result.is_err(), "expected Err when KCP handshake cannot complete");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("kcp-fail-tunnel"),
+            "error must contain tunnel name; got: {msg}"
+        );
     }
 
     // ── 控制面测试 3：调用方 service 地址 parse 失败路径 ───────────────────
