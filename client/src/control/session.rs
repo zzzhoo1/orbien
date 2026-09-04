@@ -327,14 +327,11 @@ impl Control {
                     let ctl = Arc::clone(&self);
                     let cancel = self.cancel.clone();
                     self.data_tasks.lock().await.spawn(async move {
-                        tokio::select! {
-                            _ = cancel.cancelled() => {
-                                tracing::debug!("P2P task cancelled by session shutdown");
-                            }
-                            _ = consume_p2p_ready_result_with_fallback_log(
-                                ctl.handle_p2p_ready(ready)
-                            ) => {}
-                        }
+                        run_p2p_task_with_cancel(
+                            cancel,
+                            ctl.handle_p2p_ready(ready),
+                        )
+                        .await;
                     });
                 }
                 Message::Pong(_) => {
@@ -686,6 +683,33 @@ where
     }
 }
 
+/// Exact behaviour-equivalent extraction of the `select!` block that wraps
+/// each P2pReady task in `reader_loop`.
+///
+/// Two branches race:
+/// - `cancel.cancelled()` → logs a debug message and returns immediately
+///   (no fallback warning — cancellation is a clean shutdown, not a failure).
+/// - `consume_p2p_ready_result_with_fallback_log(p2p_fut)` → runs the
+///   P2P future to completion and emits a warning only if it returns `Err`.
+///
+/// Extracting this into a named function achieves two goals:
+/// 1. Tests can call it directly with controlled inputs (a long-sleep future
+///    and a hot cancel token) without going through the full `Control` state
+///    machine.
+/// 2. The production call site (`reader_loop`) remains a single,
+///    readable line that makes the intent explicit.
+async fn run_p2p_task_with_cancel<F>(cancel: CancellationToken, p2p_fut: F)
+where
+    F: std::future::Future<Output = Result<()>>,
+{
+    tokio::select! {
+        _ = cancel.cancelled() => {
+            tracing::debug!("P2P task cancelled by session shutdown");
+        }
+        _ = consume_p2p_ready_result_with_fallback_log(p2p_fut) => {}
+    }
+}
+
 fn is_unexpected_eof(e: &anyhow::Error) -> bool {
     if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
         return io_err.kind() == std::io::ErrorKind::UnexpectedEof;
@@ -791,25 +815,20 @@ mod tests {
         }
     }
 
-    // ── Test ─────────────────────────────────────────────────────────────────
+    // ── Tests ─────────────────────────────────────────────────────────────────
 
-    /// Verifies the control-plane fallback semantics of `handle_p2p_ready`:
+    /// Verifies that `run_p2p_task_with_cancel` (and therefore the P2pReady
+    /// branch in `reader_loop`) correctly consumes an `Err` result and emits
+    /// a fallback-relay warning log, while allowing control flow to continue.
     ///
-    /// **Primary assertion (state):** when the P2P session future returns `Err`,
-    /// the error is consumed by `consume_p2p_ready_result_with_fallback_log`,
-    /// the task does NOT panic, and execution continues past the helper call
-    /// (proven by the oneshot signal).  This is the observable equivalent of
-    /// "relay mode remains active".
+    /// **Primary assertion (state):** the oneshot signal is sent after the
+    /// helper returns, proving the task neither panicked nor hung.
     ///
-    /// **Secondary assertion (log):** a `WARN`-level message containing relay /
-    /// fallback semantics is emitted.  This assertion is deliberately lenient
-    /// (OR of multiple candidate phrases) so minor log-text refactors do not
-    /// break it.  If it becomes flaky, delete just this block — the state
-    /// assertion above is sufficient to prove fallback behaviour.
+    /// **Secondary assertion (log):** the warning containing relay-fallback
+    /// semantics is present.
     #[tokio::test(flavor = "current_thread")]
     async fn udp_p2p_failure_fallback_consumes_err_and_keeps_control_flow_alive() {
         let logs = SharedLogBuf::default();
-
         let subscriber = tracing_subscriber::fmt()
             .with_writer(logs.clone())
             .with_ansi(false)
@@ -817,46 +836,130 @@ mod tests {
             .with_target(false)
             .with_level(true)
             .finish();
-
-        // set_default installs the subscriber on the current thread and returns
-        // a DefaultGuard.  The subscriber stays active as long as _guard is
-        // alive (the whole test body).  No closure is needed, so .await is
-        // valid in this async fn context with no extra wrapping.
         let _guard = tracing::subscriber::set_default(subscriber);
 
         let (continued_tx, continued_rx) = oneshot::channel::<()>();
 
         let task = tokio::spawn(async move {
-            consume_p2p_ready_result_with_fallback_log(async {
-                Err(anyhow!(
-                    "P2P UDP: KCP connect failed for tunnel 'demo': connect timeout"
-                ))
-            })
+            // cancel token that is never triggered — the P2P future runs to
+            // completion (immediately returning Err) and the fallback branch fires.
+            let cancel = CancellationToken::new();
+            run_p2p_task_with_cancel(
+                cancel,
+                async {
+                    Err(anyhow!(
+                        "P2P UDP: KCP connect failed for tunnel 'demo': connect timeout"
+                    ))
+                },
+            )
             .await;
-
-            // Execution reaching here proves the Err was consumed and
-            // control flow was not interrupted — relay fallback is intact.
             let _ = continued_tx.send(());
         });
 
         timeout(Duration::from_secs(1), task)
             .await
-            .expect("fallback task hung — possible infinite loop or deadlock")
-            .expect("fallback task panicked — Err must not propagate");
+            .expect("fallback task hung")
+            .expect("fallback task panicked");
 
-        // ── Primary assertion: state ──────────────────────────────────────────
+        // ── Primary: control flow continued ────────────────────────────────
         timeout(Duration::from_secs(1), continued_rx)
             .await
-            .expect("control flow did not continue after fallback — relay semantics broken")
-            .expect("continuation signal missing");
+            .expect("control flow did not continue after fallback")
+            .expect("signal missing");
 
-        // ── Secondary assertion: log (lenient — remove if flaky) ─────────────
+        // ── Secondary: fallback warning was logged ────────────────────────
         let rendered = logs.as_string();
         assert!(
             rendered.contains("keeping relay mode")
                 || rendered.contains("backend unavailable")
                 || rendered.contains("P2P punch failed"),
-            "fallback warning log missing expected relay/fallback phrase; got: {rendered}"
+            "fallback warning log missing; got: {rendered}"
+        );
+    }
+
+    /// Verifies the **cancel-preempts-P2P** invariant of `run_p2p_task_with_cancel`:
+    ///
+    /// Core invariants under test:
+    /// 1. When `cancel` is triggered while the P2P future is still in-flight
+    ///    (simulated with `sleep(30s)`), `select!` picks the cancel branch and
+    ///    the task exits well within the long-sleep duration.
+    /// 2. The cancel path emits NO fallback-relay warning.  Cancellation is a
+    ///    clean, intentional shutdown — the relay was never needed because the
+    ///    session itself is going away.  Emitting a warning would be misleading.
+    /// 3. The task completes within a tight wall-clock budget (1 s), which would
+    ///    be impossible if the 30 s sleep were allowed to run to completion first.
+    ///
+    /// Why this is not a false positive:
+    ///    The long-sleep future (30 s) ensures the two select! branches cannot
+    ///    both be ready simultaneously.  If the cancel branch were NOT taken, the
+    ///    outer `timeout(1s, ...)` would expire and the test would fail with a
+    ///    timeout panic — a hard, unambiguous failure rather than a silent pass.
+    #[tokio::test(flavor = "current_thread")]
+    async fn p2p_task_cancel_preempts_long_running_future() {
+        let logs = SharedLogBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .with_level(true)
+            .finish();
+        // set_default: thread-local, no closure needed, .await valid here.
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        // ── Step 1: spawn the task with a long-running P2P future ────────────
+        //
+        // The P2P future sleeps for 30 s, far beyond the 1 s test budget.
+        // Under correct behaviour the cancel branch fires first and the sleep
+        // is never awaited to completion.
+        let task = tokio::spawn(async move {
+            run_p2p_task_with_cancel(
+                cancel_clone,
+                async {
+                    // Simulate: hole-punch still in progress.
+                    // 30 s >> 1 s test budget — any slip-through would be caught
+                    // by the outer timeout below.
+                    sleep(Duration::from_secs(30)).await;
+                    Ok(())
+                },
+            )
+            .await;
+        });
+
+        // ── Step 2: trigger cancellation from the test body ──────────────────
+        //
+        // Yield once so the spawned task gets a chance to start polling and
+        // reach the select! await point before cancel() is called.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        // ── Step 3: primary assertion — task exits within 1 s ────────────────
+        //
+        // If the cancel branch were NOT taken, the task would block on sleep(30s)
+        // and this timeout would fire, failing the test unambiguously.
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect(
+                "P2P task did not exit after cancel — \
+                 cancel branch in select! may be missing or unreachable",
+            )
+            .expect("P2P task panicked unexpectedly");
+
+        // ── Step 4: secondary assertion — no fallback warning logged ─────────
+        //
+        // The cancel path must NOT emit a relay-fallback warning.  That warning
+        // means "P2P failed, staying on relay"; a clean cancellation is neither
+        // a failure nor a reason to stay on relay — the whole session is
+        // shutting down.  A spurious warning here would confuse operators.
+        let rendered = logs.as_string();
+        assert!(
+            !rendered.contains("keeping relay mode")
+                && !rendered.contains("backend unavailable")
+                && !rendered.contains("P2P punch failed"),
+            "cancel path must not emit fallback-relay warning; got: {rendered}"
         );
     }
 }
