@@ -721,4 +721,50 @@ mod tests {
             "error must contain original bad service value; got: {msg}"
         );
     }
+
+    // ── TCP test 4: single-side EOF keeps forwarding until both close ──────
+    //
+    // Ground truth (tokio 1.47.1 copy_bidirectional): the join only returns
+    // when BOTH directions reach EOF. A single-side half-close therefore
+    // must NOT end the session — the surviving direction keeps forwarding.
+    // This is the intermediate state that test 1 (drop both ends) does not
+    // cover.
+    #[tokio::test]
+    async fn tcp_session_single_side_eof_keeps_forwarding_until_both_close() {
+        // 1) backend 监听与就绪
+        let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+        let (p2p_server, p2p_client) = loopback_pair().await;
+        let session = tokio::spawn(async move {
+            run_p2p_tcp_session(p2p_server, &backend_addr.to_string(), "demo").await
+        });
+
+        // 2) backend 接受连接
+        let (mut backend, _) = timeout(Duration::from_secs(2), backend_listener.accept())
+            .await.expect("backend accept timed out").unwrap();
+        let (mut p2p_rx, mut p2p_tx) = p2p_client.into_split();
+
+        // 3) p2p 发送数据，backend 仍可读 (p2p→backend 方向正常)
+        p2p_tx.write_all(b"hello-from-p2p").await.unwrap();
+        let mut buf = vec![0u8; 14];
+        timeout(Duration::from_secs(2), backend.read_exact(&mut buf))
+            .await.expect("p2p→backend read timed out").unwrap();
+        assert_eq!(&buf, b"hello-from-p2p");
+
+        // 4) 单端半关闭：p2p 端写半部关闭 (p2p→backend 方向 EOF)
+        //    此时 session 必须仍存活——backend→p2p 方向还没 EOF。
+        p2p_tx.shutdown().await.unwrap();
+
+        // 5) 验证 session 未结束：backend 仍能把数据转发到 p2p 读半部
+        backend.write_all(b"hello-from-backend").await.unwrap();
+        let mut buf2 = vec![0u8; 18];
+        timeout(Duration::from_secs(2), p2p_rx.read_exact(&mut buf2))
+            .await.expect("backend→p2p read timed out").unwrap();
+        assert_eq!(&buf2, b"hello-from-backend");
+
+        // 6) 双端均关闭，session 才结束 (copy_bidirectional 需双端 EOF)
+        drop(p2p_rx); drop(backend);
+        timeout(Duration::from_secs(2), session)
+            .await.expect("session task timed out").unwrap().unwrap();
+    }
 }
