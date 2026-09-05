@@ -637,7 +637,7 @@ impl Control {
             servers: stun_servers,
             timeout: Duration::from_secs(self.effective_p2p_timeout_secs()),
         };
-        query_public_addrs(&opts).await
+        query_public_addrs(opts).await
     }
 
     fn select_remote_candidates(&self, ready: &P2pReady) -> Vec<SocketAddr> {
@@ -720,14 +720,11 @@ where
     }
 }
 
-fn is_unexpected_eof(e: &anyhow::Error) -> bool {
-    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-        return io_err.kind() == std::io::ErrorKind::UnexpectedEof;
+fn is_unexpected_eof(e: &MessageReadError) -> bool {
+    match e {
+        MessageReadError::Io(io_err) => io_err.kind() == std::io::ErrorKind::UnexpectedEof,
+        _ => false,
     }
-    if let Some(MessageReadError::Io(io_err)) = e.downcast_ref::<MessageReadError>() {
-        return io_err.kind() == std::io::ErrorKind::UnexpectedEof;
-    }
-    false
 }
 
 fn now_secs() -> i64 {
@@ -757,7 +754,7 @@ fn new_tunnel_base(
     protocol: &str,
     remote_port: i32,
     local_ip: &str,
-    local_port: i32,
+    local_port: u16,
     transport: &orbien_core::config::TunnelTransportConfig,
     max_connections: usize,
     extra: impl FnOnce(&mut NewTunnel),
@@ -767,7 +764,7 @@ fn new_tunnel_base(
         protocol: protocol.to_owned(),
         remote_port,
         local_ip: local_ip.to_owned(),
-        local_port,
+        local_port: local_port as i32,
         bandwidth: transport.bandwidth,
         bandwidth_limit_side: transport.bandwidth_limit_side.clone(),
         max_connections,

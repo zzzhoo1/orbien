@@ -55,6 +55,9 @@ pub struct HolePunchConfig {
     pub probe_count: u32,
     /// Delay between consecutive probe packets.
     pub probe_interval: Duration,
+    /// Whether the UDP hole-punch path is enabled.  When `false`, `punch()`
+    /// skips the UDP attempt and goes straight to the TCP fallback.
+    pub enable_udp: bool,
 }
 
 impl Default for HolePunchConfig {
@@ -66,6 +69,7 @@ impl Default for HolePunchConfig {
             timeout: Duration::from_secs(10),
             probe_count: 5,
             probe_interval: Duration::from_millis(200),
+            enable_udp: true,
         }
     }
 }
@@ -94,8 +98,10 @@ pub fn parse_candidates(s: &str) -> Vec<SocketAddr> {
 ///
 /// Both peers must call this function concurrently after receiving `P2pReady`.
 pub async fn punch(cfg: HolePunchConfig) -> HolePunchResult {
-    if let Some(sock) = try_udp_punch(&cfg).await {
-        return HolePunchResult::Udp(sock);
+    if cfg.enable_udp {
+        if let Some(sock) = try_udp_punch(&cfg).await {
+            return HolePunchResult::Udp(sock);
+        }
     }
     if let Some(stream) = try_tcp_connect(&cfg).await {
         return HolePunchResult::Tcp(stream);
@@ -144,9 +150,13 @@ async fn send_probes(sock: &UdpSocket, probe: &[u8], count: u32, interval: Durat
 }
 
 /// Receive packets until one carries the complete expected `token`.
-/// Returns the socket if a matching packet arrives; returns `None` only
+/// Returns `Some(())` if a matching packet arrives; returns `None` only
 /// if the socket errors out permanently (which terminates the task via ?).
-async fn recv_verified(sock: UdpSocket, token: &[u8]) -> Option<UdpSocket> {
+///
+/// Takes `&UdpSocket` (not by value) so the caller can share the same
+/// socket with a concurrent sender inside `tokio::select!` without an
+/// E0505 borrow/move conflict; the caller still owns the socket.
+async fn recv_verified(sock: &UdpSocket, token: &[u8]) -> Option<()> {
     let mut buf = [0u8; 256];
     loop {
         let n = match sock.recv(&mut buf).await {
@@ -159,7 +169,7 @@ async fn recv_verified(sock: UdpSocket, token: &[u8]) -> Option<UdpSocket> {
         // token, and the first `token.len()` bytes must match exactly.
         // A truncated packet (n < token.len()) must never be accepted.
         if n >= token.len() && &buf[..token.len()] == token {
-            return Some(sock);
+            return Some(());
         }
     }
 }
@@ -191,21 +201,18 @@ async fn try_udp_punch(cfg: &HolePunchConfig) -> Option<UdpSocket> {
             let sock = UdpSocket::bind(local).await.ok()?;
             sock.connect(remote).await.ok()?;
 
-            // Split into two references: one for the sender, one for the
-            // receiver.  Both use the same underlying socket fd.
-            //
-            // Safety: `UdpSocket` does not implement `Clone`, so we pass
-            // `&sock` to `send_probes` and move `sock` into `recv_verified`.
-            // `tokio::select!` cancels the losing branch, which drops the
-            // future cleanly.
+            // Both select! branches borrow the same socket (same underlying
+            // fd).  `tokio::select!` cancels the losing branch, which drops
+            // its future cleanly; the socket is owned by this task and is
+            // moved out only after the select resolves.
             tokio::select! {
                 // The send loop never resolves; it runs until cancelled.
                 _ = send_probes(&sock, &probe, probe_count, probe_interval) => {
                     None // unreachable in practice
                 }
                 // The recv loop resolves as soon as a valid token arrives.
-                result = recv_verified(sock, token_owned.as_bytes()) => {
-                    result
+                result = recv_verified(&sock, token_owned.as_bytes()) => {
+                    result.map(|_| sock)
                 }
             }
         });
@@ -356,6 +363,7 @@ mod tests {
             timeout: Duration::from_millis(200),
             probe_count: 1,
             probe_interval: Duration::from_millis(10),
+            enable_udp: true,
         };
         assert!(matches!(punch(cfg).await, HolePunchResult::Failed));
     }
@@ -405,6 +413,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             probe_count: 10,
             probe_interval: Duration::from_millis(30),
+            enable_udp: true,
         };
         let cfg_b = HolePunchConfig {
             token: token.clone(),
@@ -413,6 +422,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             probe_count: 10,
             probe_interval: Duration::from_millis(30),
+            enable_udp: true,
         };
 
         let (res_a, res_b) = tokio::join!(punch(cfg_a), punch(cfg_b));

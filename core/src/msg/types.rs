@@ -56,7 +56,7 @@ pub struct LoginResp {
     pub error: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NewTunnel {
     pub tunnel_name: String,
     pub protocol: String,

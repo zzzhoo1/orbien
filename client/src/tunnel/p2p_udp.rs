@@ -78,12 +78,12 @@ async fn relay_loop(
     backend: Arc<UdpSocket>,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let peer_to_backend = {
+    let mut peer_to_backend = {
         let peer = Arc::clone(&peer);
         let backend = Arc::clone(&backend);
         tokio::spawn(async move { copy_leg(&peer, &backend, "peer→backend").await })
     };
-    let backend_to_peer = {
+    let mut backend_to_peer = {
         let peer = Arc::clone(&peer);
         let backend = Arc::clone(&backend);
         tokio::spawn(async move { copy_leg(&backend, &peer, "backend→peer").await })
@@ -100,12 +100,12 @@ async fn relay_loop(
             let _ = backend_to_peer.await;
             return Ok(());
         }
-        r = peer_to_backend => {
+        r = &mut peer_to_backend => {
             backend_to_peer.abort();
             let _ = backend_to_peer.await;
             flatten(r, "peer→backend task")
         }
-        r = backend_to_peer => {
+        r = &mut backend_to_peer => {
             peer_to_backend.abort();
             let _ = peer_to_backend.await;
             flatten(r, "backend→peer task")
@@ -130,7 +130,7 @@ async fn copy_leg(src: &UdpSocket, dst: &UdpSocket, tag: &str) -> Result<()> {
 }
 
 #[inline]
-fn flatten<E: std::fmt::Display>(
+fn flatten(
     r: Result<Result<()>, tokio::task::JoinError>,
     tag: &str,
 ) -> Result<()> {

@@ -218,6 +218,7 @@ mod tests {
             peer_session_id: "peer-abc".into(),
             token: "tok-123".into(),
             preferred_local_port: 0,
+            tunnel_name: "tun-1".into(),
         }))
         .await;
 
@@ -240,6 +241,7 @@ mod tests {
             responder_candidates: "10.0.0.2:50000".into(),
             initiator_observed_addr: "1.2.3.4:54321".into(),
             responder_observed_addr: "5.6.7.8:60000".into(),
+            tunnel_name: "tun-1".into(),
         }))
         .await;
     }

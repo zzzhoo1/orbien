@@ -1,5 +1,5 @@
 mod connector;
-mod control;
+pub mod control;
 mod handle;
 mod plugin;
 mod sanitize;

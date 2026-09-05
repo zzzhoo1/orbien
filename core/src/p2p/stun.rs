@@ -14,6 +14,9 @@ const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 /// Options for a STUN Binding query.
 #[derive(Debug, Clone)]
 pub struct StunQueryOptions {
+    /// STUN server URLs to query.  When empty, [`query_public_addrs`] returns
+    /// an empty list (no public-address discovery).
+    pub servers: Vec<String>,
     /// How long to wait for the server response.
     pub timeout: Duration,
 }
@@ -21,6 +24,7 @@ pub struct StunQueryOptions {
 impl Default for StunQueryOptions {
     fn default() -> Self {
         Self {
+            servers: Vec::new(),
             timeout: Duration::from_secs(3),
         }
     }
@@ -49,13 +53,10 @@ pub async fn query_public_addr(server: &str, options: StunQueryOptions) -> Resul
 ///
 /// Failures are silently ignored (logged at `debug` level).  Returns an empty
 /// `Vec` if every server fails.
-pub async fn query_public_addrs(
-    servers: &[String],
-    options: StunQueryOptions,
-) -> Vec<SocketAddr> {
+pub async fn query_public_addrs(options: StunQueryOptions) -> Vec<SocketAddr> {
     let mut out: Vec<SocketAddr> = Vec::new();
 
-    for server in servers {
+    for server in &options.servers {
         match query_public_addr(server, options.clone()).await {
             Ok(addr) if !out.contains(&addr) => out.push(addr),
             Ok(_) => {}

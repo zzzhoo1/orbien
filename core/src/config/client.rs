@@ -582,6 +582,26 @@ impl ClientConfig {
                 )
             )
     }
+
+    // ── P2P defaults ────────────────────────────────────────────────────────
+    // ponytail: no dedicated p2p config section yet; these return fixed
+    // defaults.  Upgrade path: add a `p2p` config section (enable_udp,
+    // stun_servers, timeout_secs) and read from it here.
+
+    /// Whether the UDP hole-punch path is enabled for P2P tunnels.
+    pub fn p2p_enable_udp(&self) -> bool {
+        true
+    }
+
+    /// STUN servers used for public-address discovery (empty = local-only).
+    pub fn p2p_stun_servers(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// P2P hole-punch timeout in seconds (0 = use the 10 s fallback).
+    pub fn p2p_timeout_secs(&self) -> u32 {
+        10
+    }
 }
 
 #[cfg(test)]

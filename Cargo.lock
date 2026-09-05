@@ -4294,6 +4294,7 @@ dependencies = [
  "fast-socks5",
  "hostname",
  "httparse",
+ "kcp-tokio",
  "openssl",
  "orbien-core",
  "rustls",
