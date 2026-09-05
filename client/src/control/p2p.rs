@@ -357,6 +357,7 @@ mod tests {
     /// Verify the deprecated experimental UDP helper still compiles.
     #[test]
     #[allow(deprecated)]
+    #[allow(clippy::type_complexity)]
     fn udp_experimental_fn_exists() {
         let _: fn(UdpSocket, SocketAddr, usize) ->
             std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>> =

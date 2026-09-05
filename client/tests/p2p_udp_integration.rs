@@ -336,14 +336,17 @@ async fn test_cancellation_exits_session_task() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     cancel.cancel();
 
-    // Task must exit within 1 s.
+    // Task must exit within 1 s. The spawned task returns Result<Result<(),
+    // JoinError>>: the outer is the JoinHandle, the inner is the session's
+    // own Result. Consume both.
     with_timeout(
         Duration::from_secs(1),
         "session task must exit after cancel",
         session,
     )
     .await
-    .expect("session task panicked");
+    .expect("session task panicked")
+    .expect("session task returned Err");
 
     // Keep backend alive until this point.
     drop(backend);
