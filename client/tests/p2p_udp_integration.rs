@@ -49,6 +49,21 @@ fn kcp_cfg() -> KcpConfig {
     }
 }
 
+/// Deadline for the KCP handshake (`KcpListener::accept`).
+///
+/// macOS CI runners complete the UDP-loopback KCP handshake noticeably slower
+/// than Linux/Windows, so a fixed 10 s deadline is flaky there.  Use a longer
+/// deadline on macOS; keep the tight 10 s elsewhere so a real regression still
+/// fails fast.  This only relaxes timing — the assertion semantics of the
+/// tests are unchanged.
+fn kcp_accept_timeout() -> Duration {
+    if cfg!(target_os = "macos") {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(10)
+    }
+}
+
 /// Spawn a `KcpListener` on an available loopback port.
 ///
 /// Returns `(server_addr, stream_rx, keepalive)`.  The `stream_rx` resolves
@@ -120,7 +135,7 @@ async fn test_bidirectional_payload_success() {
 
     // Wait for the KCP handshake (≤ 3 s).
     let mut kcp_srv: KcpStream = with_timeout(
-        Duration::from_secs(10),
+        kcp_accept_timeout(),
         "KCP server accept",
         server_rx,
     )
@@ -189,7 +204,7 @@ async fn test_datagram_boundary_preservation() {
     });
 
     let mut kcp_srv: KcpStream = with_timeout(
-        Duration::from_secs(10),
+        kcp_accept_timeout(),
         "KCP accept (boundary)",
         server_rx,
     )
@@ -262,7 +277,7 @@ async fn test_backend_disconnect_ends_session() {
     });
 
     let mut kcp_srv: KcpStream = with_timeout(
-        Duration::from_secs(10),
+        kcp_accept_timeout(),
         "KCP accept (disconnect)",
         server_rx,
     )
@@ -325,7 +340,7 @@ async fn test_cancellation_exits_session_task() {
 
     // Wait for KCP handshake to complete before cancelling.
     let _kcp_srv: KcpStream = with_timeout(
-        Duration::from_secs(10),
+        kcp_accept_timeout(),
         "KCP accept (cancel)",
         server_rx,
     )
