@@ -650,7 +650,6 @@ impl Control {
     }
 
     fn is_p2p_initiator(&self, ready: &P2pReady) -> bool {
-        if !ready.initiator_observed_addr.is_empty() {}
         self.session_id < ready.initiator_observed_addr
     }
 
@@ -749,6 +748,7 @@ fn normalize_remote_addr(server: &str, remote_addr: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new_tunnel_base(
     name: &str,
     protocol: &str,

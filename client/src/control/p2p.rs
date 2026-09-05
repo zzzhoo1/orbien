@@ -320,14 +320,9 @@ pub async fn run_p2p_udp_session_experimental(
     let local_w = Arc::clone(&local);
     let p2p_to_local = tokio::spawn(async move {
         let mut buf = vec![0u8; buf_size];
-        loop {
-            match p2p_r.recv(&mut buf).await {
-                Ok(n) => {
-                    if local_w.send(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(n) = p2p_r.recv(&mut buf).await {
+            if local_w.send(&buf[..n]).await.is_err() {
+                break;
             }
         }
     });
@@ -336,14 +331,9 @@ pub async fn run_p2p_udp_session_experimental(
     let p2p_w = Arc::clone(&p2p);
     let local_to_p2p = tokio::spawn(async move {
         let mut buf = vec![0u8; buf_size];
-        loop {
-            match local_r.recv(&mut buf).await {
-                Ok(n) => {
-                    if p2p_w.send(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(n) = local_r.recv(&mut buf).await {
+            if p2p_w.send(&buf[..n]).await.is_err() {
+                break;
             }
         }
     });

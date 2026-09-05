@@ -27,13 +27,13 @@ const MAX_DGRAM: usize = 65_507;
 ///
 /// # Parameters
 /// - `peer_sock`    – UDP socket already connected to the remote peer (e.g.
-///                   the result of UDP hole-punching). Datagrams are read from
-///                   and written back to this socket.
+///   the result of UDP hole-punching). Datagrams are read from
+///   and written back to this socket.
 /// - `backend_addr` – Local service address. Every inbound datagram is
-///                   forwarded here; replies are relayed back to the peer.
+///   forwarded here; replies are relayed back to the peer.
 /// - `label`        – Short identifier used in trace spans (e.g. tunnel name).
 /// - `cancel`       – Token that, when cancelled, causes the session to exit
-///                   cleanly.
+///   cleanly.
 ///
 /// # Errors
 /// Returns `Err` if either UDP socket encounters a fatal I/O error.
