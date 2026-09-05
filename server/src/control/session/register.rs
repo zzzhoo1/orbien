@@ -27,8 +27,14 @@ impl Control {
             },
         };
 
-        let mut writer = self.writer.lock().await;
-        msg::write_msg(&mut *writer, &Message::NewTunnelResp(resp)).await?;
+        let mut writer_lock = self.writer.lock().await;
+        if let Some(w) = writer_lock.as_mut() {
+            msg::write_msg(w, &Message::NewTunnelResp(resp))
+                .await
+                .map_err(|e| anyhow!("handle_new_tunnel: {e}"))?;
+        } else {
+            return Err(anyhow!("handle_new_tunnel: writer not initialised"));
+        }
         Ok(())
     }
 
