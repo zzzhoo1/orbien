@@ -160,6 +160,17 @@ async fn test_bidirectional_payload_success() {
     // backend → KCP server
     backend.send_to(B2C, peer).await.expect("backend send_to");
 
+    // The production session writes a single probe byte (b"\0") immediately
+    // after KCP connect to kick the handshake without waiting on keep-alive
+    // timing.  That probe arrives on the server stream first; drain it before
+    // asserting on the real reply.
+    let mut probe = [0u8; 1];
+    let _pn = with_timeout(Duration::from_secs(10), "kcp read probe", async {
+        kcp_srv.read(&mut probe).await.expect("kcp read probe")
+    })
+    .await;
+    assert_eq!(&probe[.._pn], b"\0", "expected handshake probe byte");
+
     let n = with_timeout(Duration::from_secs(10), "kcp read B2C", async {
         kcp_srv.read(&mut buf).await.expect("kcp read")
     })

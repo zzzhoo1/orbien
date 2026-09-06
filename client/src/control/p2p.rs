@@ -33,7 +33,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpStream, UdpSocket};
 
 // Conservative per-packet MTU for KCP: 1200 bytes leaves room for outer
@@ -240,7 +240,7 @@ pub(crate) async fn run_p2p_udp_session_with_config(
     // socket in a UdpTransport and use connect_with_transport instead. The
     // client picks a random conv, which KcpListener's conv=0 handshake
     // convention accepts.
-    let kcp_stream = KcpStream::connect_with_transport(
+    let mut kcp_stream = KcpStream::connect_with_transport(
         Arc::new(UdpTransport::new(p2p_sock)),
         peer_addr,
         cfg,
@@ -253,6 +253,19 @@ pub(crate) async fn run_p2p_udp_session_with_config(
                 e
             )
         })?;
+
+    // Kick the KCP handshake immediately by writing a probe byte.  Without
+    // this, the first packet is a keep-alive probe scheduled at `keep_alive`
+    // (5s), which macOS CI runners can miss inside the accept deadline.
+    // Writing now triggers an immediate PUSH so the peer's `accept()` resolves
+    // right away instead of waiting on keep-alive timing.
+    kcp_stream.write_all(b"\0").await.map_err(|e| {
+        anyhow!(
+            "P2P UDP: initial KCP write failed for tunnel '{}': {}",
+            tunnel_name,
+            e
+        )
+    })?;
 
     // Bind a loopback UDP socket, connect it to the local service, then wrap
     // it in UdpStreamAdapter so io::join can splice both directions.
