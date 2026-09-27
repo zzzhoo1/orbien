@@ -133,7 +133,6 @@ impl AuthState {
                     .and_then(|_| std::fs::rename(&tmp, path))
                 {
                     tracing::warn!(path = %path.display(), "passkey store write failed: {e}");
-                    return;
                 }
                 #[cfg(unix)]
                 if let Err(e) = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600)) {
