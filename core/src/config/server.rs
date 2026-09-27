@@ -190,6 +190,12 @@ pub struct DashboardConfig {
     /// WARNING: Never set this in production.
     #[serde(default, rename = "disableAuth", alias = "disable_auth")]
     pub disable_auth: bool,
+    /// Optional path for persisting WebAuthn passkeys (M3). When set, passkey
+    /// registrations survive dashboard restarts; the file is JSON, written
+    /// with 0600 permissions. Sessions themselves remain in-memory by design
+    /// (short-lived, restart invalidation is acceptable and safer).
+    #[serde(default, rename = "passkeyStorePath", alias = "passkey_store_path")]
+    pub passkey_store_path: String,
 }
 
 impl DashboardConfig {

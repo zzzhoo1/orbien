@@ -59,6 +59,14 @@ mod tests {
         // the auth-rejection tests can never observe a 401.
         let router = routes::router(state.clone())
             .layer(middleware::from_fn_with_state(state, crate::dashboard::auth::auth_middleware));
+        // login handler now extracts ConnectInfo (M2 fix); inject a fixed peer
+        // so oneshot-driven requests satisfy the extractor.
+        let mut req = req;
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                12345,
+            ))));
         let resp = router.oneshot(req).await.expect("oneshot");
         let status = resp.status();
         let bytes = resp
@@ -76,6 +84,12 @@ mod tests {
     async fn call_raw(state: Arc<DashState>, req: Request<Body>) -> axum::response::Response {
         let router = routes::router(state.clone())
             .layer(middleware::from_fn_with_state(state, crate::dashboard::auth::auth_middleware));
+        let mut req = req;
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                12345,
+            ))));
         router.oneshot(req).await.expect("oneshot")
     }
 

@@ -8,6 +8,7 @@ use super::{
     DashState,
 };
 use axum::{
+    extract::ConnectInfo,
     extract::{Json, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -97,9 +98,11 @@ pub struct LoginReq {
 pub async fn login(
     State(state): State<Arc<DashState>>,
     headers: axum::http::HeaderMap,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<LoginReq>,
 ) -> Response {
-    let key = client_key(&headers);
+    // 真实对端 IP 是限速键的不可伪造分量（M2 修复）
+    let key = client_key(&headers, Some(peer.ip()));
     if let Some(auth) = &state.auth {
         if !auth.login_allowed(&key) {
             return err(StatusCode::TOO_MANY_REQUESTS, "too many login attempts");
