@@ -50,7 +50,7 @@ pub async fn run(svc: Arc<Service>, cfg: DashboardConfig) -> Result<()> {
     let app = routes::router(state.clone())
         .layer(middleware::from_fn_with_state(state, auth::auth_middleware))
         .layer(middleware::from_fn(security::security_headers))
-        .into_make_service();
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
 
     axum::serve(listener, app).await?;
     Ok(())

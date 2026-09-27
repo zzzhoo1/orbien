@@ -280,17 +280,25 @@ pub fn extract_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
     None
 }
 
+/// 安全开关：直连部署（无可信反代）时必须为 false——X-Forwarded-* 头完全由客户端控制。
+/// 仅当 dashboard 部署在可信代理之后（代理会清洗/设置这些头）才置 true。
+pub const TRUSTED_PROXY_ENABLED: bool = false;
+
 pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
-    if let Some(proto) = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-    {
-        return proto
-            .split(',')
-            .next_back()
-            .unwrap_or("")
-            .trim()
-            .eq_ignore_ascii_case("https");
+    // M1 修复：直连模式下 X-Forwarded-Proto 可被客户端伪造以剥离 Cookie Secure 标记，
+    // 因此仅显式启用可信代理时才读取转发头。
+    if TRUSTED_PROXY_ENABLED {
+        if let Some(proto) = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+        {
+            return proto
+                .split(',')
+                .next_back()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("https");
+        }
     }
     origin.trim().to_ascii_lowercase().starts_with("https://")
 }
@@ -375,70 +383,81 @@ fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
     credentials_match(&state.cfg.user, &state.cfg.password, u, p)
 }
 
-pub fn client_key(headers: &axum::http::HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next_back())
-        .map(str::trim)
-        .filter(|v| v.parse::<IpAddr>().is_ok())
-        .unwrap_or("direct")
-        .to_string()
+/// M2 修复：直连模式下 X-Forwarded-For 完全可伪造，登录限速键若采信该头即可被
+/// 无限速爆破。仅可信代理模式下读取转发头；`peer_ip` 是不可伪造的真实对端地址，
+/// 由调用方从 ConnectInfo 传入。
+pub fn client_key(headers: &axum::http::HeaderMap, peer_ip: Option<IpAddr>) -> String {
+    if TRUSTED_PROXY_ENABLED {
+        if let Some(forwarded) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next_back())
+            .map(str::trim)
+            .filter(|v| v.parse::<IpAddr>().is_ok())
+        {
+            return forwarded.to_string();
+        }
+    }
+    match peer_ip {
+        Some(ip) => format!("direct:{ip}"),
+        None => "direct:unknown".to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderMap;
+    use std::net::IpAddr;
 
+    fn ip(s: &str) -> Option<IpAddr> {
+        Some(s.parse().unwrap())
+    }
+
+    // 直连模式（TRUSTED_PROXY_ENABLED=false）：转发头一律不采信
     #[test]
     fn client_key_no_header() {
         let headers = HeaderMap::new();
-        assert_eq!(client_key(&headers), "direct");
+        assert_eq!(client_key(&headers, ip("10.0.0.9")), "direct:10.0.0.9");
     }
 
     #[test]
-    fn client_key_single_ip() {
+    fn client_key_direct_mode_ignores_forwarded_for() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "192.168.1.1".parse().unwrap());
-        assert_eq!(client_key(&h), "192.168.1.1");
+        // 伪造的转发头必须被忽略——限速键只由真实对端 IP 决定
+        assert_eq!(client_key(&h, ip("203.0.113.7")), "direct:203.0.113.7");
     }
 
     #[test]
-    fn client_key_multi_hop_uses_rightmost() {
-        let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "1.2.3.4, 203.0.113.5".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
-    }
-
-    #[test]
-    fn client_key_attacker_cannot_bypass_rate_limit() {
+    fn client_key_direct_mode_attacker_cannot_bypass_rate_limit() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "10.0.0.1, 203.0.113.5".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
+        assert_eq!(client_key(&h, ip("198.51.100.9")), "direct:198.51.100.9");
         h.insert("x-forwarded-for", "10.0.0.2, 203.0.113.5".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
+        // 攻击者换任何伪造头，真实对端 IP 不变 → 限速键稳定
+        assert_eq!(client_key(&h, ip("198.51.100.9")), "direct:198.51.100.9");
     }
 
     #[test]
-    fn client_key_rightmost_invalid_falls_back() {
+    fn client_key_direct_mode_no_peer_falls_back() {
+        let headers = HeaderMap::new();
+        assert_eq!(client_key(&headers, None), "direct:unknown");
+    }
+
+    #[test]
+    fn client_key_direct_mode_invalid_header_still_ignored() {
         let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "203.0.113.5, invalid".parse().unwrap());
-        assert_eq!(client_key(&h), "direct");
+        h.insert("x-forwarded-for", "garbage".parse().unwrap());
+        assert_eq!(client_key(&h, ip("192.0.2.1")), "direct:192.0.2.1");
     }
 
     #[test]
-    fn client_key_all_invalid() {
-        let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "bad, also-bad".parse().unwrap());
-        assert_eq!(client_key(&h), "direct");
-    }
-
-    #[test]
-    fn client_key_trims_spaces() {
+    fn client_key_direct_mode_trims_spaces_in_header_ignored() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "1.2.3.4 ,  203.0.113.5  ".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
+        // 即便格式合法，直连模式也不采信
+        assert_eq!(client_key(&h, ip("198.51.100.9")), "direct:198.51.100.9");
     }
 
     #[test]
@@ -453,17 +472,18 @@ mod tests {
         assert!(cookie_secure(&h, "https://example.com"));
     }
 
+    // 直连模式：伪造/合法的 x-forwarded-proto 都不影响 Secure 判定
     #[test]
-    fn cookie_secure_uses_rightmost_proto() {
+    fn cookie_secure_direct_mode_ignores_forwarded_proto() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-proto", "http, https".parse().unwrap());
-        assert!(cookie_secure(&h, "http://example.com"));
+        assert!(!cookie_secure(&h, "http://example.com"));
     }
 
     #[test]
-    fn cookie_secure_attacker_cannot_downgrade() {
+    fn cookie_secure_direct_mode_attacker_cannot_upgrade() {
         let mut h = HeaderMap::new();
-        h.insert("x-forwarded-proto", "http, https".parse().unwrap());
-        assert!(cookie_secure(&h, "http://example.com"));
+        h.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(!cookie_secure(&h, "http://example.com"));
     }
 }
