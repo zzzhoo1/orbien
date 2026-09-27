@@ -119,8 +119,12 @@ impl AuthState {
         let Some(path) = &self.passkey_store else {
             return;
         };
-        let map: HashMap<&String, &Vec<Passkey>> =
-            self.passkeys.iter().map(|e| (e.key(), e.value())).collect();
+        // Clone out of the DashMap so we don't return references into it.
+        let map: HashMap<String, Vec<Passkey>> = self
+            .passkeys
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
         match serde_json::to_vec_pretty(&map) {
             Ok(bytes) => {
                 // Write to a temp file then rename for atomicity.
