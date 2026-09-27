@@ -22,7 +22,9 @@ use axum::{
 use dashmap::DashMap;
 use rand::RngExt;
 use std::{
+    collections::HashMap,
     net::IpAddr,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -55,6 +57,9 @@ pub struct AuthState {
     auth_states: DashMap<String, PasskeyAuthentication>,
     login_attempts: DashMap<String, (u32, Instant)>,
     pub webauthn: Option<Webauthn>,
+    /// M3: when set, passkeys are persisted to this JSON file (0600) on every
+    /// mutation and reloaded on startup, so registrations survive restarts.
+    passkey_store: Option<PathBuf>,
 }
 
 impl AuthState {
@@ -66,6 +71,7 @@ impl AuthState {
             auth_states: DashMap::new(),
             login_attempts: DashMap::new(),
             webauthn: None,
+            passkey_store: None,
         }
     }
 
@@ -76,6 +82,62 @@ impl AuthState {
         let mut this = Self::session_only();
         this.webauthn = Some(webauthn);
         Ok(this)
+    }
+
+    /// M3: attach a passkey persistence file and load any existing entries.
+    /// Must be called before the state is shared; failures are logged and
+    /// non-fatal (dashboard keeps working with in-memory passkeys only).
+    pub fn with_passkey_store(mut self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<HashMap<String, Vec<Passkey>>>(&bytes) {
+                Ok(map) => {
+                    let count: usize = map.values().map(|v| v.len()).sum();
+                    for (user, keys) in map {
+                        self.passkeys.insert(user, keys);
+                    }
+                    tracing::info!(path = %path.display(), passkeys = count, "passkey store loaded");
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), "passkey store parse failed, starting empty: {e}")
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %path.display(), "passkey store does not exist yet, starting empty");
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), "passkey store unreadable, starting empty: {e}")
+            }
+        }
+        self.passkey_store = Some(path);
+        self
+    }
+
+    /// Serialize passkeys to the store file (0600). Called after every
+    /// mutation; write failures are logged, never fatal.
+    fn persist_passkeys(&self) {
+        let Some(path) = &self.passkey_store else {
+            return;
+        };
+        let map: HashMap<&String, &Vec<Passkey>> =
+            self.passkeys.iter().map(|e| (e.key(), e.value())).collect();
+        match serde_json::to_vec_pretty(&map) {
+            Ok(bytes) => {
+                // Write to a temp file then rename for atomicity.
+                let tmp = path.with_extension("json.tmp");
+                if let Err(e) = std::fs::write(&tmp, &bytes)
+                    .and_then(|_| std::fs::rename(&tmp, path))
+                {
+                    tracing::warn!(path = %path.display(), "passkey store write failed: {e}");
+                    return;
+                }
+                #[cfg(unix)]
+                if let Err(e) = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600)) {
+                    tracing::warn!(path = %path.display(), "passkey store chmod failed: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("passkey store serialize failed: {e}"),
+        }
     }
 
     pub fn webauthn_enabled(&self) -> bool {
@@ -123,6 +185,7 @@ impl AuthState {
             .entry(username.to_string())
             .or_default()
             .push(passkey);
+        self.persist_passkeys();
     }
 
     pub fn passkeys_for(&self, username: &str) -> Vec<Passkey> {
@@ -141,12 +204,17 @@ impl AuthState {
 
     #[allow(dead_code)]
     pub fn update_passkey(&self, username: &str, updated: &Passkey) {
+        let mut changed = false;
         if let Some(mut entry) = self.passkeys.get_mut(username) {
             for pk in entry.iter_mut() {
                 if pk.cred_id() == updated.cred_id() {
                     *pk = updated.clone();
+                    changed = true;
                 }
             }
+        }
+        if changed {
+            self.persist_passkeys();
         }
     }
 
@@ -154,15 +222,23 @@ impl AuthState {
         &self,
         auth_result: &webauthn_rs::prelude::AuthenticationResult,
     ) -> Option<String> {
+        // M3 note: persist AFTER the iter_mut guard is dropped — DashMap shard
+        // locks are not reentrant, so calling persist_passkeys() (which takes a
+        // read lock) inside the loop would self-deadlock the auth thread.
+        let mut persisted_user = None;
         for mut entry in self.passkeys.iter_mut() {
             for pk in entry.value_mut().iter_mut() {
                 if auth_result.cred_id() == pk.cred_id() {
                     pk.update_credential(auth_result);
-                    return Some(entry.key().clone());
+                    persisted_user = Some(entry.key().clone());
+                    break;
                 }
             }
         }
-        None
+        if persisted_user.is_some() {
+            self.persist_passkeys();
+        }
+        persisted_user
     }
 
     // ── pending state helpers ─────────────────────────────────────────────────
