@@ -55,7 +55,9 @@ service = "127.0.0.1:8080"
 domains = ["web", "app.example.com"]
 locations = ["/", "/api"]
 basicAuthUser = "admin"
-basicAuthPassword = "123456"
+# CHANGE ME: generate with `openssl rand -base64 24`. Never ship real secrets
+# in example configs — this file is copied verbatim by new users.
+basicAuthPassword = "CHANGE_ME_base64"
 hostHeaderRewrite = "127.0.0.1:8080"
 routeByHTTPUser = "lxien"
 
@@ -103,4 +105,5 @@ remotePort = 9002
 [tunnels.plugin]
 type = "socks5"
 username = "admin"
-password = "123456"
+# CHANGE ME: generate with `openssl rand -base64 24`.
+password = "CHANGE_ME_base64"

@@ -10,4 +10,5 @@ listen = "0.0.0.0:9527"
 #addr = "0.0.0.0"
 #port = 8020
 #user = "admin"
-#password = "123456"
+# CHANGE ME: generate with `openssl rand -base64 24`.
+#password = "CHANGE_ME_base64"
