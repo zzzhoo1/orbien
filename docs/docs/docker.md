@@ -36,7 +36,8 @@ listen = "0.0.0.0:9527"
 addr = "0.0.0.0"
 port = 8020
 user = "admin"
-password = "123456"
+# 生成强口令：openssl rand -base64 24。切勿沿用示例值。
+password = "CHANGE_ME_base64"
 ```
 
 :::warning
@@ -103,7 +104,8 @@ token = "{{env.ORBIEN_TOKEN}}"
 addr = "0.0.0.0"
 port = 8020
 user = "{{env.DASHBOARD_USER:admin}}"
-password = "{{env.DASHBOARD_PASSWORD:123456}}"
+# 无默认值：未设置 DASHBOARD_PASSWORD 时服务启动即报错，避免静默跑在弱口令上
+password = "{{env.DASHBOARD_PASSWORD}}"
 ```
 
 ```yaml
