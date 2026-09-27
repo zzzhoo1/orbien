@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use orbien_core::config::ClientConfig;
 use orbien_core::transport::{
-    boxed_stream, client_enable_tls, dial_kcp, dial_websocket, new_client_tls_config, DynStream,
-    Protocol, QuicSession, YamuxClient, MAX_NUM_STREAMS,
+    boxed_stream, client_enable_tls, dial_kcp, dial_websocket, new_client_tls_config_tofu,
+    DynStream, Protocol, QuicSession, YamuxClient, MAX_NUM_STREAMS,
 };
 use rustls::ClientConfig as RustlsClientConfig;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -25,8 +25,21 @@ struct TlsDialOpts {
 impl TlsDialOpts {
     fn from_config(cfg: &ClientConfig) -> Result<Self> {
         let tls = &cfg.transport.tls;
-        let rustls_cfg =
-            new_client_tls_config(&tls.cert_file, &tls.key_file, &tls.trusted_ca_file)?;
+        // H1 (TOFU): opt-in pinning store wins over legacy skip-verify; an
+        // explicit trustedCaFile still takes precedence inside the builder.
+        let tofu = if tls.trusted_ca_file.trim().is_empty()
+            && !tls.tofu_store_file.trim().is_empty()
+        {
+            Some(std::path::PathBuf::from(&tls.tofu_store_file))
+        } else {
+            None
+        };
+        let rustls_cfg = new_client_tls_config_tofu(
+            &tls.cert_file,
+            &tls.key_file,
+            &tls.trusted_ca_file,
+            tofu.as_deref(),
+        )?;
         Ok(Self {
             enable: tls.enable,
             cfg: rustls_cfg,

@@ -116,6 +116,12 @@ pub struct ClientTlsConfig {
     pub trusted_ca_file: String,
     #[serde(default, rename = "serverName", alias = "server_name")]
     pub server_name: String,
+    /// H1 (TOFU): path to the server certificate fingerprint store. When set
+    /// (and no trustedCaFile), the client pins the server's SPKI hash on first
+    /// connect and refuses connections if it ever changes. Empty = legacy
+    /// insecure skip-verify behaviour (kept for backward compatibility).
+    #[serde(default, rename = "tofuStoreFile", alias = "tofu_store_file")]
+    pub tofu_store_file: String,
 }
 
 impl Default for ClientTlsConfig {
@@ -126,6 +132,7 @@ impl Default for ClientTlsConfig {
             key_file: String::new(),
             trusted_ca_file: String::new(),
             server_name: String::new(),
+            tofu_store_file: String::new(),
         }
     }
 }

@@ -12,7 +12,8 @@ pub use quic::{build_client_endpoint, build_server_endpoint, quic_bi, QuicBiStre
 pub use stream::{boxed_stream, AsyncStream, DynStream};
 pub use tls::{
     check_and_enable_tls, client_crypto_from_tls_files, client_crypto_insecure, client_enable_tls,
-    generate_self_signed_cert, install_ring_provider, load_pem_cert_key, new_client_tls_config,
+    generate_self_signed_cert, install_ring_provider, load_pem_cert_key,
+    new_client_tls_config, new_client_tls_config_tofu,
     new_server_tls_config, server_crypto, server_crypto_from_tls_files, ALPN_ORBIEN,
 };
 pub use websocket::{
