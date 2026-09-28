@@ -6,6 +6,7 @@ mod websocket;
 mod yamux_mux;
 #[cfg(test)]
 mod yamux_mux_test;
+mod tofu_test;
 
 pub use kcp::{accept_kcp, bind_kcp_listener, default_kcp_config, dial_kcp};
 pub use quic::{build_client_endpoint, build_server_endpoint, quic_bi, QuicBiStream, QuicSession};
