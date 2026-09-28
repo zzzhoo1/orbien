@@ -126,6 +126,15 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
         Protocol::Quic => {
             let addr = resolve_addr(cfg)?;
             let t = &cfg.transport.tls;
+            // H1 (TOFU): QUIC dials participate in pinning — pass the store
+            // when configured and no explicit CA overrides it.
+            let tofu = if t.trusted_ca_file.trim().is_empty()
+                && !t.tofu_store_file.trim().is_empty()
+            {
+                Some(std::path::PathBuf::from(&t.tofu_store_file))
+            } else {
+                None
+            };
             let session = QuicSession::dial(
                 addr,
                 &cfg.tls_server_name(),
@@ -135,6 +144,7 @@ pub async fn build_connector(cfg: &ClientConfig) -> Result<Arc<dyn Connector>> {
                 &t.cert_file,
                 &t.key_file,
                 &t.trusted_ca_file,
+                tofu.as_deref(),
             )
             .await?;
             tracing::info!(%addr, "quic session opened");
