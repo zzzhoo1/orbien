@@ -372,8 +372,9 @@ pub fn new_client_tls_config(
 ///
 /// # Scope
 /// Applies to TCP, WebSocket and KCP dials (they share `TlsDialOpts`).
-/// QUIC dials build their own TLS config and do NOT participate in TOFU
-/// pinning — set `trustedCaFile` explicitly for QUIC instead.
+/// QUIC dials also participate when `client_crypto_with_tofu` is used to
+/// build their crypto config (see `quic.rs`); the legacy `client_crypto_from_tls_files`
+/// path does NOT pin and is kept for backward compatibility.
 pub fn new_client_tls_config_tofu(
     cert_file: &str,
     key_file: &str,
@@ -464,6 +465,21 @@ pub fn server_crypto(
 
 pub fn client_crypto_insecure() -> Result<quinn::crypto::rustls::QuicClientConfig> {
     client_crypto_from_tls_files("", "", "")
+}
+
+/// H1 (TOFU): build a QUIC client crypto config with certificate pinning.
+/// Same TOFU semantics as the TCP/WS/KCP path; when `tofu_store` is None the
+/// behaviour falls back to `client_crypto_from_tls_files` unchanged.
+pub fn client_crypto_with_tofu(
+    cert_file: &str,
+    key_file: &str,
+    ca_path: &str,
+    tofu_store: Option<&std::path::Path>,
+) -> Result<quinn::crypto::rustls::QuicClientConfig> {
+    let mut cfg = (*new_client_tls_config_tofu(cert_file, key_file, ca_path, tofu_store)?).clone();
+    cfg.alpn_protocols = vec![ALPN_ORBIEN.to_vec()];
+    quinn::crypto::rustls::QuicClientConfig::try_from(cfg)
+        .map_err(|e| anyhow::anyhow!("QuicClientConfig: {e}"))
 }
 
 pub async fn client_enable_tls(

@@ -1,5 +1,5 @@
 use super::stream::{boxed_stream, DynStream};
-use super::tls::{self, client_crypto_from_tls_files, server_crypto_from_tls_files};
+use super::tls::{self, server_crypto_from_tls_files};
 use anyhow::{Context, Result};
 use quinn::{
     ClientConfig, Connection, Endpoint, EndpointConfig, RecvStream, SendStream, ServerConfig,
@@ -106,6 +106,7 @@ impl QuicSession {
         tls_cert: &str,
         tls_key: &str,
         tls_ca: &str,
+        tofu_store: Option<&std::path::Path>,
     ) -> Result<Self> {
         let endpoint = build_client_endpoint(
             keepalive,
@@ -114,6 +115,7 @@ impl QuicSession {
             tls_cert,
             tls_key,
             tls_ca,
+            tofu_store,
         )?;
         let conn = endpoint
             .connect(server_addr, server_name)
@@ -227,9 +229,10 @@ pub fn build_client_endpoint(
     tls_cert: &str,
     tls_key: &str,
     tls_ca: &str,
+    tofu_store: Option<&std::path::Path>,
 ) -> Result<Endpoint> {
     let _ = tls::install_ring_provider();
-    let crypto = client_crypto_from_tls_files(tls_cert, tls_key, tls_ca)?;
+    let crypto = tls::client_crypto_with_tofu(tls_cert, tls_key, tls_ca, tofu_store)?;
     let mut client = ClientConfig::new(Arc::new(crypto));
     client.transport_config(Arc::new(high_perf_transport(
         keepalive,
