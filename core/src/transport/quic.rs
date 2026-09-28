@@ -1,5 +1,5 @@
 use super::stream::{boxed_stream, DynStream};
-use super::tls::{self, client_crypto_from_tls_files, server_crypto_from_tls_files};
+use super::tls::{self, server_crypto_from_tls_files};
 use anyhow::{Context, Result};
 use quinn::{
     ClientConfig, Connection, Endpoint, EndpointConfig, RecvStream, SendStream, ServerConfig,
