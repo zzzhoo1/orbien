@@ -1,7 +1,7 @@
 use super::auth_routes;
 use super::model::{
-    ApiResponse, ClientInfo, ConfigReloadResp, Page, SystemConfig, SystemInfo, SystemStatus,
-    TunnelInfo, TunnelTrafficPoint, TunnelTrafficResp,
+    ApiResponse, ClientInfo, ConfigReloadResp, Page, SystemConfig, SystemInfo, SystemStats,
+    SystemStatus, TunnelInfo, TunnelTrafficPoint, TunnelTrafficResp,
 };
 use super::DashState;
 use crate::metrics::{TrafficWindow, TunnelTrafficHistory};
@@ -54,14 +54,16 @@ pub fn router(state: Arc<DashState>) -> Router {
         // ── dashboard API ───────────────────────────────────────────────────────────────────────
         .route("/api/v1/system/info", get(system_info))
         .route("/api/v1/system/health", get(system_health))
+        .route("/api/v1/system/stats", get(system_stats))
         .route("/api/v1/system/traffic", get(system_traffic))
         .route("/api/v1/system/tokens", get(system_token_metrics))
         .route("/api/v1/config/reload", post(config_reload))
         .route("/metrics", get(prometheus_metrics))
         .route("/api/v1/clients", get(list_clients))
-        .route("/api/v1/clients/{session_id}", get(get_client))
+        .route("/api/v1/clients/{session_id}", get(get_client).delete(delete_client))
         .route("/api/v1/clients/{session_id}/kick", post(kick_client))
         .route("/api/v1/tunnels", get(list_tunnels))
+        .route("/api/v1/tunnels/{name}", get(get_tunnel))
         .route("/api/v1/tunnels/{name}/traffic", get(tunnel_traffic))
         .route("/api/v1/proxies", get(list_tunnels))
         .route("/api/v1/proxies/{name}", delete(kick_proxy))
@@ -141,12 +143,8 @@ struct PageQuery {
     page_size: usize,
 }
 
-fn default_page() -> usize {
-    1
-}
-fn default_page_size() -> usize {
-    50
-}
+fn default_page() -> usize { 1 }
+fn default_page_size() -> usize { 50 }
 
 #[derive(Deserialize)]
 struct TrafficQuery {
@@ -181,15 +179,11 @@ fn traffic_resp(hist: TunnelTrafficHistory) -> TunnelTrafficResp {
         name: hist.name,
         unit: hist.unit,
         granularity: hist.granularity,
-        history: hist
-            .history
-            .into_iter()
-            .map(|p| TunnelTrafficPoint {
-                date: p.date,
-                traffic_in: p.traffic_in,
-                traffic_out: p.traffic_out,
-            })
-            .collect(),
+        history: hist.history.into_iter().map(|p| TunnelTrafficPoint {
+            date: p.date,
+            traffic_in: p.traffic_in,
+            traffic_out: p.traffic_out,
+        }).collect(),
     }
 }
 
@@ -310,17 +304,25 @@ async fn system_info(State(state): State<Arc<DashState>>) -> Json<ApiResponse<Sy
             heartbeat_timeout: state.svc.cfg().transport.heartbeat_timeout,
         },
         status: SystemStatus {
-            client_counts: snap
-                .clients
-                .iter()
-                .filter(|c| c.status.is_empty() || c.status == "online")
-                .count(),
+            client_counts: snap.clients.iter().filter(|c| c.status.is_empty() || c.status == "online").count(),
             total_client_counts: snap.total_client_counts,
             tunnel_type_count: snap.tunnel_type_count,
             active_connections: snap.active_connections,
             total_traffic_in: snap.total_traffic_in,
             total_traffic_out: snap.total_traffic_out,
         },
+    }))
+}
+
+async fn system_stats(State(state): State<Arc<DashState>>) -> Json<ApiResponse<SystemStats>> {
+    let snap = state.svc.dashboard_snapshot().await;
+    Json(ApiResponse::ok(SystemStats {
+        clients_online: snap.clients.iter().filter(|c| c.status.is_empty() || c.status == "online").count(),
+        clients_total: snap.total_client_counts,
+        tunnels_total: snap.tunnels.len(),
+        active_connections: snap.active_connections,
+        total_traffic_in: snap.total_traffic_in,
+        total_traffic_out: snap.total_traffic_out,
     }))
 }
 
@@ -335,60 +337,29 @@ async fn system_traffic(
 async fn system_token_metrics(
     State(state): State<Arc<DashState>>,
 ) -> Json<ApiResponse<TokenMetricsResp>> {
-    let policy_map = state
-        .svc
-        .cfg()
-        .auth
-        .token_policies
-        .iter()
-        .filter(|p| !p.token.trim().is_empty())
-        .map(|p| {
-            (
-                p.token.trim().to_string(),
-                (
-                    p.allowed_tunnels.clone(),
-                    p.allowed_protocols.clone(),
-                    p.allowed_remote_ports.clone(),
-                ),
-            )
-        })
-        .collect::<std::collections::HashMap<_, _>>();
+    let policy_map = state.svc.cfg().auth.token_policies.iter().filter(|p| !p.token.trim().is_empty()).map(|p| {
+        (p.token.trim().to_string(), (p.allowed_tunnels.clone(), p.allowed_protocols.clone(), p.allowed_remote_ports.clone()))
+    }).collect::<std::collections::HashMap<_, _>>();
 
-    let mut tokens = state
-        .svc
-        .metrics()
-        .token_conn_snapshot()
-        .into_iter()
-        .map(|item| {
-            let (allowed_tunnels, allowed_protocols, allowed_remote_ports) = policy_map
-                .get(&item.token)
-                .cloned()
-                .unwrap_or_else(|| (Vec::new(), Vec::new(), Vec::new()));
-            TokenMetricsItem {
-                token: item.token,
-                active_conns: item.active_conns,
-                allowed_tunnels,
-                allowed_protocols,
-                allowed_remote_ports,
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut tokens = state.svc.metrics().token_conn_snapshot().into_iter().map(|item| {
+        let (allowed_tunnels, allowed_protocols, allowed_remote_ports) = policy_map.get(&item.token).cloned().unwrap_or_else(|| (Vec::new(), Vec::new(), Vec::new()));
+        TokenMetricsItem {
+            token: item.token,
+            active_conns: item.active_conns,
+            allowed_tunnels,
+            allowed_protocols,
+            allowed_remote_ports,
+        }
+    }).collect::<Vec<_>>();
 
     for (token, (allowed_tunnels, allowed_protocols, allowed_remote_ports)) in policy_map {
         if tokens.iter().any(|item| item.token == token) {
             continue;
         }
-        tokens.push(TokenMetricsItem {
-            token,
-            active_conns: 0,
-            allowed_tunnels,
-            allowed_protocols,
-            allowed_remote_ports,
-        });
+        tokens.push(TokenMetricsItem { token, active_conns: 0, allowed_tunnels, allowed_protocols, allowed_remote_ports });
     }
 
     tokens.sort_by(|a, b| a.token.cmp(&b.token));
-
     Json(ApiResponse::ok(TokenMetricsResp { tokens }))
 }
 
@@ -405,12 +376,7 @@ async fn list_clients(
         total,
         page,
         page_size,
-        items: snap
-            .clients
-            .into_iter()
-            .skip(start)
-            .take(page_size)
-            .collect(),
+        items: snap.clients.into_iter().skip(start).take(page_size).collect(),
     }))
 }
 
@@ -420,11 +386,7 @@ async fn get_client(
 ) -> Result<Json<ApiResponse<ClientInfo>>, StatusCode> {
     let session_id = urlencoding_decode(&session_id);
     let snap = state.svc.dashboard_snapshot().await;
-    match snap
-        .clients
-        .into_iter()
-        .find(|c| c.session_id == session_id)
-    {
+    match snap.clients.into_iter().find(|c| c.session_id == session_id) {
         Some(c) => Ok(Json(ApiResponse::ok(c))),
         None => Err(StatusCode::NOT_FOUND),
     }
@@ -437,11 +399,18 @@ async fn kick_client(
     let session_id = urlencoding_decode(&session_id);
     match state.svc.kick_client(&session_id).await {
         Ok(()) => Json(ApiResponse::ok(())),
-        Err(e) => Json(ApiResponse {
-            code: 404,
-            msg: e.to_string(),
-            data: (),
-        }),
+        Err(e) => Json(ApiResponse { code: 404, msg: e.to_string(), data: () }),
+    }
+}
+
+async fn delete_client(
+    State(state): State<Arc<DashState>>,
+    Path(session_id): Path<String>,
+) -> Json<ApiResponse<()>> {
+    let session_id = urlencoding_decode(&session_id);
+    match state.svc.kick_client(&session_id).await {
+        Ok(()) => Json(ApiResponse::ok(())),
+        Err(e) => Json(ApiResponse { code: 404, msg: e.to_string(), data: () }),
     }
 }
 
@@ -466,9 +435,7 @@ async fn list_tunnels(
     let snap = state.svc.dashboard_snapshot().await;
     let session_id = q.session_id.trim();
     let needle = q.q.trim().to_ascii_lowercase();
-    let filtered: Vec<TunnelInfo> = snap
-        .tunnels
-        .into_iter()
+    let filtered: Vec<TunnelInfo> = snap.tunnels.into_iter()
         .filter(|p| session_id.is_empty() || p.session_id == session_id)
         .filter(|p| needle.is_empty() || p.name.to_ascii_lowercase().contains(&needle))
         .collect();
@@ -482,6 +449,18 @@ async fn list_tunnels(
     }))
 }
 
+async fn get_tunnel(
+    State(state): State<Arc<DashState>>,
+    Path(name): Path<String>,
+) -> Result<Json<ApiResponse<TunnelInfo>>, StatusCode> {
+    let name = urlencoding_decode(&name);
+    let snap = state.svc.dashboard_snapshot().await;
+    match snap.tunnels.into_iter().find(|p| p.name == name) {
+        Some(t) => Ok(Json(ApiResponse::ok(t))),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
 async fn kick_proxy(
     State(state): State<Arc<DashState>>,
     Path(name): Path<String>,
@@ -489,11 +468,7 @@ async fn kick_proxy(
     let name = urlencoding_decode(&name);
     match state.svc.kick_proxy(&name).await {
         Ok(()) => Json(ApiResponse::ok(())),
-        Err(e) => Json(ApiResponse {
-            code: 404,
-            msg: e.to_string(),
-            data: (),
-        }),
+        Err(e) => Json(ApiResponse { code: 404, msg: e.to_string(), data: () }),
     }
 }
 
@@ -503,11 +478,7 @@ async fn tunnel_traffic(
     Query(q): Query<TrafficQuery>,
 ) -> Result<Json<ApiResponse<TunnelTrafficResp>>, StatusCode> {
     let name = urlencoding_decode(&name);
-    match state
-        .svc
-        .metrics()
-        .tunnel_traffic(&name, traffic_window(&q))
-    {
+    match state.svc.metrics().tunnel_traffic(&name, traffic_window(&q)) {
         Some(hist) => Ok(Json(ApiResponse::ok(traffic_resp(hist)))),
         None => Err(StatusCode::NOT_FOUND),
     }
@@ -552,9 +523,7 @@ fn from_hex(b: u8) -> Option<u8> {
 }
 
 fn load_override(static_dir: &str, rel: &str) -> Option<Vec<u8>> {
-    if static_dir.trim().is_empty() {
-        return None;
-    }
+    if static_dir.trim().is_empty() { return None; }
     let path = safe_join(FsPath::new(static_dir), rel)?;
     std::fs::read(path).ok()
 }
@@ -599,7 +568,6 @@ fn bytes_response(content_type: &'static str, body: Vec<u8>) -> Response {
 
 async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
     let snap = state.svc.dashboard_snapshot().await;
-
     let mut out = String::new();
     out.push_str("# HELP orbien_clients_online Current number of online clients.\n");
     out.push_str("# TYPE orbien_clients_online gauge\n");
@@ -616,34 +584,21 @@ async fn prometheus_metrics(State(state): State<Arc<DashState>>) -> Response {
     out.push_str("# HELP orbien_traffic_out_bytes_total Total bytes sent.\n");
     out.push_str("# TYPE orbien_traffic_out_bytes_total counter\n");
     out.push_str(&format!("orbien_traffic_out_bytes_total {}\n", snap.total_traffic_out));
-
     out.push_str("# HELP orbien_proxy_connections_current Current connections per proxy.\n");
     out.push_str("# TYPE orbien_proxy_connections_current gauge\n");
     for p in &snap.tunnels {
         let name = prom_escape(&p.name);
-        out.push_str(&format!(
-            "orbien_proxy_connections_current{{proxy=\"{name}\",type=\"{}\"}} {}\n",
-            prom_escape(&p.tunnel_type),
-            p.active_connections
-        ));
+        out.push_str(&format!("orbien_proxy_connections_current{{proxy=\"{name}\",type=\"{}\"}} {}\n", prom_escape(&p.tunnel_type), p.active_connections));
     }
-
     out.push_str("# HELP orbien_proxy_traffic_in_bytes_total Total bytes received per proxy.\n");
     out.push_str("# TYPE orbien_proxy_traffic_in_bytes_total counter\n");
     out.push_str("# HELP orbien_proxy_traffic_out_bytes_total Total bytes sent per proxy.\n");
     out.push_str("# TYPE orbien_proxy_traffic_out_bytes_total counter\n");
     for p in &snap.tunnels {
         let name = prom_escape(&p.name);
-        out.push_str(&format!(
-            "orbien_proxy_traffic_in_bytes_total{{proxy=\"{name}\"}} {}\n",
-            p.today_traffic_in
-        ));
-        out.push_str(&format!(
-            "orbien_proxy_traffic_out_bytes_total{{proxy=\"{name}\"}} {}\n",
-            p.today_traffic_out
-        ));
+        out.push_str(&format!("orbien_proxy_traffic_in_bytes_total{{proxy=\"{name}\"}} {}\n", p.today_traffic_in));
+        out.push_str(&format!("orbien_proxy_traffic_out_bytes_total{{proxy=\"{name}\"}} {}\n", p.today_traffic_out));
     }
-
     bytes_response("text/plain; version=0.0.4; charset=utf-8", out.into_bytes())
 }
 
