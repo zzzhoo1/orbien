@@ -115,3 +115,24 @@ export interface ConnectionInfo {
     /** Connection status, typically 'active'. */
     status?: string
 }
+
+/**
+ * Response from `POST /api/v1/config/reload`.
+ * `changed` lists top-level config keys that differed from the previous load.
+ * An empty array means the file was re-read successfully with no observable changes.
+ */
+export interface ConfigReloadResp {
+    changed: string[]
+}
+
+/**
+ * Response from `GET /api/v1/system/health`.
+ * Used by the Settings page health card and any external health polling.
+ */
+export interface HealthInfo {
+    status: 'ok' | string
+    uptimeSecs: number
+    version: string
+    onlineClients: number
+    activeConnections: number
+}

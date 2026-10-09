@@ -22,6 +22,7 @@ pub async fn run(svc: Arc<Service>, cfg: DashboardConfig) -> Result<()> {
     // `cfg.webauthn_enabled()` returns true only when rp_id AND origin are
     // non-empty, so a partial config is treated as "disabled".
     let auth_state: Option<Arc<auth::AuthState>> = Some(Arc::new(if cfg.webauthn_enabled() {
+        let store_path = cfg.passkey_store_path.clone();
         match auth::AuthState::new(&cfg.webauthn_rp_id, &cfg.webauthn_origin) {
             Ok(a) => {
                 tracing::info!(
@@ -29,7 +30,12 @@ pub async fn run(svc: Arc<Service>, cfg: DashboardConfig) -> Result<()> {
                     origin = %cfg.webauthn_origin,
                     "WebAuthn enabled"
                 );
-                a
+                // M3: opt-in passkey persistence via [dashboard] passkeyStorePath.
+                if store_path.is_empty() {
+                    a
+                } else {
+                    a.with_passkey_store(store_path)
+                }
             }
             Err(e) => {
                 tracing::warn!("WebAuthn init failed, using password sessions only: {e}");
@@ -50,7 +56,7 @@ pub async fn run(svc: Arc<Service>, cfg: DashboardConfig) -> Result<()> {
     let app = routes::router(state.clone())
         .layer(middleware::from_fn_with_state(state, auth::auth_middleware))
         .layer(middleware::from_fn(security::security_headers))
-        .into_make_service();
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
 
     axum::serve(listener, app).await?;
     Ok(())

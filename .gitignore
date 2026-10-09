@@ -8,7 +8,8 @@
 **/mutants.out*/
 .idea
 /dist/
-/server/assets/
+/server/assets/*
+!/server/assets/.gitkeep
 
 node_modules/
 dist-ssr/

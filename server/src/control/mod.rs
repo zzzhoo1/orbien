@@ -1,3 +1,2 @@
 mod session;
-
-pub use session::Control;
+pub use session::{Control, P2pHandler};

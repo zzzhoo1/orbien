@@ -116,6 +116,12 @@ pub struct ClientTlsConfig {
     pub trusted_ca_file: String,
     #[serde(default, rename = "serverName", alias = "server_name")]
     pub server_name: String,
+    /// H1 (TOFU): path to the server certificate fingerprint store. When set
+    /// (and no trustedCaFile), the client pins the server's SPKI hash on first
+    /// connect and refuses connections if it ever changes. Empty = legacy
+    /// insecure skip-verify behaviour (kept for backward compatibility).
+    #[serde(default, rename = "tofuStoreFile", alias = "tofu_store_file")]
+    pub tofu_store_file: String,
 }
 
 impl Default for ClientTlsConfig {
@@ -126,6 +132,7 @@ impl Default for ClientTlsConfig {
             key_file: String::new(),
             trusted_ca_file: String::new(),
             server_name: String::new(),
+            tofu_store_file: String::new(),
         }
     }
 }
@@ -581,6 +588,26 @@ impl ClientConfig {
                         | crate::transport::Protocol::Kcp
                 )
             )
+    }
+
+    // ── P2P defaults ────────────────────────────────────────────────────────
+    // ponytail: no dedicated p2p config section yet; these return fixed
+    // defaults.  Upgrade path: add a `p2p` config section (enable_udp,
+    // stun_servers, timeout_secs) and read from it here.
+
+    /// Whether the UDP hole-punch path is enabled for P2P tunnels.
+    pub fn p2p_enable_udp(&self) -> bool {
+        true
+    }
+
+    /// STUN servers used for public-address discovery (empty = local-only).
+    pub fn p2p_stun_servers(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// P2P hole-punch timeout in seconds (0 = use the 10 s fallback).
+    pub fn p2p_timeout_secs(&self) -> u32 {
+        10
     }
 }
 

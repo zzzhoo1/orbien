@@ -50,7 +50,11 @@ fn load_server_config(args: &Args) -> Result<ServerConfig> {
         .filter(|p| !p.is_empty())
     {
         tracing::info!(config = %path, "loading config");
-        return ServerConfig::load(path);
+        let mut cfg = ServerConfig::load(path)?;
+        // Inject the resolved path so that POST /api/v1/config/reload can
+        // re-read the file without the caller supplying it every time.
+        cfg.dashboard.config_file = Some(path.to_string());
+        return Ok(cfg);
     }
 
     tracing::info!("using built-in defaults");

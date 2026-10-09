@@ -1,14 +1,17 @@
 use super::stream::{boxed_stream, DynStream};
 use anyhow::{bail, Context, Result};
 use rcgen::{CertificateParams, KeyPair, SanType};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
-use rustls::{ClientConfig, RootCertStore, ServerConfig};
+use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -91,6 +94,165 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 pub fn install_ring_provider() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     Ok(())
+}
+
+// ── H1: Trust-On-First-Use server certificate pinning ────────────────────────
+
+/// SHA-256 over the end-entity certificate DER, hex encoded.
+///
+/// Note: this pins the *certificate*, not the bare SPKI — renewing a cert with
+/// the same key (e.g. Let's Encrypt renewal) changes the fingerprint and
+/// triggers a re-pin. This is conservative and safe; the alternative (parsing
+/// the SPKI out of the DER) needs an x509 parser dependency.
+fn spki_fingerprint(end_entity: &CertificateDer<'_>) -> String {
+    let digest = Sha256::digest(end_entity.as_ref());
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    hex
+}
+
+/// In-process fingerprint cache so concurrent connections to the same host
+/// within one process don't each rewrite the store file.
+type FingerprintCache = Mutex<HashMap<String, String>>;
+
+/// TOFU verifier: accepts the server certificate on first contact (recording
+/// its SPKI hash), then requires an exact match on every later connection.
+/// A mismatch is a hard failure — that's a potential MITM.
+#[derive(Debug)]
+struct TofuServerVerifier {
+    store_path: PathBuf,
+    cache: FingerprintCache,
+    base_verify_schemes: Vec<SignatureScheme>,
+}
+
+impl TofuServerVerifier {
+    fn new(store_path: PathBuf) -> Result<Self> {
+        // Signature schemes don't depend on verification mode.
+        let base = SkipServerVerification::new();
+        let schemes = base.supported_verify_schemes();
+        let mut cache = HashMap::new();
+        if store_path.exists() {
+            let raw = std::fs::read_to_string(&store_path)
+                .with_context(|| format!("read TOFU store {}", store_path.display()))?;
+            for line in raw.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                // Format: "<server_name|ip:port>\t<sha256-hex>"
+                if let Some((host, fp)) = line.split_once('\t') {
+                    cache.insert(host.to_string(), fp.to_string());
+                }
+            }
+        }
+        Ok(Self {
+            store_path,
+            cache: Mutex::new(cache),
+            base_verify_schemes: schemes,
+        })
+    }
+
+    /// Returns (fingerprint, is_first_use). Persists newly pinned fingerprints.
+    fn check_and_pin(&self, host_key: &str, fingerprint: &str) -> Result<bool> {
+        let mut cache = self.cache.lock().expect("tofu cache poisoned");
+        match cache.get(host_key) {
+            Some(pinned) => {
+                if pinned == fingerprint {
+                    Ok(false)
+                } else {
+                    bail!(
+                        "TOFU mismatch for {host_key}: pinned {pinned} but server presented {fingerprint}. \
+                         This may be a man-in-the-middle attack, or the server key was rotated. \
+                         To accept the new key, remove the entry from {}",
+                        self.store_path.display()
+                    );
+                }
+            }
+            None => {
+                cache.insert(host_key.to_string(), fingerprint.to_string());
+                // Persist: sorted lines, header comment for humans.
+                let mut entries: Vec<(String, String)> =
+                    cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                entries.sort();
+                let mut out = String::from(
+                    "# orbien TOFU store — <host>\\t<sha256 of server cert>\n# delete a line to re-pin on next connect\n",
+                );
+                for (k, v) in entries {
+                    out.push_str(&format!("{k}\t{v}\n"));
+                }
+                let tmp = self.store_path.with_extension("tmp");
+                std::fs::write(&tmp, out.as_bytes())
+                    .and_then(|_| std::fs::rename(&tmp, &self.store_path))
+                    .with_context(|| format!("write TOFU store {}", self.store_path.display()))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Err(e) = std::fs::set_permissions(
+                        &self.store_path,
+                        std::fs::Permissions::from_mode(0o600),
+                    ) {
+                        tracing::warn!(path = %self.store_path.display(), "TOFU store chmod failed: {e}");
+                    }
+                }
+                Ok(true)
+            }
+        }
+    }
+}
+
+impl ServerCertVerifier for TofuServerVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        // Host key: DNS name or IP literal as presented by the connector.
+        let host_key = server_name.to_str().to_string();
+        let fingerprint = spki_fingerprint(end_entity);
+        match self.check_and_pin(&host_key, &fingerprint) {
+            Ok(true) => {
+                tracing::warn!(
+                    host = %host_key,
+                    fingerprint = %fingerprint,
+                    "TOFU: pinning new server certificate on first connection"
+                );
+                Ok(ServerCertVerified::assertion())
+            }
+            Ok(false) => Ok(ServerCertVerified::assertion()),
+            Err(e) => Err(rustls::Error::General(e.to_string())),
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        // TOFU only governs the trust anchor; signature checks use the ring
+        // provider's algorithm table (same semantics as webpki verification).
+        let algs = &rustls::crypto::ring::default_provider().signature_verification_algorithms;
+        rustls::crypto::verify_tls12_signature(message, cert, dss, algs)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let algs = &rustls::crypto::ring::default_provider().signature_verification_algorithms;
+        rustls::crypto::verify_tls13_signature(message, cert, dss, algs)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.base_verify_schemes.clone()
+    }
 }
 
 pub fn load_pem_cert_key(
@@ -195,18 +357,61 @@ pub fn new_client_tls_config(
     key_file: &str,
     ca_path: &str,
 ) -> Result<Arc<ClientConfig>> {
+    new_client_tls_config_inner(cert_file, key_file, ca_path, None)
+}
+
+/// H1 (TOFU): builds a client TLS config with Trust-On-First-Use pinning.
+///
+/// When `tofu_store` is `Some(path)` (and no explicit `ca_path` is set), the
+/// server's certificate SHA-256 hash is compared against the store:
+///   - first connection: fingerprint recorded, connection allowed (warned),
+///   - subsequent matches: allowed silently,
+///   - mismatch: connection refused (potential MITM).
+///
+/// Explicit CA verification always takes precedence when `ca_path` is set.
+///
+/// # Scope
+/// Applies to TCP, WebSocket and KCP dials (they share `TlsDialOpts`).
+/// QUIC dials also participate when `client_crypto_with_tofu` is used to
+/// build their crypto config (see `quic.rs`); the legacy `client_crypto_from_tls_files`
+/// path does NOT pin and is kept for backward compatibility.
+pub fn new_client_tls_config_tofu(
+    cert_file: &str,
+    key_file: &str,
+    ca_path: &str,
+    tofu_store: Option<&std::path::Path>,
+) -> Result<Arc<ClientConfig>> {
+    new_client_tls_config_inner(cert_file, key_file, ca_path, tofu_store)
+}
+
+fn new_client_tls_config_inner(
+    cert_file: &str,
+    key_file: &str,
+    ca_path: &str,
+    tofu_store: Option<&std::path::Path>,
+) -> Result<Arc<ClientConfig>> {
     install_ring_provider()?;
 
-    let builder = if ca_path.trim().is_empty() {
-        ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(SkipServerVerification::new())
-    } else {
+    let builder = if !ca_path.trim().is_empty() {
+        // Explicit CA verification has highest priority.
         let roots = load_ca_roots(ca_path)?;
         let verifier = WebPkiServerVerifier::builder(Arc::new(roots))
             .build()
             .context("build server cert verifier")?;
         ClientConfig::builder().with_webpki_verifier(verifier)
+    } else if let Some(store_path) = tofu_store {
+        let verifier = Arc::new(TofuServerVerifier::new(store_path.to_path_buf())?);
+        ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+    } else {
+        // Legacy insecure path: no CA, no TOFU store.
+        tracing::warn!(
+            "transport.tls: no trustedCaFile and no tofuStoreFile — skipping server certificate verification (MITM possible)"
+        );
+        ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
     };
 
     let cfg = if !cert_file.trim().is_empty() && !key_file.trim().is_empty() {
@@ -260,6 +465,21 @@ pub fn server_crypto(
 
 pub fn client_crypto_insecure() -> Result<quinn::crypto::rustls::QuicClientConfig> {
     client_crypto_from_tls_files("", "", "")
+}
+
+/// H1 (TOFU): build a QUIC client crypto config with certificate pinning.
+/// Same TOFU semantics as the TCP/WS/KCP path; when `tofu_store` is None the
+/// behaviour falls back to `client_crypto_from_tls_files` unchanged.
+pub fn client_crypto_with_tofu(
+    cert_file: &str,
+    key_file: &str,
+    ca_path: &str,
+    tofu_store: Option<&std::path::Path>,
+) -> Result<quinn::crypto::rustls::QuicClientConfig> {
+    let mut cfg = (*new_client_tls_config_tofu(cert_file, key_file, ca_path, tofu_store)?).clone();
+    cfg.alpn_protocols = vec![ALPN_ORBIEN.to_vec()];
+    quinn::crypto::rustls::QuicClientConfig::try_from(cfg)
+        .map_err(|e| anyhow::anyhow!("QuicClientConfig: {e}"))
 }
 
 pub async fn client_enable_tls(

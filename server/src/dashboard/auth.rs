@@ -22,7 +22,9 @@ use axum::{
 use dashmap::DashMap;
 use rand::RngExt;
 use std::{
+    collections::HashMap,
     net::IpAddr,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -39,7 +41,7 @@ struct Session {
     created: Instant,
 }
 
-const SESSION_TTL: Duration = Duration::from_secs(8 * 3600); // 8 h
+const SESSION_TTL: Duration = Duration::from_secs(8 * 3600);
 const COOKIE_NAME: &str = "orbien_session";
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const LOGIN_MAX_ATTEMPTS: u32 = 8;
@@ -49,14 +51,15 @@ use webauthn_rs::prelude::Passkey;
 // ── public AuthState shared via DashState ────────────────────────────────────
 
 pub struct AuthState {
-    /// token → session
     sessions: DashMap<String, Session>,
-    /// username → Vec<Passkey>
     passkeys: DashMap<String, Vec<Passkey>>,
     reg_states: DashMap<String, PasskeyRegistration>,
     auth_states: DashMap<String, PasskeyAuthentication>,
     login_attempts: DashMap<String, (u32, Instant)>,
     pub webauthn: Option<Webauthn>,
+    /// M3: when set, passkeys are persisted to this JSON file (0600) on every
+    /// mutation and reloaded on startup, so registrations survive restarts.
+    passkey_store: Option<PathBuf>,
 }
 
 impl AuthState {
@@ -68,6 +71,7 @@ impl AuthState {
             auth_states: DashMap::new(),
             login_attempts: DashMap::new(),
             webauthn: None,
+            passkey_store: None,
         }
     }
 
@@ -78,6 +82,65 @@ impl AuthState {
         let mut this = Self::session_only();
         this.webauthn = Some(webauthn);
         Ok(this)
+    }
+
+    /// M3: attach a passkey persistence file and load any existing entries.
+    /// Must be called before the state is shared; failures are logged and
+    /// non-fatal (dashboard keeps working with in-memory passkeys only).
+    pub fn with_passkey_store(mut self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<HashMap<String, Vec<Passkey>>>(&bytes) {
+                Ok(map) => {
+                    let count: usize = map.values().map(|v| v.len()).sum();
+                    for (user, keys) in map {
+                        self.passkeys.insert(user, keys);
+                    }
+                    tracing::info!(path = %path.display(), passkeys = count, "passkey store loaded");
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), "passkey store parse failed, starting empty: {e}")
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %path.display(), "passkey store does not exist yet, starting empty");
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), "passkey store unreadable, starting empty: {e}")
+            }
+        }
+        self.passkey_store = Some(path);
+        self
+    }
+
+    /// Serialize passkeys to the store file (0600). Called after every
+    /// mutation; write failures are logged, never fatal.
+    fn persist_passkeys(&self) {
+        let Some(path) = &self.passkey_store else {
+            return;
+        };
+        // Clone out of the DashMap so we don't return references into it.
+        let map: HashMap<String, Vec<Passkey>> = self
+            .passkeys
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        match serde_json::to_vec_pretty(&map) {
+            Ok(bytes) => {
+                // Write to a temp file then rename for atomicity.
+                let tmp = path.with_extension("json.tmp");
+                if let Err(e) = std::fs::write(&tmp, &bytes)
+                    .and_then(|_| std::fs::rename(&tmp, path))
+                {
+                    tracing::warn!(path = %path.display(), "passkey store write failed: {e}");
+                }
+                #[cfg(unix)]
+                if let Err(e) = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600)) {
+                    tracing::warn!(path = %path.display(), "passkey store chmod failed: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("passkey store serialize failed: {e}"),
+        }
     }
 
     pub fn webauthn_enabled(&self) -> bool {
@@ -125,30 +188,36 @@ impl AuthState {
             .entry(username.to_string())
             .or_default()
             .push(passkey);
+        self.persist_passkeys();
     }
 
     pub fn passkeys_for(&self, username: &str) -> Vec<Passkey> {
         self.passkeys
             .get(username)
-            .map(|v| v.clone())
+            .map(|v| v.value().clone())
             .unwrap_or_default()
     }
 
     pub fn all_passkeys(&self) -> Vec<Passkey> {
         self.passkeys
             .iter()
-            .flat_map(|e| e.value().clone())
+            .flat_map(|e| e.value().to_vec())
             .collect()
     }
 
     #[allow(dead_code)]
     pub fn update_passkey(&self, username: &str, updated: &Passkey) {
+        let mut changed = false;
         if let Some(mut entry) = self.passkeys.get_mut(username) {
             for pk in entry.iter_mut() {
                 if pk.cred_id() == updated.cred_id() {
                     *pk = updated.clone();
+                    changed = true;
                 }
             }
+        }
+        if changed {
+            self.persist_passkeys();
         }
     }
 
@@ -156,15 +225,23 @@ impl AuthState {
         &self,
         auth_result: &webauthn_rs::prelude::AuthenticationResult,
     ) -> Option<String> {
+        // M3 note: persist AFTER the iter_mut guard is dropped — DashMap shard
+        // locks are not reentrant, so calling persist_passkeys() (which takes a
+        // read lock) inside the loop would self-deadlock the auth thread.
+        let mut persisted_user = None;
         for mut entry in self.passkeys.iter_mut() {
             for pk in entry.value_mut().iter_mut() {
                 if auth_result.cred_id() == pk.cred_id() {
                     pk.update_credential(auth_result);
-                    return Some(entry.key().clone());
+                    persisted_user = Some(entry.key().clone());
+                    break;
                 }
             }
         }
-        None
+        if persisted_user.is_some() {
+            self.persist_passkeys();
+        }
+        persisted_user
     }
 
     // ── pending state helpers ─────────────────────────────────────────────────
@@ -229,8 +306,6 @@ fn random_token() -> String {
 
 // ── Axum middleware ───────────────────────────────────────────────────────────
 
-/// Checks for a valid session cookie **or** falls back to HTTP Basic Auth.
-/// The `/api/v1/auth/*` routes and `/healthz` are always public.
 #[allow(clippy::result_large_err)]
 pub async fn auth_middleware(
     State(state): State<Arc<DashState>>,
@@ -239,22 +314,18 @@ pub async fn auth_middleware(
 ) -> Result<Response, Response> {
     let path = req.uri().path();
 
-    // Always allow auth endpoints and healthz through.
     if path.starts_with("/api/v1/auth/") || path == "/healthz" {
         return Ok(next.run(req).await);
     }
 
-    // Allow static assets through (JS/CSS/fonts for the login page).
     if !path.starts_with("/api/") {
         return Ok(next.run(req).await);
     }
 
-    // Escape hatch: disableAuth = true (local dev / CI only).
     if state.cfg.disable_auth {
         return Ok(next.run(req).await);
     }
 
-    // 1. Try session cookie.
     if let Some(auth) = &state.auth {
         if let Some(token) = extract_cookie(req.headers(), COOKIE_NAME) {
             if auth.validate_session(&token).is_some() {
@@ -263,14 +334,10 @@ pub async fn auth_middleware(
         }
     }
 
-    // 2. Fall back to Basic Auth (backward compatibility).
-    //    Only attempt if credentials are actually configured; if neither
-    //    user nor password is set and disableAuth is false, reject.
     if needs_basic_auth(&state) && basic_auth_ok(&state, req.headers()) {
         return Ok(next.run(req).await);
     }
 
-    // 3. Reject.
     let mut res = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     res.headers_mut().insert(
         header::WWW_AUTHENTICATE,
@@ -292,22 +359,25 @@ pub fn extract_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
     None
 }
 
-/// Determine whether cookies should carry the `Secure` flag.
-///
-/// Uses the **rightmost** (last) value of `X-Forwarded-Proto` so that a
-/// client-injected leftmost `"http"` entry cannot suppress the flag when
-/// the actual proxy hop is HTTPS.
+/// 安全开关：直连部署（无可信反代）时必须为 false——X-Forwarded-* 头完全由客户端控制。
+/// 仅当 dashboard 部署在可信代理之后（代理会清洗/设置这些头）才置 true。
+pub const TRUSTED_PROXY_ENABLED: bool = false;
+
 pub fn cookie_secure(headers: &axum::http::HeaderMap, origin: &str) -> bool {
-    if let Some(proto) = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-    {
-        return proto
-            .split(',')
-            .next_back()
-            .unwrap_or("")
-            .trim()
-            .eq_ignore_ascii_case("https");
+    // M1 修复：直连模式下 X-Forwarded-Proto 可被客户端伪造以剥离 Cookie Secure 标记，
+    // 因此仅显式启用可信代理时才读取转发头。
+    if TRUSTED_PROXY_ENABLED {
+        if let Some(proto) = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+        {
+            return proto
+                .split(',')
+                .next_back()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("https");
+        }
     }
     origin.trim().to_ascii_lowercase().starts_with("https://")
 }
@@ -392,77 +462,81 @@ fn basic_auth_ok(state: &DashState, headers: &axum::http::HeaderMap) -> bool {
     credentials_match(&state.cfg.user, &state.cfg.password, u, p)
 }
 
-/// Extract a client identifier for rate-limiting.
-///
-/// Uses the **rightmost** (last) IP in `X-Forwarded-For` — the most recent
-/// proxy hop — so an attacker cannot bypass rate limits by prepending
-/// arbitrary IPs to the left side of the chain.
-pub fn client_key(headers: &axum::http::HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next_back())
-        .map(str::trim)
-        .filter(|v| v.parse::<IpAddr>().is_ok())
-        .unwrap_or("direct")
-        .to_string()
+/// M2 修复：直连模式下 X-Forwarded-For 完全可伪造，登录限速键若采信该头即可被
+/// 无限速爆破。仅可信代理模式下读取转发头；`peer_ip` 是不可伪造的真实对端地址，
+/// 由调用方从 ConnectInfo 传入。
+pub fn client_key(headers: &axum::http::HeaderMap, peer_ip: Option<IpAddr>) -> String {
+    if TRUSTED_PROXY_ENABLED {
+        if let Some(forwarded) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next_back())
+            .map(str::trim)
+            .filter(|v| v.parse::<IpAddr>().is_ok())
+        {
+            return forwarded.to_string();
+        }
+    }
+    match peer_ip {
+        Some(ip) => format!("direct:{ip}"),
+        None => "direct:unknown".to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderMap;
+    use std::net::IpAddr;
 
+    fn ip(s: &str) -> Option<IpAddr> {
+        Some(s.parse().unwrap())
+    }
+
+    // 直连模式（TRUSTED_PROXY_ENABLED=false）：转发头一律不采信
     #[test]
     fn client_key_no_header() {
         let headers = HeaderMap::new();
-        assert_eq!(client_key(&headers), "direct");
+        assert_eq!(client_key(&headers, ip("10.0.0.9")), "direct:10.0.0.9");
     }
 
     #[test]
-    fn client_key_single_ip() {
+    fn client_key_direct_mode_ignores_forwarded_for() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "192.168.1.1".parse().unwrap());
-        assert_eq!(client_key(&h), "192.168.1.1");
+        // 伪造的转发头必须被忽略——限速键只由真实对端 IP 决定
+        assert_eq!(client_key(&h, ip("203.0.113.7")), "direct:203.0.113.7");
     }
 
     #[test]
-    fn client_key_multi_hop_uses_rightmost() {
-        let mut h = HeaderMap::new();
-        // Attacker prepends "1.2.3.4"; proxy appends "203.0.113.5".
-        h.insert("x-forwarded-for", "1.2.3.4, 203.0.113.5".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
-    }
-
-    #[test]
-    fn client_key_attacker_cannot_bypass_rate_limit() {
+    fn client_key_direct_mode_attacker_cannot_bypass_rate_limit() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "10.0.0.1, 203.0.113.5".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
+        assert_eq!(client_key(&h, ip("198.51.100.9")), "direct:198.51.100.9");
         h.insert("x-forwarded-for", "10.0.0.2, 203.0.113.5".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
+        // 攻击者换任何伪造头，真实对端 IP 不变 → 限速键稳定
+        assert_eq!(client_key(&h, ip("198.51.100.9")), "direct:198.51.100.9");
     }
 
     #[test]
-    fn client_key_rightmost_invalid_falls_back() {
-        // Rightmost is invalid → filter rejects it → falls back to "direct".
+    fn client_key_direct_mode_no_peer_falls_back() {
+        let headers = HeaderMap::new();
+        assert_eq!(client_key(&headers, None), "direct:unknown");
+    }
+
+    #[test]
+    fn client_key_direct_mode_invalid_header_still_ignored() {
         let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "203.0.113.5, invalid".parse().unwrap());
-        assert_eq!(client_key(&h), "direct");
+        h.insert("x-forwarded-for", "garbage".parse().unwrap());
+        assert_eq!(client_key(&h, ip("192.0.2.1")), "direct:192.0.2.1");
     }
 
     #[test]
-    fn client_key_all_invalid() {
-        let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "bad, also-bad".parse().unwrap());
-        assert_eq!(client_key(&h), "direct");
-    }
-
-    #[test]
-    fn client_key_trims_spaces() {
+    fn client_key_direct_mode_trims_spaces_in_header_ignored() {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "1.2.3.4 ,  203.0.113.5  ".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.5");
+        // 即便格式合法，直连模式也不采信
+        assert_eq!(client_key(&h, ip("198.51.100.9")), "direct:198.51.100.9");
     }
 
     #[test]
@@ -477,19 +551,18 @@ mod tests {
         assert!(cookie_secure(&h, "https://example.com"));
     }
 
+    // 直连模式：伪造/合法的 x-forwarded-proto 都不影响 Secure 判定
     #[test]
-    fn cookie_secure_uses_rightmost_proto() {
+    fn cookie_secure_direct_mode_ignores_forwarded_proto() {
         let mut h = HeaderMap::new();
-        // Client sends "http"; trusted proxy appends "https".
         h.insert("x-forwarded-proto", "http, https".parse().unwrap());
-        assert!(cookie_secure(&h, "http://example.com"));
+        assert!(!cookie_secure(&h, "http://example.com"));
     }
 
     #[test]
-    fn cookie_secure_attacker_cannot_downgrade() {
+    fn cookie_secure_direct_mode_attacker_cannot_upgrade() {
         let mut h = HeaderMap::new();
-        // Attacker injects "http" at leftmost; proxy appends "https".
-        h.insert("x-forwarded-proto", "http, https".parse().unwrap());
-        assert!(cookie_secure(&h, "http://example.com"));
+        h.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(!cookie_secure(&h, "http://example.com"));
     }
 }

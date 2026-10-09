@@ -1,5 +1,6 @@
 mod dashboard_view;
 mod ingress;
+mod p2p_broker;
 mod session_registry;
 
 use crate::access::AccessPolicy;
@@ -9,15 +10,16 @@ use crate::tunnel::{run_http_gw_listener, run_https_gw_listener, HttpGw, HttpsGw
 use anyhow::{anyhow, Result};
 use orbien_core::config::ServerConfig;
 use orbien_core::transport;
+use p2p_broker::P2pBroker;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::task::JoinSet;
 
-#[allow(unused_imports)] // public API re-export
+#[allow(unused_imports)]
 pub use dashboard_view::DashboardSnapshot;
 
 struct OfflineClientRecord {
@@ -34,18 +36,20 @@ struct OfflineClientRecord {
 
 pub struct Service {
     cfg: ServerConfig,
-    access: Arc<AccessPolicy>,
+    access: Arc<RwLock<Arc<AccessPolicy>>>,
     controls: Arc<Mutex<HashMap<String, Arc<Control>>>>,
     offline_clients: Arc<Mutex<HashMap<String, OfflineClientRecord>>>,
     http_gw: Option<Arc<HttpGw>>,
     https_gw: Option<Arc<HttpsGw>>,
     tls_config: Arc<rustls::ServerConfig>,
     metrics: Arc<MemMetrics>,
+    /// Broker for P2P direct-tunnel handshakes.
+    p2p: Arc<P2pBroker>,
 }
 
 impl Service {
     pub fn new(cfg: ServerConfig) -> Result<Self> {
-        let access = Arc::new(AccessPolicy::from_server_config(&cfg)?);
+        let access = Arc::new(RwLock::new(Arc::new(AccessPolicy::from_server_config(&cfg)?)));
         let http_gw = if cfg.http_gw_enabled() {
             Some(Arc::new(HttpGw::new(cfg.http_gw_port)))
         } else {
@@ -71,6 +75,7 @@ impl Service {
             https_gw,
             tls_config,
             metrics: MemMetrics::new(),
+            p2p: P2pBroker::new(),
         })
     }
 
@@ -112,7 +117,7 @@ impl Service {
         }
 
         if this.cfg.quic_enabled() {
-            let quic_addr: SocketAddr = format!("{}:{}", listen_host, this.cfg.quic_port)
+            let quic_addr: SocketAddr = format!("{}: {}", listen_host, this.cfg.quic_port)
                 .parse()
                 .map_err(|e| anyhow!("invalid quic bind addr: {e}"))?;
             let endpoint = transport::build_server_endpoint(
@@ -130,7 +135,7 @@ impl Service {
         }
 
         if this.cfg.kcp_enabled() {
-            let kcp_addr: SocketAddr = format!("{}:{}", listen_host, this.cfg.kcp_port)
+            let kcp_addr: SocketAddr = format!("{}: {}", listen_host, this.cfg.kcp_port)
                 .parse()
                 .map_err(|e| anyhow!("invalid kcp bind addr: {e}"))?;
             let listener = transport::bind_kcp_listener(kcp_addr).await?;
@@ -176,6 +181,48 @@ impl Service {
         &self.metrics
     }
 
+    #[allow(dead_code)]
+    pub async fn access_policy(&self) -> Arc<AccessPolicy> {
+        Arc::clone(&*self.access.read().await)
+    }
+
+    pub async fn reload_access_policy(
+        &self,
+        new_cfg: &ServerConfig,
+    ) -> Result<Vec<String>> {
+        let new_policy = AccessPolicy::from_server_config(new_cfg)
+            .map_err(|e| anyhow!("reload: failed to build access policy: {e}"))?;
+
+        let mut changed: Vec<String> = Vec::new();
+        let old = &self.cfg;
+
+        if old.listen != new_cfg.listen {
+            changed.push("listen".into());
+        }
+        if old.auth.auth_type != new_cfg.auth.auth_type
+            || old.auth.token != new_cfg.auth.token
+            || old.auth.token_policies != new_cfg.auth.token_policies
+        {
+            changed.push("auth".into());
+        }
+        if old.http_gw_port != new_cfg.http_gw_port
+            || old.https_gw_port != new_cfg.https_gw_port
+            || old.http_gw_enabled() != new_cfg.http_gw_enabled()
+        {
+            changed.push("gateway".into());
+        }
+        if old.root_domain != new_cfg.root_domain {
+            changed.push("root_domain".into());
+        }
+        if old.quic_port != new_cfg.quic_port || old.kcp_port != new_cfg.kcp_port {
+            changed.push("transport_ports".into());
+        }
+
+        *self.access.write().await = Arc::new(new_policy);
+        tracing::info!(changed = ?changed, "access policy reloaded");
+        Ok(changed)
+    }
+
     pub async fn kick_client(&self, session_id: &str) -> Result<()> {
         let control = {
             let mut map = self.controls.lock().await;
@@ -208,10 +255,6 @@ impl Service {
         }
     }
 
-    /// Remove and stop a running proxy/tunnel by name (from the dashboard).
-    /// Kept under the `proxy` name for backward compatibility with the
-    /// dashboard API (`DELETE /api/v1/proxies/{name}`); it operates on the
-    /// tunnel registry.
     pub async fn kick_proxy(&self, proxy_name: &str) -> Result<()> {
         let controls: Vec<Arc<Control>> = {
             let map = self.controls.lock().await;
@@ -223,5 +266,41 @@ impl Service {
             }
         }
         Err(anyhow!("proxy not found: {proxy_name}"))
+    }
+
+    // ── P2P helpers ───────────────────────────────────────────────────────────
+
+    /// Look up a live `Control` by session ID.  Returns `None` if the session
+    /// is not currently connected.
+    pub(crate) async fn control_by_session(
+        &self,
+        session_id: &str,
+    ) -> Option<Arc<Control>> {
+        self.controls.lock().await.get(session_id).cloned()
+    }
+
+    /// Handle an incoming `P2pReq` from `initiator_ctrl`.
+    pub(crate) async fn handle_p2p_req(
+        self: &Arc<Self>,
+        req: orbien_core::msg::P2pReq,
+        initiator_ctrl: Arc<Control>,
+        initiator_peer: std::net::SocketAddr,
+    ) -> anyhow::Result<()> {
+        let responder = self
+            .control_by_session(&req.peer_session_id)
+            .await
+            .ok_or_else(|| anyhow!("P2pReq: peer session not found: {}", req.peer_session_id))?;
+        self.p2p
+            .handle_req(req, initiator_ctrl, initiator_peer, responder)
+            .await
+    }
+
+    /// Handle an incoming `P2pAddr` from the client identified by `session_id`.
+    pub(crate) async fn handle_p2p_addr(
+        &self,
+        addr_msg: orbien_core::msg::P2pAddr,
+        session_id: &str,
+    ) -> anyhow::Result<()> {
+        self.p2p.handle_addr(addr_msg, session_id).await
     }
 }

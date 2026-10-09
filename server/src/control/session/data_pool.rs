@@ -60,8 +60,14 @@ impl Control {
         if self.closed.load(Ordering::SeqCst) {
             return Err(anyhow!("control closed"));
         }
-        let mut writer = self.writer.lock().await;
-        msg::write_msg(&mut *writer, &Message::ReqDataConn(ReqDataConn {})).await?;
+        let mut writer_lock = self.writer.lock().await;
+        if let Some(w) = writer_lock.as_mut() {
+            msg::write_msg(w, &Message::ReqDataConn(ReqDataConn {}))
+                .await
+                .map_err(|e| anyhow!("request_data_conn: {e}"))?;
+        } else {
+            return Err(anyhow!("request_data_conn: writer not initialised"));
+        }
         Ok(())
     }
 

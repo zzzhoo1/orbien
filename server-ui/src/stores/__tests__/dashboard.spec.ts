@@ -30,7 +30,7 @@ vi.mock('@/api/client', () => ({
 
 const mockRouterPush = vi.fn()
 vi.mock('@/router', () => ({
-  router: {push: (...a: unknown[]) => mockRouterPush(...a)},
+  default: {push: (...a: unknown[]) => mockRouterPush(...a)},
 }))
 
 const SYS_INFO = {version: '1.0', os: 'linux'}

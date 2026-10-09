@@ -8,6 +8,7 @@ import shareIcon from '@/assets/icon/share.svg?raw'
 import userIcon from '@/assets/icon/user.svg?raw'
 import arrowLeftIcon from '@/assets/icon/arrow-left.svg?raw'
 import arrowRightIcon from '@/assets/icon/arrow-right.svg?raw'
+import settingsIcon from '@/assets/icon/settings.svg?raw'
 
 const { t } = useLocale()
 const route = useRoute()
@@ -18,6 +19,9 @@ const SIDEBAR_ICONS: Record<(typeof NAV_ITEMS)[number]['icon'], string> = {
   monitor: computerIcon,
   tunnels: shareIcon,
   clients: userIcon,
+  dashboard: computerIcon,
+  tokens: userIcon,
+  settings: settingsIcon,
 }
 
 function isActive(path: string) {
@@ -49,11 +53,11 @@ function onNavigate() {
     <nav class="sidebar-nav">
       <RouterLink
         v-for="item in NAV_ITEMS"
-        :key="item.name"
+        :key="item.key"
         :to="item.path"
         class="side-link"
         :class="{ active: isActive(item.path) }"
-        :title="t(`nav.${item.labelKey}`)"
+        :title="t(item.labelKey)"
         @click="onNavigate"
       >
         <span
@@ -61,7 +65,7 @@ function onNavigate() {
           aria-hidden="true"
           v-html="SIDEBAR_ICONS[item.icon]"
         />
-        <span v-show="!desktopCollapsed" class="side-label">{{ t(`nav.${item.labelKey}`) }}</span>
+        <span v-show="!desktopCollapsed" class="side-label">{{ t(item.labelKey) }}</span>
       </RouterLink>
     </nav>
 

@@ -4,10 +4,12 @@ mod register;
 use crate::access::AccessPolicy;
 use crate::metrics::{MemMetrics, ServerMetrics};
 use crate::tunnel::{HttpGw, HttpsGw, TunnelManager};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use orbien_core::config::ServerConfig;
 use orbien_core::msg::{self, KickOut, Message, Ping, Pong};
 use orbien_core::transport::DynStream;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -20,6 +22,18 @@ use tokio::time::sleep;
 type CtrlRead = ReadHalf<DynStream>;
 type CtrlWrite = WriteHalf<DynStream>;
 
+/// Minimal interface the control session needs from the Service layer in order
+/// to dispatch P2P broker messages without creating a circular dependency.
+pub type P2pHandler = Arc<
+    dyn Fn(
+            Message,
+            String, // session_id of the sender
+            SocketAddr,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+
 pub struct Control {
     pub session_id: String,
     pub user: String,
@@ -31,7 +45,10 @@ pub struct Control {
     pub connected_at: Instant,
     cfg: ServerConfig,
     reader: Mutex<CtrlRead>,
-    writer: Mutex<CtrlWrite>,
+    /// WriteHalf held as `Option` so `run()` can take it for the writer task,
+    /// and so `shutdown()` can call `AsyncWriteExt::shutdown` cleanly.
+    /// All writes (Pong, KickOut, P2P) serialize through this single Mutex.
+    writer: Mutex<Option<CtrlWrite>>,
     data_tx: mpsc::Sender<DynStream>,
     data_rx: Mutex<mpsc::Receiver<DynStream>>,
     data_notify: Notify,
@@ -45,10 +62,12 @@ pub struct Control {
     access: Arc<AccessPolicy>,
     pub metrics: Arc<MemMetrics>,
     last_ping_unix: AtomicI64,
+    peer_socket_addr: SocketAddr,
+    p2p_handler: Option<P2pHandler>,
 }
 
 impl Control {
-    #[allow(clippy::too_many_arguments)] // Control::new wires many subsystem handles
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_id: String,
         stream: DynStream,
@@ -65,8 +84,18 @@ impl Control {
         client_ip: String,
         metrics: Arc<MemMetrics>,
     ) -> Self {
+        let peer_socket_addr = client_ip
+            .parse::<SocketAddr>()
+            .or_else(|_| {
+                client_ip
+                    .parse::<IpAddr>()
+                    .map(|ip| SocketAddr::new(ip, 0))
+            })
+            .unwrap_or_else(|_| SocketAddr::from_str("0.0.0.0:0").unwrap());
+
         let (reader, writer) = tokio::io::split(stream);
         let (data_tx, data_rx) = mpsc::channel(64);
+
         Self {
             session_id,
             user,
@@ -78,7 +107,7 @@ impl Control {
             connected_at: Instant::now(),
             cfg,
             reader: Mutex::new(reader),
-            writer: Mutex::new(writer),
+            writer: Mutex::new(Some(writer)),
             data_tx,
             data_rx: Mutex::new(data_rx),
             data_notify: Notify::new(),
@@ -97,8 +126,41 @@ impl Control {
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0),
             ),
+            peer_socket_addr,
+            p2p_handler: None,
         }
     }
+
+    // ── P2P helpers ────────────────────────────────────────────────────────────
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_socket_addr
+    }
+
+    pub fn set_p2p_handler(&mut self, handler: P2pHandler) {
+        self.p2p_handler = Some(handler);
+    }
+
+    /// Write a P2P broker message directly onto this client's control stream.
+    /// All writes go through `self.writer` so ordering with Pong/KickOut is
+    /// guaranteed without a separate channel.
+    pub async fn send_p2p_msg(&self, msg: Message) -> Result<()> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(anyhow!("control closed, cannot send P2P message"));
+        }
+        match *self.writer.lock().await {
+            Some(ref mut w) => msg::write_msg(w, &msg)
+                .await
+                .map_err(|e| anyhow!("send_p2p_msg: {e}")),
+            None => Err(anyhow!("writer not initialised")),
+        }
+    }
+
+    // ── Standard session API ──────────────────────────────────────────────────
 
     pub async fn tunnel_summaries(&self) -> Vec<crate::tunnel::TunnelSummary> {
         self.tunnels.lock().await.summaries()
@@ -108,7 +170,6 @@ impl Control {
         self.tunnels.lock().await.len()
     }
 
-    /// Remove and stop a single registered tunnel by name (from the dashboard).
     pub async fn kick_tunnel(&self, name: &str) -> bool {
         let mut tm = self.tunnels.lock().await;
         if let Some(ty) = tm.remove(name).await {
@@ -132,6 +193,7 @@ impl Control {
             self.request_data_conn().await?;
         }
 
+        // Heartbeat watchdog
         {
             let timeout = self.effective_ping_timeout();
             if timeout > 0 {
@@ -161,6 +223,7 @@ impl Control {
             }
         }
 
+        // Message read loop
         loop {
             if self.closed.load(Ordering::SeqCst) {
                 break;
@@ -189,6 +252,19 @@ impl Control {
                 Message::NewTunnel(np) => self.handle_new_tunnel(np).await?,
                 Message::CloseTunnel(cp) => self.handle_close_tunnel(cp).await?,
                 Message::Ping(p) => self.handle_ping(p).await?,
+
+                p2p_msg @ Message::P2pReq(_) | p2p_msg @ Message::P2pAddr(_) => {
+                    if let Some(ref handler) = self.p2p_handler {
+                        let peer = self.peer_socket_addr;
+                        let sid = self.session_id.clone();
+                        if let Err(e) = handler(p2p_msg, sid, peer).await {
+                            tracing::warn!(error = %e, "P2P broker dispatch error");
+                        }
+                    } else {
+                        tracing::warn!("P2P message received but no handler registered");
+                    }
+                }
+
                 other => {
                     tracing::warn!(ty = other.type_byte(), "ignored control message");
                 }
@@ -198,9 +274,8 @@ impl Control {
     }
 
     pub async fn shutdown(&self) {
+        // swap returns the *old* value; true means already shutting down.
         if self.closed.swap(true, Ordering::SeqCst) {
-            self.shutdown_notify.notify_waiters();
-            self.data_notify.notify_waiters();
             return;
         }
         self.shutdown_notify.notify_waiters();
@@ -212,8 +287,9 @@ impl Control {
             }
         }
         {
-            let mut writer = self.writer.lock().await;
-            let _ = writer.shutdown().await;
+            if let Some(ref mut w) = *self.writer.lock().await {
+                let _ = w.shutdown().await;
+            }
         }
         let mut bg = self.bg_tasks.lock().await;
         bg.abort_all();
@@ -223,14 +299,15 @@ impl Control {
     pub async fn kick(&self, reason: impl Into<String>) {
         let reason = reason.into();
         {
-            let mut writer = self.writer.lock().await;
-            let _ = msg::write_msg(
-                &mut *writer,
-                &Message::KickOut(KickOut {
-                    reason: reason.clone(),
-                }),
-            )
-            .await;
+            if let Some(ref mut w) = *self.writer.lock().await {
+                let _ = msg::write_msg(
+                    w,
+                    &Message::KickOut(KickOut {
+                        reason: reason.clone(),
+                    }),
+                )
+                .await;
+            }
         }
         tracing::info!(session_id = %self.session_id, %reason, "kicking client");
         self.shutdown().await;
@@ -258,8 +335,9 @@ impl Control {
                 .unwrap_or(0),
             Ordering::Relaxed,
         );
-        let mut writer = self.writer.lock().await;
-        msg::write_msg(&mut *writer, &Message::Pong(Pong::default())).await?;
+        if let Some(ref mut w) = *self.writer.lock().await {
+            msg::write_msg(w, &Message::Pong(Pong::default())).await?;
+        }
         Ok(())
     }
 }

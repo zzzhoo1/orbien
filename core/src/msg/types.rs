@@ -14,6 +14,16 @@ pub const TYPE_PONG: u8 = b'g';
 pub const TYPE_UDP_PACKET: u8 = b'D';
 pub const TYPE_KICK_OUT: u8 = b'E';
 
+// ── P2P direct-tunnel negotiation ────────────────────────────────────────────
+/// Client → Server: "I want a direct tunnel to `peer_session_id`"
+pub const TYPE_P2P_REQ: u8 = b'P';
+/// Server → Client: "here is your peer's observed address and a shared token"
+pub const TYPE_P2P_INFO: u8 = b'p';
+/// Client → Server: "here are my candidate addresses"
+pub const TYPE_P2P_ADDR: u8 = b'N';
+/// Server → both Clients: "start hole-punching now"
+pub const TYPE_P2P_READY: u8 = b'R';
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Login {
     #[serde(default)]
@@ -46,7 +56,7 @@ pub struct LoginResp {
     pub error: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NewTunnel {
     pub tunnel_name: String,
     pub protocol: String,
@@ -189,6 +199,80 @@ impl UdpPacket {
     }
 }
 
+// ── P2P message structs ───────────────────────────────────────────────────────
+
+/// Client → Server: request a direct P2P tunnel to `peer_session_id`.
+/// The server looks up the peer's control connection and begins the
+/// broker handshake.  `token` is a client-generated nonce (UUID) used
+/// to correlate the two halves of the exchange.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2pReq {
+    /// Session ID of the remote peer to connect to directly.
+    pub peer_session_id: String,
+    /// Client-generated correlation token (UUID recommended).
+    pub token: String,
+    /// Optional hint: preferred local UDP port for hole-punching.
+    /// 0 means "let the OS choose".
+    #[serde(default)]
+    pub preferred_local_port: u16,
+    /// Name of the tunnel on the initiator side that this P2P session
+    /// should bypass.  The broker echoes this into `P2pReady` so both
+    /// sides know which local backend to dial.
+    ///
+    /// `#[serde(default)]` ensures old nodes that don't send this field
+    /// deserialise to an empty string rather than returning an error.
+    #[serde(default)]
+    pub tunnel_name: String,
+}
+
+/// Server → Client: peer information needed to begin hole-punching.
+/// Sent to *both* the initiator and the responder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2pInfo {
+    /// Shared broker token — same value echoed to both sides.
+    pub token: String,
+    /// Server-observed public address of the *other* peer (IP:port).
+    /// May be empty if the peer has not yet reported its address.
+    #[serde(default)]
+    pub peer_addr: String,
+    /// Non-empty when the broker cannot fulfil the request.
+    #[serde(default)]
+    pub error: String,
+}
+
+/// Client → Server: "here are my candidate addresses for hole-punching".
+/// A client sends this after receiving `P2pInfo` from the server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2pAddr {
+    /// Same token from `P2pReq` / `P2pInfo`.
+    pub token: String,
+    /// Comma-separated list of `IP:port` candidates (LAN + WAN).
+    pub candidates: String,
+}
+
+/// Server → both Clients: all addresses are exchanged, begin hole-punching.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2pReady {
+    pub token: String,
+    /// Candidates reported by the *initiator* side.
+    pub initiator_candidates: String,
+    /// Candidates reported by the *responder* side.
+    pub responder_candidates: String,
+    /// Server-observed address of the initiator (may differ from its LAN addr).
+    #[serde(default)]
+    pub initiator_observed_addr: String,
+    /// Server-observed address of the responder.
+    #[serde(default)]
+    pub responder_observed_addr: String,
+    /// Tunnel name from the initiator's `P2pReq`, echoed to both sides so
+    /// each client knows which local backend to connect to after punching.
+    ///
+    /// `#[serde(default)]` keeps compatibility with old servers that don't
+    /// populate this field — clients fall back to relay mode when empty.
+    #[serde(default)]
+    pub tunnel_name: String,
+}
+
 mod b64_bytes {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use serde::{Deserialize, Deserializer, Serializer};
@@ -223,6 +307,11 @@ pub enum Message {
     Pong(Pong),
     UdpPacket(UdpPacket),
     KickOut(KickOut),
+    // P2P
+    P2pReq(P2pReq),
+    P2pInfo(P2pInfo),
+    P2pAddr(P2pAddr),
+    P2pReady(P2pReady),
 }
 
 impl Message {
@@ -240,6 +329,49 @@ impl Message {
             Self::Pong(_) => TYPE_PONG,
             Self::UdpPacket(_) => TYPE_UDP_PACKET,
             Self::KickOut(_) => TYPE_KICK_OUT,
+            Self::P2pReq(_) => TYPE_P2P_REQ,
+            Self::P2pInfo(_) => TYPE_P2P_INFO,
+            Self::P2pAddr(_) => TYPE_P2P_ADDR,
+            Self::P2pReady(_) => TYPE_P2P_READY,
         }
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+
+    /// Old servers omit `tunnel_name`; deserialization must succeed and
+    /// produce an empty string, not an error.
+    #[test]
+    fn p2p_ready_missing_tunnel_name_deserialises_to_empty() {
+        let json = r#"{"token":"tok","initiator_candidates":"1.2.3.4:1234",
+                       "responder_candidates":"5.6.7.8:5678"}"#;
+        let r: P2pReady = serde_json::from_str(json).expect("deserialise P2pReady");
+        assert!(r.tunnel_name.is_empty(), "expected empty tunnel_name, got {:?}", r.tunnel_name);
+    }
+
+    /// Old clients omit `tunnel_name` in P2pReq; new server must accept it.
+    #[test]
+    fn p2p_req_missing_tunnel_name_deserialises_to_empty() {
+        let json = r#"{"peer_session_id":"sess","token":"tok"}"#;
+        let r: P2pReq = serde_json::from_str(json).expect("deserialise P2pReq");
+        assert!(r.tunnel_name.is_empty(), "expected empty tunnel_name, got {:?}", r.tunnel_name);
+    }
+
+    /// New payload roundtrips correctly.
+    #[test]
+    fn p2p_ready_tunnel_name_roundtrips() {
+        let ready = P2pReady {
+            token: "t".into(),
+            initiator_candidates: "a".into(),
+            responder_candidates: "b".into(),
+            initiator_observed_addr: String::new(),
+            responder_observed_addr: String::new(),
+            tunnel_name: "my-tunnel".into(),
+        };
+        let json = serde_json::to_string(&ready).unwrap();
+        let back: P2pReady = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tunnel_name, "my-tunnel");
     }
 }

@@ -2,6 +2,7 @@ export {ApiError, isApiError} from './errors'
 export {
     fetchAuthStatus,
     fetchSystemInfo,
+    fetchSystemHealth,
     fetchClients,
     fetchClient,
     kickClient,
@@ -16,3 +17,4 @@ export {
 export type {AuthStatus, TrafficRange, ConfigReloadDiff} from './client'
 export type {TunnelListParams, ConnectionListParams} from './client'
 export type {TokenMetricItem, TokenMetricsResp} from '@/types/api'
+export type {ConfigReloadResp, HealthInfo} from '@/types/api'

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 #[derive(Clone)]
 pub struct HttpsRoute {
@@ -121,7 +121,7 @@ pub async fn run_https_gw_listener(
     bind_addr: String,
     port: u16,
     gw: Arc<HttpsGw>,
-    access: Arc<AccessPolicy>,
+    access: Arc<RwLock<Arc<AccessPolicy>>>,
     shutdown: Arc<Notify>,
 ) -> Result<()> {
     let addr = format!("{bind_addr}:{port}");
@@ -136,7 +136,8 @@ pub async fn run_https_gw_listener(
                     Ok((stream, peer)) => {
                         orbien_core::net::enable_nodelay(&stream);
                         let gw = Arc::clone(&gw);
-                        let access = Arc::clone(&access);
+                        // Snapshot current policy; hot-reload swaps this on the next connection.
+                        let access = Arc::clone(&*access.read().await);
                         tokio::spawn(async move {
                             if let Err(e) = handle_https_ingress(gw, stream, peer, access).await {
                                 tracing::debug!(%peer, error = %e, "https ingress ended");

@@ -3,6 +3,8 @@ mod date_counter;
 mod hour_counter;
 mod mem;
 mod traits;
+#[cfg(test)]
+mod mem_test;
 
 pub use mem::{MemMetrics, TrafficWindow, TunnelTrafficHistory};
 pub use traits::ServerMetrics;

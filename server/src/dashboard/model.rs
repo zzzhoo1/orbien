@@ -73,6 +73,22 @@ pub struct SystemStatus {
 }
 
 #[derive(Serialize)]
+pub struct SystemStats {
+    #[serde(rename = "clientsOnline")]
+    pub clients_online: usize,
+    #[serde(rename = "clientsTotal")]
+    pub clients_total: usize,
+    #[serde(rename = "tunnelsTotal")]
+    pub tunnels_total: usize,
+    #[serde(rename = "activeConnections")]
+    pub active_connections: usize,
+    #[serde(rename = "totalTrafficIn")]
+    pub total_traffic_in: u64,
+    #[serde(rename = "totalTrafficOut")]
+    pub total_traffic_out: u64,
+}
+
+#[derive(Serialize)]
 pub struct ClientInfo {
     #[serde(rename = "sessionId")]
     pub session_id: String,
@@ -129,4 +145,15 @@ pub struct TunnelTrafficResp {
     pub unit: &'static str,
     pub granularity: &'static str,
     pub history: Vec<TunnelTrafficPoint>,
+}
+
+/// Response for `POST /api/v1/config/reload`.
+///
+/// `changed` lists the top-level config keys whose values differ between the
+/// previously-loaded config and the freshly-read file.  An empty list means the
+/// file was re-read successfully but contained no observable changes.
+#[derive(Serialize)]
+pub struct ConfigReloadResp {
+    /// Human-readable list of changed top-level keys, e.g. `["auth", "listen"]`.
+    pub changed: Vec<String>,
 }

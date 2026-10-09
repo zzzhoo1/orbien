@@ -19,6 +19,7 @@ clap = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 quinn = { workspace = true }
 kcp-tokio = { workspace = true }
 httparse = { workspace = true }
@@ -36,7 +37,6 @@ webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"]
 # Secure random token generation
 rand        = "=0.10.2"
 # Argon2 password hashing for the password-login path
-argon2      = "0.5"
 
 # ── musl cross-compilation ──────────────────────────────────────────────────────────
 # vendored feature builds OpenSSL from source — no pkg-config needed.
