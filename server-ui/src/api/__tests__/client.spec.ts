@@ -319,7 +319,7 @@ describe('fetchSystemTokens', () => {
 
 describe('reloadConfig', () => {
   it('sends POST to /api/v1/config/reload', async () => {
-    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {added: [], removed: [], modified: []}})
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {changed: []}})
     vi.stubGlobal('fetch', spy)
     const {reloadConfig} = await importClient()
     await reloadConfig().catch(() => {})
@@ -329,11 +329,25 @@ describe('reloadConfig', () => {
     )
   })
 
-  it('returns ConfigReloadDiff on success', async () => {
-    const diff = {added: ['new-tunnel'], removed: [], modified: ['ssh']}
-    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data: diff}))
+  it('passes configPath when provided', async () => {
+    const spy = mockFetch(200, {code: 200, msg: 'ok', data: {changed: ['auth']}})
+    vi.stubGlobal('fetch', spy)
     const {reloadConfig} = await importClient()
-    await expect(reloadConfig()).resolves.toEqual(diff)
+    await reloadConfig('/etc/orbien/server.toml').catch(() => {})
+    expect(spy).toHaveBeenCalledWith(
+      '/api/v1/config/reload',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({configPath: '/etc/orbien/server.toml'}),
+      }),
+    )
+  })
+
+  it('returns ConfigReloadResp on success', async () => {
+    const resp = {changed: ['auth', 'listen']}
+    vi.stubGlobal('fetch', mockFetch(200, {code: 200, msg: 'ok', data: resp}))
+    const {reloadConfig} = await importClient()
+    await expect(reloadConfig()).resolves.toEqual(resp)
   })
 
   it('throws ApiError(unauthorized) on 401', async () => {

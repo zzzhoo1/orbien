@@ -23,8 +23,8 @@ describe('useAuthStore – initial state', () => {
   it('capabilitiesLoaded is false', () => {
     expect(useAuthStore().capabilitiesLoaded).toBe(false)
   })
-  it('capabilities defaults to password=true, webauthn=false', () => {
-    expect(useAuthStore().capabilities).toEqual({webauthn: false, password: true})
+  it('capabilities defaults to password=true, webauthn=false, oidc=false', () => {
+    expect(useAuthStore().capabilities).toEqual({webauthn: false, password: true, oidc: false})
   })
 })
 

@@ -186,12 +186,3 @@ export interface ConfigReloadDiff {
     removed: string[]
     modified: string[]
 }
-
-/**
- * POST /api/v1/config/reload
- * Triggers a hot-reload of the server config. Returns a diff of what changed.
- * Requires an authenticated session.
- */
-export function reloadConfig() {
-    return api<ConfigReloadDiff>('/api/v1/config/reload', { method: 'POST' })
-}
