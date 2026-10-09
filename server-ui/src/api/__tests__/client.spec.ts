@@ -152,14 +152,14 @@ describe('fetchClient', () => {
 })
 
 describe('kickClient', () => {
-  it('sends POST to correct URL', async () => {
+  it('sends DELETE to correct URL', async () => {
     const spy = mockFetch(200, {code: 200, msg: 'ok', data: null})
     vi.stubGlobal('fetch', spy)
     const {kickClient} = await importClient()
     await kickClient('sess-1').catch(() => {})
     expect(spy).toHaveBeenCalledWith(
-      '/api/v1/clients/sess-1/kick',
-      expect.objectContaining({method: 'POST'}),
+      '/api/v1/clients/sess-1',
+      expect.objectContaining({method: 'DELETE'}),
     )
   })
 
